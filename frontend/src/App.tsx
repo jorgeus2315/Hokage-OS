@@ -1,37 +1,56 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 const API = '/api';
 
 interface Agent { id: number; name: string; role: string; status: string; created_at: string; }
-interface Business { id: number; name: string; channel: string; category: string | null; status: string; target_revenue: number; current_revenue: number; created_at: string; }
-interface Decision { id: number; agent_id: number | null; title: string; amount: number | null; risk_level: string; status: string; approved_by: string | null; created_at: string; }
+interface Business { id: number; name: string; channel: string; category: string | null; status: string; target_revenue: number; current_revenue: number; }
+interface Decision { id: number; agent_id: number | null; title: string; amount: number | null; risk_level: string; status: string; approved_by: string | null; }
 interface Msg { id: number; sender_id: number | null; receiver_id: number | null; content: string; channel: string; created_at: string; }
 
-const ROLES: Record<string, string> = { ceo: 'Director General', investigador: 'Investigador de Mercado', contenido: 'Creador de Contenido', trafico: 'Gestor de Trafico', soporte: 'Atencion al Cliente', finanzas: 'Director Financiero', operaciones: 'Director de Operaciones' };
+const ROLES: Record<string, string> = { ceo: 'Director General', investigador: 'Investigador', contenido: 'Creador de Contenido', trafico: 'Trafico', soporte: 'Soporte', finanzas: 'Finanzas', operaciones: 'Operaciones' };
+
+type Screen = 'boot' | 'menu' | 'map' | 'hokage' | 'lab' | 'estudio' | 'tienda' | 'banco' | 'taller';
+
+const BUILDINGS = [
+  { id: 'hokage', name: 'Torre Hokage', desc: 'Centro de mando', icon: '🏯', color: '#e74c3c', agent: 'ceo' },
+  { id: 'lab', name: 'Laboratorio', desc: 'Investigacion de mercado', icon: '🔬', color: '#3498db', agent: 'investigador' },
+  { id: 'estudio', name: 'Estudio', desc: 'Creacion de contenido', icon: '✏️', color: '#9b59b6', agent: 'contenido' },
+  { id: 'tienda', name: 'Tienda', desc: 'Ventas y productos', icon: '🏪', color: '#27ae60', agent: 'trafico' },
+  { id: 'banco', name: 'Banco', desc: 'Finanzas y reportes', icon: '🏦', color: '#f39c12', agent: 'finanzas' },
+  { id: 'taller', name: 'Taller', desc: 'Operaciones del sistema', icon: '⚙️', color: '#1abc9c', agent: 'operaciones' },
+];
 
 function App() {
+  const [screen, setScreen] = useState<Screen>('boot');
   const [agents, setAgents] = useState<Agent[]>([]);
   const [businesses, setBusinesses] = useState<Business[]>([]);
   const [decisions, setDecisions] = useState<Decision[]>([]);
   const [messages, setMessages] = useState<Msg[]>([]);
-  const [view, setView] = useState('inicio');
-  const [sel, setSel] = useState<Agent | null>(null);
+  const [bootLines, setBootLines] = useState<string[]>([]);
   const [toast, setToast] = useState('');
   const [clock, setClock] = useState('');
-
-  const [taskIn, setTaskIn] = useState('');
-  const [msgIn, setMsgIn] = useState('');
-  const [commIn, setCommIn] = useState('');
-  const [commCh, setCommCh] = useState(0);
-
+  const [chatIn, setChatIn] = useState('');
   const [bN, setBN] = useState('');
   const [bCh, setBCh] = useState('etsy');
   const [bCat, setBCat] = useState('');
   const [bRev, setBRev] = useState('1000');
+  const chatRef = useRef<HTMLDivElement>(null);
 
   const notifs = decisions.filter(d => d.status === 'proposed' || d.status === 'pending').length;
-
   const show = (m: string) => { setToast(m); setTimeout(() => setToast(''), 3000); };
+  const gn = (id: number | null) => { if (!id) return 'Sistema'; const a = agents.find(x => x.id === id); return a ? a.name : '#' + id; };
+  const getAgent = (role: string) => agents.find(a => a.role === role);
+
+  // Boot sequence
+  useEffect(() => {
+    const ls = ['HOKAGE OS v0.4.0', '', 'Inicializando sistema...', 'Conectando base de datos... OK', 'Cargando agentes... OK', 'Verificando APIs... OK', 'Sincronizando datos... OK', 'Preparando ecosistema... OK', '', 'Bienvenido, Jorge.', 'Tu equipo esta listo.'];
+    let i = 0;
+    const t = setInterval(() => {
+      if (i < ls.length) { setBootLines(p => [...p, ls[i]]); i++; }
+      else { clearInterval(t); setTimeout(() => setScreen('menu'), 1000); }
+    }, 200);
+    return () => clearInterval(t);
+  }, []);
 
   useEffect(() => {
     load();
@@ -39,6 +58,8 @@ function App() {
     const r = setInterval(load, 8000);
     return () => { clearInterval(t); clearInterval(r); };
   }, []);
+
+  useEffect(() => { if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight; }, [messages]);
 
   async function load() {
     try {
@@ -55,445 +76,343 @@ function App() {
     } catch {}
   }
 
-  function gn(id: number | null) { if (!id) return 'Sistema'; const a = agents.find(x => x.id === id); return a ? a.name : '#' + id; }
-
-  async function sendMsg() {
-    if (!commIn.trim()) return;
+  async function sendChat() {
+    if (!chatIn.trim()) return;
     const hId = agents.find(a => a.role === 'ceo')?.id || 1;
-    await fetch(API + '/messages', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sender_id: hId, receiver_id: commCh > 0 ? commCh : null, content: commIn.trim() }) });
-    setCommIn(''); load(); show('Mensaje enviado');
+    await fetch(API + '/messages', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sender_id: hId, receiver_id: null, content: chatIn.trim() }) });
+    setChatIn(''); load();
   }
 
-  const nav = [
-    { id: 'inicio', label: 'Inicio', icon: '\u25C8' },
-    { id: 'equipo', label: 'Equipo', icon: '\u25C6' },
-    { id: 'negocios', label: 'Negocios', icon: '\u25A0' },
-    { id: 'misiones', label: 'Misiones', icon: '\u25B6' },
-    { id: 'comms', label: 'Mensajes', icon: '\u25CE' },
-    { id: 'ajustes', label: 'Ajustes', icon: '\u2699' },
-  ];
-
-  return (
-    <div style={S.app}>
-      {/* SIDEBAR */}
-      <div style={S.sidebar}>
-        <div style={S.logoArea}>
-          <div style={S.logoIcon}>H</div>
-          <div>
-            <div style={S.logoText}>Hokage OS</div>
-            <div style={S.logoSub}>v0.4.0</div>
-          </div>
+  // ════════════════════════════════════════
+  // BOOT SCREEN
+  // ════════════════════════════════════════
+  if (screen === 'boot') return (
+    <div style={{ minHeight: '100vh', background: '#0a0a0f', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Courier New', monospace" }}>
+      <div style={{ maxWidth: 460, width: '100%', padding: 40 }}>
+        <div style={{ fontSize: 28, color: '#fff', fontWeight: 800, letterSpacing: 6, marginBottom: 40, textAlign: 'center' as const }}>
+          <span style={{ color: '#e74c3c' }}>HOKAGE</span> <span style={{ color: '#555' }}>OS</span>
         </div>
-        <div style={S.navList}>
-          {nav.map(n => (
-            <div key={n.id} onClick={() => { setView(n.id); setSel(null); }} style={view === n.id ? { ...S.navItem, ...S.navActive } : S.navItem}>
-              <span style={S.navIcon}>{n.icon}</span>
-              <span>{n.label}</span>
-              {n.id === 'misiones' && notifs > 0 && <span style={S.navBadge}>{notifs}</span>}
-            </div>
-          ))}
-        </div>
-        <div style={S.sidebarBottom}>
-          <div style={S.userArea}>
-            <div style={S.userAvatar}>J</div>
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>Jorge</div>
-              <div style={{ fontSize: 11, color: '#999' }}>Fundador</div>
-            </div>
+        {bootLines.map((l, i) => (
+          <div key={i} style={{ fontSize: 13, color: !l || l === '' ? 'transparent' : l.includes('OK') ? '#27ae60' : l.includes('Bienvenido') || l.includes('listo') ? '#3498db' : '#555', marginBottom: 5, letterSpacing: 0.5 }}>
+            {l && l.includes('OK') ? <>{l.replace(' OK', '')} <span style={{ color: '#27ae60', fontWeight: 600 }}>OK</span></> : l || '\u00A0'}
           </div>
+        ))}
+        <div style={{ marginTop: 24, height: 3, background: '#1a1a2e', borderRadius: 2, overflow: 'hidden' }}>
+          <div style={{ height: '100%', background: '#e74c3c', borderRadius: 2, width: (bootLines.length / 11 * 100) + '%', transition: 'width 0.3s ease' }}></div>
         </div>
       </div>
-
-      {/* MAIN */}
-      <div style={S.mainArea}>
-        {/* TOP BAR */}
-        <div style={S.topBar}>
-          <div style={S.topTitle}>{nav.find(n => n.id === view)?.label || 'Inicio'}</div>
-          <div style={S.topRight}>
-            <div style={S.metricPill}><span style={S.metricLabel}>Agentes</span><span style={S.metricVal}>{agents.length}</span></div>
-            <div style={S.metricPill}><span style={S.metricLabel}>Negocios</span><span style={S.metricVal}>{businesses.length}</span></div>
-            <div style={S.metricPill}><span style={S.metricLabel}>Pendientes</span><span style={{ ...S.metricVal, color: notifs > 0 ? '#e74c3c' : '#27ae60' }}>{notifs}</span></div>
-            <div style={{ fontSize: 13, color: '#999', fontFamily: 'monospace' }}>{clock}</div>
-          </div>
-        </div>
-
-        {/* CONTENT */}
-        <div style={S.content}>
-
-          {/* === INICIO === */}
-          {view === 'inicio' && (
-            <div>
-              <div style={S.welcomeCard}>
-                <div style={S.welcomeAvatar}>H</div>
-                <div>
-                  <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Buenos dias, Jorge</div>
-                  <div style={{ fontSize: 13, color: '#666', lineHeight: 1.5 }}>
-                    Tienes {notifs} propuestas pendientes. {businesses.length > 0 ? businesses.length + ' negocio(s) activo(s).' : 'Crea tu primer negocio para empezar.'} {agents.length} agentes listos.
-                  </div>
-                </div>
-              </div>
-
-              <div style={S.sectionHead}>Equipo</div>
-              <div style={S.agentGrid}>
-                {agents.map(a => (
-                  <div key={a.id} style={S.agentCard} onClick={() => setSel(a)}>
-                    <div style={S.agentCardTop}>
-                      <div style={S.agentAvatar}>{a.name[0]}</div>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontWeight: 600, fontSize: 14 }}>{a.name}</div>
-                        <div style={{ fontSize: 12, color: '#888' }}>{ROLES[a.role] || a.role}</div>
-                      </div>
-                      <div style={a.status === 'idle' ? S.statusOk : S.statusBusy}>{a.status === 'idle' ? 'Activo' : a.status}</div>
-                    </div>
-                    <div style={S.progressArea}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#aaa', marginBottom: 3 }}><span>Rendimiento</span><span>85%</span></div>
-                      <div style={S.progressBg}><div style={S.progressFill}></div></div>
-                    </div>
-                    <div style={S.agentStats}>
-                      <div style={S.miniStat}><div style={{ fontSize: 16, fontWeight: 600, color: '#333' }}>0</div><div style={{ fontSize: 10, color: '#aaa' }}>Tareas</div></div>
-                      <div style={S.miniStat}><div style={{ fontSize: 16, fontWeight: 600, color: '#27ae60' }}>Lv.1</div><div style={{ fontSize: 10, color: '#aaa' }}>Nivel</div></div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {decisions.filter(d => d.status === 'proposed' || d.status === 'pending').length > 0 && (
-                <div>
-                  <div style={S.sectionHead}>Propuestas pendientes</div>
-                  {decisions.filter(d => d.status === 'proposed' || d.status === 'pending').map(d => (
-                    <div key={d.id} style={S.decisionCard}>
-                      <div style={S.decisionTop}>
-                        <span style={{ ...S.riskDot, background: d.risk_level === 'low' ? '#27ae60' : d.risk_level === 'medium' ? '#f39c12' : '#e74c3c' }}></span>
-                        <span style={{ fontWeight: 600, flex: 1 }}>{d.title}</span>
-                        <span style={{ fontSize: 12, color: '#999' }}>{gn(d.agent_id)}</span>
-                      </div>
-                      {d.amount && <div style={{ fontSize: 13, color: '#666', margin: '6px 0' }}>Importe: ${d.amount}</div>}
-                      <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-                        <button style={S.btnApprove} onClick={async () => { await fetch(API + '/decisions/' + d.id + '/approve', { method: 'PUT' }); load(); show('Aprobada'); }}>Aprobar</button>
-                        <button style={S.btnReject} onClick={async () => { await fetch(API + '/decisions/' + d.id + '/reject', { method: 'PUT' }); load(); show('Rechazada'); }}>Rechazar</button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {businesses.length > 0 && (
-                <div>
-                  <div style={S.sectionHead}>Negocios</div>
-                  {businesses.map(b => (
-                    <div key={b.id} style={S.bizCard}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div style={{ fontWeight: 600, fontSize: 15 }}>{b.name}</div>
-                        <span style={S.bizStatus}>{b.status}</span>
-                      </div>
-                      <div style={{ fontSize: 13, color: '#888', marginTop: 4 }}>{b.channel} {b.category ? '| ' + b.category : ''}</div>
-                      <div style={{ display: 'flex', gap: 24, marginTop: 10 }}>
-                        <div><div style={{ fontSize: 11, color: '#aaa' }}>Meta</div><div style={{ fontSize: 16, fontWeight: 600 }}>${b.target_revenue}/mes</div></div>
-                        <div><div style={{ fontSize: 11, color: '#aaa' }}>Actual</div><div style={{ fontSize: 16, fontWeight: 600, color: '#27ae60' }}>${b.current_revenue}</div></div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {messages.length > 0 && (
-                <div>
-                  <div style={S.sectionHead}>Mensajes recientes</div>
-                  {messages.slice(0, 5).map(m => (
-                    <div key={m.id} style={S.msgRow}>
-                      <span style={{ fontWeight: 600, color: '#333', minWidth: 90 }}>{gn(m.sender_id)}</span>
-                      <span style={{ color: '#ccc' }}>{'\u2192'}</span>
-                      <span style={{ color: '#666', minWidth: 70 }}>{gn(m.receiver_id) || 'Todos'}</span>
-                      <span style={{ color: '#555', flex: 1 }}>{m.content}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* === EQUIPO === */}
-          {view === 'equipo' && (
-            <div>
-              <div style={S.sectionHead}>Todos los agentes</div>
-              {agents.map(a => (
-                <div key={a.id} style={S.crewRow} onClick={() => setSel(a)}>
-                  <div style={S.agentAvatar}>{a.name[0]}</div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 600 }}>{a.name}</div>
-                    <div style={{ fontSize: 12, color: '#888' }}>{ROLES[a.role] || a.role}</div>
-                  </div>
-                  <div style={{ fontSize: 12, color: '#aaa' }}>Lv.1</div>
-                  <div style={a.status === 'idle' ? S.statusOk : S.statusBusy}>{a.status === 'idle' ? 'Activo' : a.status}</div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* === NEGOCIOS === */}
-          {view === 'negocios' && (
-            <div>
-              <div style={S.sectionHead}>Mis negocios</div>
-              {businesses.map(b => (
-                <div key={b.id} style={S.bizCard}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <div style={{ fontWeight: 600, fontSize: 15 }}>{b.name}</div>
-                    <span style={S.bizStatus}>{b.status}</span>
-                  </div>
-                  <div style={{ fontSize: 13, color: '#888', marginTop: 4 }}>{b.channel} {b.category ? '| ' + b.category : ''}</div>
-                  <div style={{ display: 'flex', gap: 24, marginTop: 10 }}>
-                    <div><div style={{ fontSize: 11, color: '#aaa' }}>Meta</div><div style={{ fontSize: 16, fontWeight: 600 }}>${b.target_revenue}/mes</div></div>
-                    <div><div style={{ fontSize: 11, color: '#aaa' }}>Actual</div><div style={{ fontSize: 16, fontWeight: 600, color: '#27ae60' }}>${b.current_revenue}</div></div>
-                  </div>
-                </div>
-              ))}
-              {businesses.length === 0 && <div style={S.emptyState}>No hay negocios todavia.</div>}
-
-              <div style={S.sectionHead}>Crear negocio</div>
-              <div style={S.formCard}>
-                <input style={S.input} placeholder="Nombre del negocio" value={bN} onChange={e => setBN(e.target.value)} />
-                <select style={S.input} value={bCh} onChange={e => setBCh(e.target.value)}>
-                  <option value="etsy">Etsy</option>
-                  <option value="shopify">Shopify</option>
-                  <option value="amazon">Amazon</option>
-                  <option value="propia">Web propia</option>
-                </select>
-                <input style={S.input} placeholder="Categoria (ej: diseno, ropa)" value={bCat} onChange={e => setBCat(e.target.value)} />
-                <input style={S.input} placeholder="Meta mensual ($)" value={bRev} onChange={e => setBRev(e.target.value)} />
-                <button style={S.btnPrimary} onClick={async () => {
-                  if (!bN.trim()) return;
-                  await fetch(API + '/businesses', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: bN.trim(), channel: bCh, category: bCat.trim() || null, target_revenue: Number(bRev) }) });
-                  setBN(''); setBCat(''); load(); show('Negocio creado');
-                }}>Crear negocio</button>
-              </div>
-            </div>
-          )}
-
-          {/* === MISIONES === */}
-          {view === 'misiones' && (
-            <div>
-              <div style={S.sectionHead}>Misiones y decisiones</div>
-              {decisions.length === 0 ? <div style={S.emptyState}>No hay misiones todavia. Los agentes las crearan.</div> :
-                decisions.map(d => (
-                  <div key={d.id} style={S.decisionCard}>
-                    <div style={S.decisionTop}>
-                      <span style={{ ...S.riskDot, background: d.risk_level === 'low' ? '#27ae60' : d.risk_level === 'medium' ? '#f39c12' : '#e74c3c' }}></span>
-                      <span style={{ fontWeight: 600, flex: 1 }}>{d.title}</span>
-                      <span style={{ fontSize: 12, padding: '2px 10px', borderRadius: 12, background: d.status === 'proposed' || d.status === 'pending' ? '#fff3e0' : d.status === 'approved' ? '#e8f5e9' : '#fce4ec', color: d.status === 'proposed' || d.status === 'pending' ? '#f39c12' : d.status === 'approved' ? '#27ae60' : '#e74c3c' }}>
-                        {d.status === 'proposed' || d.status === 'pending' ? 'Pendiente' : d.status === 'approved' ? 'Aprobada' : 'Rechazada'}
-                      </span>
-                    </div>
-                    {d.amount && <div style={{ fontSize: 13, color: '#666', margin: '6px 0' }}>Importe: ${d.amount}</div>}
-                    <div style={{ fontSize: 12, color: '#999' }}>Agente: {gn(d.agent_id)}</div>
-                    {(d.status === 'proposed' || d.status === 'pending') && (
-                      <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-                        <button style={S.btnApprove} onClick={async () => { await fetch(API + '/decisions/' + d.id + '/approve', { method: 'PUT' }); load(); show('Aprobada'); }}>Aprobar</button>
-                        <button style={S.btnReject} onClick={async () => { await fetch(API + '/decisions/' + d.id + '/reject', { method: 'PUT' }); load(); show('Rechazada'); }}>Rechazar</button>
-                      </div>
-                    )}
-                  </div>
-                ))
-              }
-            </div>
-          )}
-
-          {/* === COMMS === */}
-          {view === 'comms' && (
-            <div>
-              <div style={S.sectionHead}>Comunicaciones</div>
-              <div style={{ display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap' as const }}>
-                <button style={commCh === 0 ? S.chActive : S.chBtn} onClick={() => setCommCh(0)}>General</button>
-                {agents.map(a => <button key={a.id} style={commCh === a.id ? S.chActive : S.chBtn} onClick={() => setCommCh(a.id)}>{a.name}</button>)}
-              </div>
-              <div style={S.chatArea}>
-                {messages.length === 0 ? <div style={S.emptyState}>Sin mensajes.</div> :
-                  messages.filter(m => commCh === 0 || m.sender_id === commCh || m.receiver_id === commCh).map(m => (
-                    <div key={m.id} style={S.chatBubble}>
-                      <div style={{ display: 'flex', gap: 8, marginBottom: 4 }}>
-                        <span style={{ fontWeight: 600, fontSize: 13 }}>{gn(m.sender_id)}</span>
-                        <span style={{ color: '#ccc' }}>{'\u2192'}</span>
-                        <span style={{ fontSize: 13, color: '#888' }}>{gn(m.receiver_id) || 'Todos'}</span>
-                        <span style={{ fontSize: 11, color: '#bbb', marginLeft: 'auto' }}>{new Date(m.created_at).toLocaleTimeString('es-ES')}</span>
-                      </div>
-                      <div style={{ fontSize: 14, color: '#333' }}>{m.content}</div>
-                    </div>
-                  ))
-                }
-              </div>
-              <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-                <input style={{ ...S.input, flex: 1, marginBottom: 0 }} placeholder="Escribe un mensaje..." value={commIn} onChange={e => setCommIn(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') sendMsg(); }} />
-                <button style={S.btnPrimary} onClick={sendMsg}>Enviar</button>
-              </div>
-            </div>
-          )}
-
-          {/* === AJUSTES === */}
-          {view === 'ajustes' && (
-            <div>
-              <div style={S.sectionHead}>Ajustes</div>
-              <div style={S.settingsCard}>
-                <div style={S.settingsTitle}>Perfil</div>
-                <div style={S.settingsRow}>Nombre: Jorge</div>
-                <div style={S.settingsRow}>Idioma: Espanol</div>
-                <div style={S.settingsRow}>Zona horaria: Europa/Madrid</div>
-              </div>
-              <div style={S.settingsCard}>
-                <div style={S.settingsTitle}>Conexiones</div>
-                <div style={{ ...S.settingsRow, color: '#27ae60' }}>{'\u25CF'} Backend conectado</div>
-                <div style={S.settingsRow}>{'\u25CB'} Etsy - No conectado</div>
-                <div style={S.settingsRow}>{'\u25CB'} Shopify - No conectado</div>
-                <div style={S.settingsRow}>{'\u25CB'} PayPal - No conectado</div>
-                <div style={S.settingsRow}>{'\u25CB'} OpenAI - No conectado</div>
-              </div>
-              <div style={S.settingsCard}>
-                <div style={S.settingsTitle}>Sistema</div>
-                <div style={S.settingsRow}>Version: Hokage OS v0.4.0</div>
-                <div style={S.settingsRow}>Base de datos: SQLite</div>
-                <div style={S.settingsRow}>Agentes activos: {agents.length}</div>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* DETAIL PANEL */}
-      {sel && (
-        <div style={S.detailPanel}>
-          <div style={S.detailHeader}>
-            <div style={S.detailAvatar}>{sel.name[0]}</div>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 16, fontWeight: 600 }}>{sel.name}</div>
-              <div style={{ fontSize: 12, color: '#888' }}>{ROLES[sel.role] || sel.role}</div>
-            </div>
-            <button style={S.closeBtn} onClick={() => setSel(null)}>{'\u2715'}</button>
-          </div>
-
-          <div style={S.detailSection}>
-            <div style={S.detailLabel}>Estado</div>
-            <div style={sel.status === 'idle' ? S.statusOk : S.statusBusy}>{sel.status === 'idle' ? 'Activo' : sel.status}</div>
-          </div>
-
-          <div style={S.detailSection}>
-            <div style={S.detailLabel}>Nivel</div>
-            <div style={{ fontSize: 14, fontWeight: 600 }}>Nivel 1</div>
-            <div style={S.progressBg}><div style={{ ...S.progressFill, width: '15%', background: '#3498db' }}></div></div>
-            <div style={{ fontSize: 11, color: '#bbb', marginTop: 2 }}>150/1000 XP</div>
-          </div>
-
-          <div style={S.detailSection}>
-            <div style={S.detailLabel}>Asignar tarea</div>
-            <div style={{ display: 'flex', gap: 6 }}>
-              <input style={{ ...S.input, flex: 1, marginBottom: 0 }} placeholder="Describe la tarea..." value={taskIn} onChange={e => setTaskIn(e.target.value)} />
-              <button style={S.btnSmall} onClick={async () => {
-                if (!taskIn.trim()) return;
-                await fetch(API + '/decisions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agent_id: sel.id, title: taskIn.trim(), risk_level: 'low' }) });
-                setTaskIn(''); load(); show('Tarea asignada');
-              }}>OK</button>
-            </div>
-          </div>
-
-          <div style={S.detailSection}>
-            <div style={S.detailLabel}>Mensaje directo</div>
-            <div style={{ display: 'flex', gap: 6 }}>
-              <input style={{ ...S.input, flex: 1, marginBottom: 0 }} placeholder="Escribe..." value={msgIn} onChange={e => setMsgIn(e.target.value)} />
-              <button style={S.btnSmall} onClick={async () => {
-                if (!msgIn.trim()) return;
-                const hId = agents.find(a => a.role === 'ceo')?.id || 1;
-                await fetch(API + '/messages', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sender_id: hId, receiver_id: sel.id, content: msgIn.trim() }) });
-                setMsgIn(''); load(); show('Mensaje enviado');
-              }}>OK</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* TOAST */}
-      {toast && <div style={S.toast}>{toast}</div>}
     </div>
   );
+
+  // ════════════════════════════════════════
+  // MAIN MENU
+  // ════════════════════════════════════════
+  if (screen === 'menu') return (
+    <div style={{ minHeight: '100vh', background: '#fafafa', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: '-apple-system, sans-serif' }}>
+      <div style={{ maxWidth: 480, width: '100%', padding: 40 }}>
+        <div style={{ textAlign: 'center' as const, marginBottom: 40 }}>
+          <div style={{ fontSize: 32, fontWeight: 800, letterSpacing: -1 }}>
+            <span style={{ color: '#e74c3c' }}>Hokage</span> <span style={{ color: '#333' }}>OS</span>
+          </div>
+          <div style={{ color: '#999', fontSize: 13, marginTop: 6 }}>Tu empresa digital inteligente</div>
+        </div>
+
+        {/* Quick stats */}
+        <div style={{ display: 'flex', gap: 12, marginBottom: 32 }}>
+          <div style={menuStat}><div style={{ fontSize: 24, fontWeight: 700 }}>{agents.length}</div><div style={{ fontSize: 11, color: '#999' }}>Agentes</div></div>
+          <div style={menuStat}><div style={{ fontSize: 24, fontWeight: 700 }}>{businesses.length}</div><div style={{ fontSize: 11, color: '#999' }}>Negocios</div></div>
+          <div style={menuStat}><div style={{ fontSize: 24, fontWeight: 700, color: notifs > 0 ? '#e74c3c' : '#27ae60' }}>{notifs}</div><div style={{ fontSize: 11, color: '#999' }}>Pendientes</div></div>
+        </div>
+
+        {/* Menu options */}
+        <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 10 }}>
+          <button style={menuBtn} onClick={() => setScreen('map')}>
+            <span style={{ fontSize: 20 }}>🏙️</span>
+            <div style={{ flex: 1, textAlign: 'left' as const }}><div style={{ fontWeight: 600 }}>Entrar al ecosistema</div><div style={{ fontSize: 12, color: '#999' }}>Ver el mapa y tus agentes trabajando</div></div>
+            <span style={{ color: '#ccc' }}>{'\u203A'}</span>
+          </button>
+          <button style={menuBtn} onClick={() => setScreen('hokage')}>
+            <span style={{ fontSize: 20 }}>🏯</span>
+            <div style={{ flex: 1, textAlign: 'left' as const }}><div style={{ fontWeight: 600 }}>Hablar con Hokage</div><div style={{ fontSize: 12, color: '#999' }}>Resumen del dia y decisiones pendientes</div></div>
+            {notifs > 0 && <span style={{ background: '#e74c3c', color: '#fff', fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10 }}>{notifs}</span>}
+            <span style={{ color: '#ccc' }}>{'\u203A'}</span>
+          </button>
+          <button style={menuBtn} onClick={() => setScreen('tienda')}>
+            <span style={{ fontSize: 20 }}>📊</span>
+            <div style={{ flex: 1, textAlign: 'left' as const }}><div style={{ fontWeight: 600 }}>Mis negocios</div><div style={{ fontSize: 12, color: '#999' }}>Gestion rapida de negocios y productos</div></div>
+            <span style={{ color: '#ccc' }}>{'\u203A'}</span>
+          </button>
+        </div>
+
+        <div style={{ textAlign: 'center' as const, marginTop: 32, fontSize: 12, color: '#ccc' }}>v0.4.0 · {clock}</div>
+      </div>
+    </div>
+  );
+
+  // ════════════════════════════════════════
+  // TOP BAR (shared by map and building views)
+  // ════════════════════════════════════════
+  const topBar = (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 20px', background: '#fff', borderBottom: '1px solid #eee' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        {screen !== 'map' && <button style={{ background: 'none', border: '1px solid #ddd', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: 13 }} onClick={() => setScreen('map')}>{'\u2190'} Mapa</button>}
+        <span style={{ fontWeight: 700, fontSize: 16 }}><span style={{ color: '#e74c3c' }}>Hokage</span> OS</span>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+        <span style={{ fontSize: 12, color: '#999' }}>Agentes: {agents.length}</span>
+        <span style={{ fontSize: 12, color: '#999' }}>Negocios: {businesses.length}</span>
+        {notifs > 0 && <span style={{ background: '#e74c3c', color: '#fff', fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 12 }}>{notifs} pendientes</span>}
+        <span style={{ fontSize: 13, color: '#bbb', fontFamily: 'monospace' }}>{clock}</span>
+        <button style={{ background: 'none', border: '1px solid #ddd', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: 13 }} onClick={() => setScreen('menu')}>Menu</button>
+      </div>
+    </div>
+  );
+
+  // ════════════════════════════════════════
+  // MAP VIEW
+  // ════════════════════════════════════════
+  if (screen === 'map') return (
+    <div style={{ minHeight: '100vh', background: '#f0f2f5', fontFamily: '-apple-system, sans-serif' }}>
+      {topBar}
+      <div style={{ padding: 24, maxWidth: 1000, margin: '0 auto' }}>
+        <div style={{ marginBottom: 20 }}>
+          <h2 style={{ fontSize: 20, fontWeight: 700, margin: '0 0 4px' }}>Ecosistema</h2>
+          <p style={{ color: '#888', fontSize: 13, margin: 0 }}>Haz clic en un edificio para entrar</p>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
+          {BUILDINGS.map(b => {
+            const ag = getAgent(b.agent);
+            return (
+              <div key={b.id} onClick={() => setScreen(b.id as Screen)} style={{ background: '#fff', borderRadius: 16, padding: 24, cursor: 'pointer', border: '2px solid transparent', transition: 'all 0.2s', position: 'relative' as const, overflow: 'hidden' }}
+                onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.borderColor = b.color; (e.currentTarget as HTMLDivElement).style.transform = 'translateY(-2px)'; (e.currentTarget as HTMLDivElement).style.boxShadow = '0 8px 24px rgba(0,0,0,0.08)'; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.borderColor = 'transparent'; (e.currentTarget as HTMLDivElement).style.transform = 'none'; (e.currentTarget as HTMLDivElement).style.boxShadow = 'none'; }}
+              >
+                <div style={{ position: 'absolute' as const, top: 0, left: 0, right: 0, height: 4, background: b.color }}></div>
+                <div style={{ fontSize: 36, marginBottom: 12 }}>{b.icon}</div>
+                <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 2 }}>{b.name}</div>
+                <div style={{ fontSize: 13, color: '#888', marginBottom: 12 }}>{b.desc}</div>
+                {ag && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: '#f8f9fa', borderRadius: 10 }}>
+                    <div style={{ width: 28, height: 28, borderRadius: 8, background: b.color, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700 }}>{ag.name[0]}</div>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 600 }}>{ag.name}</div>
+                      <div style={{ fontSize: 11, color: '#27ae60' }}>Activo</div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+
+  // ════════════════════════════════════════
+  // TORRE HOKAGE (Chat + Decisions)
+  // ════════════════════════════════════════
+  if (screen === 'hokage') return (
+    <div style={{ minHeight: '100vh', background: '#f0f2f5', fontFamily: '-apple-system, sans-serif' }}>
+      {topBar}
+      <div style={{ display: 'flex', gap: 20, padding: 24, maxWidth: 1000, margin: '0 auto' }}>
+        {/* Chat */}
+        <div style={{ flex: 1 }}>
+          <h2 style={{ fontSize: 18, fontWeight: 700, margin: '0 0 16px' }}>🏯 Torre Hokage</h2>
+          <div ref={chatRef} style={{ background: '#fff', borderRadius: 16, border: '1px solid #eee', padding: 20, minHeight: 360, maxHeight: 420, overflowY: 'auto' as const }}>
+            {/* Welcome message */}
+            <div style={{ padding: 14, background: '#f8f9fa', borderRadius: 12, marginBottom: 12 }}>
+              <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4 }}>Hokage</div>
+              <div style={{ fontSize: 14, color: '#444', lineHeight: 1.6 }}>
+                Buenos dias, Jorge. {notifs > 0 ? 'Tienes ' + notifs + ' propuestas pendientes de aprobacion.' : 'No hay nada pendiente.'} {businesses.length > 0 ? 'Tus negocios estan en marcha.' : 'Todavia no tienes negocios. Te recomiendo crear uno.'} {agents.length} agentes estan trabajando.
+              </div>
+            </div>
+            {messages.map(m => (
+              <div key={m.id} style={{ padding: 12, borderBottom: '1px solid #f5f5f5' }}>
+                <div style={{ display: 'flex', gap: 8, marginBottom: 3 }}>
+                  <span style={{ fontWeight: 600, fontSize: 13 }}>{gn(m.sender_id)}</span>
+                  <span style={{ fontSize: 11, color: '#bbb', marginLeft: 'auto' }}>{new Date(m.created_at).toLocaleTimeString('es-ES')}</span>
+                </div>
+                <div style={{ fontSize: 14, color: '#444' }}>{m.content}</div>
+              </div>
+            ))}
+            {messages.length === 0 && <div style={{ color: '#ccc', textAlign: 'center' as const, padding: 40 }}>Escribe algo para empezar.</div>}
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+            <input style={inputStyle} placeholder="Habla con Hokage..." value={chatIn} onChange={e => setChatIn(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') sendChat(); }} />
+            <button style={btnPrimary} onClick={sendChat}>Enviar</button>
+          </div>
+        </div>
+
+        {/* Decisions */}
+        <div style={{ width: 320 }}>
+          <h3 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 12px' }}>Decisiones pendientes</h3>
+          {decisions.filter(d => d.status === 'proposed' || d.status === 'pending').length === 0 ? (
+            <div style={{ background: '#fff', borderRadius: 12, padding: 20, textAlign: 'center' as const, color: '#bbb', border: '1px solid #eee' }}>Todo aprobado. Sin pendientes.</div>
+          ) : (
+            decisions.filter(d => d.status === 'proposed' || d.status === 'pending').map(d => (
+              <div key={d.id} style={{ background: '#fff', borderRadius: 12, border: '1px solid #eee', padding: 14, marginBottom: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: d.risk_level === 'low' ? '#27ae60' : d.risk_level === 'medium' ? '#f39c12' : '#e74c3c' }}></span>
+                  <span style={{ fontWeight: 600, fontSize: 14 }}>{d.title}</span>
+                </div>
+                {d.amount && <div style={{ fontSize: 13, color: '#888' }}>Importe: ${d.amount}</div>}
+                <div style={{ fontSize: 12, color: '#aaa', marginBottom: 8 }}>De: {gn(d.agent_id)}</div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button style={{ ...btnPrimary, background: '#27ae60', flex: 1, padding: '7px 0' }} onClick={async () => { await fetch(API + '/decisions/' + d.id + '/approve', { method: 'PUT' }); load(); show('Aprobada'); }}>Aprobar</button>
+                  <button style={{ padding: '7px 14px', background: '#fff', color: '#e74c3c', border: '1px solid #e74c3c', borderRadius: 8, fontSize: 13, cursor: 'pointer' }} onClick={async () => { await fetch(API + '/decisions/' + d.id + '/reject', { method: 'PUT' }); load(); show('Rechazada'); }}>No</button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  // ════════════════════════════════════════
+  // LABORATORIO (Investigacion)
+  // ════════════════════════════════════════
+  if (screen === 'lab') return (
+    <div style={{ minHeight: '100vh', background: '#f0f2f5', fontFamily: '-apple-system, sans-serif' }}>
+      {topBar}
+      <div style={{ padding: 24, maxWidth: 800, margin: '0 auto' }}>
+        <h2 style={{ fontSize: 18, fontWeight: 700, margin: '0 0 4px' }}>🔬 Laboratorio</h2>
+        <p style={{ color: '#888', fontSize: 13, margin: '0 0 20px' }}>El Explorador investiga tendencias y oportunidades.</p>
+        <div style={buildingCard}>
+          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>Estado del Explorador</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span style={{ color: '#27ae60' }}>{'\u25CF'}</span><span>Activo - Monitoreando tendencias</span></div>
+          <div style={{ marginTop: 16, padding: 14, background: '#f8f9fa', borderRadius: 10 }}>
+            <div style={{ fontSize: 13, color: '#666' }}>Las tendencias y oportunidades apareceran aqui cuando el Explorador las detecte. Conecta una API de tendencias para activarlo.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  // ════════════════════════════════════════
+  // ESTUDIO (Contenido)
+  // ════════════════════════════════════════
+  if (screen === 'estudio') return (
+    <div style={{ minHeight: '100vh', background: '#f0f2f5', fontFamily: '-apple-system, sans-serif' }}>
+      {topBar}
+      <div style={{ padding: 24, maxWidth: 800, margin: '0 auto' }}>
+        <h2 style={{ fontSize: 18, fontWeight: 700, margin: '0 0 4px' }}>{'\u270F\uFE0F'} Estudio</h2>
+        <p style={{ color: '#888', fontSize: 13, margin: '0 0 20px' }}>El Escritor crea contenido para tus negocios.</p>
+        <div style={buildingCard}>
+          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>Contenido generado</div>
+          <div style={{ color: '#aaa', textAlign: 'center' as const, padding: 30 }}>Sin contenido todavia. El Escritor generara descripciones y textos cuando tengas productos.</div>
+        </div>
+      </div>
+    </div>
+  );
+
+  // ════════════════════════════════════════
+  // TIENDA (Negocios + Productos)
+  // ════════════════════════════════════════
+  if (screen === 'tienda') return (
+    <div style={{ minHeight: '100vh', background: '#f0f2f5', fontFamily: '-apple-system, sans-serif' }}>
+      {topBar}
+      <div style={{ padding: 24, maxWidth: 800, margin: '0 auto' }}>
+        <h2 style={{ fontSize: 18, fontWeight: 700, margin: '0 0 4px' }}>{'\uD83C\uDFEA'} Tienda</h2>
+        <p style={{ color: '#888', fontSize: 13, margin: '0 0 20px' }}>Gestion de negocios y productos.</p>
+
+        {businesses.map(b => (
+          <div key={b.id} style={buildingCard}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ fontSize: 16, fontWeight: 700 }}>{b.name}</div>
+              <span style={{ fontSize: 11, padding: '3px 10px', borderRadius: 12, background: '#e8f5e9', color: '#27ae60' }}>{b.status}</span>
+            </div>
+            <div style={{ fontSize: 13, color: '#888', marginTop: 4 }}>{b.channel} {b.category ? '| ' + b.category : ''}</div>
+            <div style={{ display: 'flex', gap: 24, marginTop: 12 }}>
+              <div><div style={{ fontSize: 11, color: '#aaa' }}>Meta</div><div style={{ fontSize: 18, fontWeight: 700 }}>${b.target_revenue}/mes</div></div>
+              <div><div style={{ fontSize: 11, color: '#aaa' }}>Actual</div><div style={{ fontSize: 18, fontWeight: 700, color: '#27ae60' }}>${b.current_revenue}</div></div>
+            </div>
+            {b.target_revenue > 0 && (
+              <div style={{ marginTop: 10 }}>
+                <div style={{ height: 6, background: '#eee', borderRadius: 3 }}>
+                  <div style={{ height: '100%', background: '#27ae60', borderRadius: 3, width: Math.min(100, (b.current_revenue / b.target_revenue) * 100) + '%', transition: 'width 0.3s' }}></div>
+                </div>
+                <div style={{ fontSize: 11, color: '#aaa', marginTop: 3 }}>{Math.round((b.current_revenue / b.target_revenue) * 100)}% de la meta</div>
+              </div>
+            )}
+          </div>
+        ))}
+        {businesses.length === 0 && <div style={{ ...buildingCard, textAlign: 'center' as const, color: '#bbb' }}>Sin negocios todavia.</div>}
+
+        <h3 style={{ fontSize: 15, fontWeight: 700, margin: '24px 0 12px' }}>Crear negocio</h3>
+        <div style={buildingCard}>
+          <input style={inputStyle} placeholder="Nombre del negocio" value={bN} onChange={e => setBN(e.target.value)} />
+          <select style={inputStyle} value={bCh} onChange={e => setBCh(e.target.value)}>
+            <option value="etsy">Etsy</option><option value="shopify">Shopify</option><option value="amazon">Amazon</option><option value="propia">Web propia</option>
+          </select>
+          <input style={inputStyle} placeholder="Categoria (ej: diseno, ropa)" value={bCat} onChange={e => setBCat(e.target.value)} />
+          <input style={inputStyle} placeholder="Meta mensual ($)" value={bRev} onChange={e => setBRev(e.target.value)} />
+          <button style={btnPrimary} onClick={async () => {
+            if (!bN.trim()) return;
+            await fetch(API + '/businesses', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: bN.trim(), channel: bCh, category: bCat.trim() || null, target_revenue: Number(bRev) }) });
+            setBN(''); setBCat(''); load(); show('Negocio creado');
+          }}>Crear negocio</button>
+        </div>
+      </div>
+    </div>
+  );
+
+  // ════════════════════════════════════════
+  // BANCO (Finanzas)
+  // ════════════════════════════════════════
+  if (screen === 'banco') return (
+    <div style={{ minHeight: '100vh', background: '#f0f2f5', fontFamily: '-apple-system, sans-serif' }}>
+      {topBar}
+      <div style={{ padding: 24, maxWidth: 800, margin: '0 auto' }}>
+        <h2 style={{ fontSize: 18, fontWeight: 700, margin: '0 0 4px' }}>{'\uD83C\uDFE6'} Banco</h2>
+        <p style={{ color: '#888', fontSize: 13, margin: '0 0 20px' }}>Finanzas y reportes economicos.</p>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 20 }}>
+          <div style={buildingCard}><div style={{ fontSize: 11, color: '#aaa' }}>Ingresos totales</div><div style={{ fontSize: 24, fontWeight: 700, color: '#27ae60' }}>$0.00</div></div>
+          <div style={buildingCard}><div style={{ fontSize: 11, color: '#aaa' }}>Gastos totales</div><div style={{ fontSize: 24, fontWeight: 700, color: '#e74c3c' }}>$0.00</div></div>
+          <div style={buildingCard}><div style={{ fontSize: 11, color: '#aaa' }}>Beneficio</div><div style={{ fontSize: 24, fontWeight: 700 }}>$0.00</div></div>
+        </div>
+        <div style={buildingCard}>
+          <div style={{ color: '#aaa', textAlign: 'center' as const, padding: 30 }}>Los reportes financieros apareceran cuando conectes plataformas de pago.</div>
+        </div>
+      </div>
+    </div>
+  );
+
+  // ════════════════════════════════════════
+  // TALLER (Operaciones)
+  // ════════════════════════════════════════
+  if (screen === 'taller') return (
+    <div style={{ minHeight: '100vh', background: '#f0f2f5', fontFamily: '-apple-system, sans-serif' }}>
+      {topBar}
+      <div style={{ padding: 24, maxWidth: 800, margin: '0 auto' }}>
+        <h2 style={{ fontSize: 18, fontWeight: 700, margin: '0 0 4px' }}>{'\u2699\uFE0F'} Taller</h2>
+        <p style={{ color: '#888', fontSize: 13, margin: '0 0 20px' }}>Estado del sistema y operaciones.</p>
+        <div style={buildingCard}>
+          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>Estado del sistema</div>
+          <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 8 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #f5f5f5' }}><span>Backend</span><span style={{ color: '#27ae60', fontWeight: 600 }}>{'\u25CF'} Conectado</span></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #f5f5f5' }}><span>Base de datos</span><span style={{ color: '#27ae60', fontWeight: 600 }}>{'\u25CF'} SQLite activo</span></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #f5f5f5' }}><span>Agentes</span><span style={{ color: '#27ae60', fontWeight: 600 }}>{agents.length} activos</span></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #f5f5f5' }}><span>APIs externas</span><span style={{ color: '#f39c12', fontWeight: 600 }}>{'\u25CF'} Sin conectar</span></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0' }}><span>Version</span><span style={{ fontWeight: 600 }}>v0.4.0</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  return <div>Cargando...</div>;
 }
 
-const S: Record<string, React.CSSProperties> = {
-  app: { display: 'flex', minHeight: '100vh', background: '#f8f9fa', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif', color: '#333' },
+// ════════════════════════════════════════
+// SHARED STYLES
+// ════════════════════════════════════════
 
-  sidebar: { width: 220, background: '#fff', borderRight: '1px solid #eee', display: 'flex', flexDirection: 'column', padding: '20px 0' },
-  logoArea: { display: 'flex', alignItems: 'center', gap: 10, padding: '0 20px', marginBottom: 30 },
-  logoIcon: { width: 36, height: 36, borderRadius: 10, background: '#111', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, fontWeight: 700 },
-  logoText: { fontSize: 15, fontWeight: 700, letterSpacing: -0.5 },
-  logoSub: { fontSize: 11, color: '#bbb' },
-  navList: { flex: 1 },
-  navItem: { display: 'flex', alignItems: 'center', gap: 10, padding: '10px 20px', cursor: 'pointer', fontSize: 14, color: '#666', borderLeft: '3px solid transparent', transition: 'all 0.15s' },
-  navActive: { color: '#111', fontWeight: 600, borderLeftColor: '#111', background: '#f5f5f5' },
-  navIcon: { fontSize: 14, width: 20, textAlign: 'center' as const },
-  navBadge: { marginLeft: 'auto', background: '#e74c3c', color: '#fff', fontSize: 10, fontWeight: 600, width: 18, height: 18, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' },
-  sidebarBottom: { borderTop: '1px solid #eee', paddingTop: 16, marginTop: 16 },
-  userArea: { display: 'flex', alignItems: 'center', gap: 10, padding: '0 20px' },
-  userAvatar: { width: 32, height: 32, borderRadius: '50%', background: '#111', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 600 },
-
-  mainArea: { flex: 1, display: 'flex', flexDirection: 'column' as const },
-  topBar: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 24px', borderBottom: '1px solid #eee', background: '#fff' },
-  topTitle: { fontSize: 18, fontWeight: 700 },
-  topRight: { display: 'flex', alignItems: 'center', gap: 16 },
-  metricPill: { display: 'flex', alignItems: 'center', gap: 6, background: '#f5f5f5', padding: '4px 12px', borderRadius: 20 },
-  metricLabel: { fontSize: 11, color: '#999' },
-  metricVal: { fontSize: 14, fontWeight: 600 },
-
-  content: { flex: 1, padding: 24, overflowY: 'auto' as const, maxWidth: 900 },
-  sectionHead: { fontSize: 14, fontWeight: 700, color: '#111', marginBottom: 12, marginTop: 24, letterSpacing: -0.3 },
-
-  welcomeCard: { display: 'flex', alignItems: 'flex-start', gap: 14, padding: 20, background: '#fff', borderRadius: 12, border: '1px solid #eee', marginBottom: 8 },
-  welcomeAvatar: { width: 44, height: 44, borderRadius: 12, background: '#111', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, fontWeight: 700, flexShrink: 0 },
-
-  agentGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 },
-  agentCard: { background: '#fff', borderRadius: 12, border: '1px solid #eee', padding: 16, cursor: 'pointer', transition: 'box-shadow 0.15s' },
-  agentCardTop: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 },
-  agentAvatar: { width: 36, height: 36, borderRadius: 10, background: '#111', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, fontWeight: 600 },
-  agentStats: { display: 'flex', gap: 8 },
-  miniStat: { flex: 1, background: '#f8f9fa', borderRadius: 8, padding: '6px 8px', textAlign: 'center' as const },
-  progressArea: { marginBottom: 10 },
-  progressBg: { height: 4, background: '#eee', borderRadius: 2 },
-  progressFill: { height: '100%', width: '85%', background: '#27ae60', borderRadius: 2 },
-
-  statusOk: { fontSize: 11, padding: '3px 10px', borderRadius: 12, background: '#e8f5e9', color: '#27ae60', fontWeight: 600 },
-  statusBusy: { fontSize: 11, padding: '3px 10px', borderRadius: 12, background: '#fff3e0', color: '#f39c12', fontWeight: 600 },
-
-  decisionCard: { background: '#fff', borderRadius: 12, border: '1px solid #eee', padding: 16, marginBottom: 10 },
-  decisionTop: { display: 'flex', alignItems: 'center', gap: 10 },
-  riskDot: { width: 10, height: 10, borderRadius: '50%', flexShrink: 0 },
-
-  bizCard: { background: '#fff', borderRadius: 12, border: '1px solid #eee', padding: 16, marginBottom: 10 },
-  bizStatus: { fontSize: 11, padding: '3px 10px', borderRadius: 12, background: '#f5f5f5', color: '#888' },
-
-  crewRow: { display: 'flex', alignItems: 'center', gap: 12, padding: 14, background: '#fff', borderRadius: 12, border: '1px solid #eee', marginBottom: 8, cursor: 'pointer' },
-
-  msgRow: { display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: '#fff', borderRadius: 10, border: '1px solid #eee', marginBottom: 6, fontSize: 13 },
-
-  chatArea: { background: '#fff', borderRadius: 12, border: '1px solid #eee', padding: 16, minHeight: 280, maxHeight: 380, overflowY: 'auto' as const },
-  chatBubble: { padding: 12, borderBottom: '1px solid #f5f5f5' },
-  chBtn: { padding: '6px 14px', background: '#f5f5f5', border: '1px solid #eee', borderRadius: 20, fontSize: 12, cursor: 'pointer', color: '#666' },
-  chActive: { padding: '6px 14px', background: '#111', border: '1px solid #111', borderRadius: 20, fontSize: 12, cursor: 'pointer', color: '#fff', fontWeight: 600 },
-
-  formCard: { background: '#fff', borderRadius: 12, border: '1px solid #eee', padding: 20 },
-  input: { width: '100%', padding: '10px 14px', border: '1px solid #ddd', borderRadius: 8, fontSize: 14, outline: 'none', marginBottom: 10, boxSizing: 'border-box' as const, background: '#fafafa' },
-  btnPrimary: { padding: '10px 20px', background: '#111', color: '#fff', border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: 'pointer', width: '100%' },
-  btnApprove: { padding: '7px 18px', background: '#27ae60', color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
-  btnReject: { padding: '7px 18px', background: '#fff', color: '#e74c3c', border: '1px solid #e74c3c', borderRadius: 8, fontSize: 13, cursor: 'pointer' },
-  btnSmall: { padding: '8px 14px', background: '#111', color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, cursor: 'pointer' },
-
-  settingsCard: { background: '#fff', borderRadius: 12, border: '1px solid #eee', padding: 20, marginBottom: 12 },
-  settingsTitle: { fontSize: 12, fontWeight: 600, color: '#aaa', textTransform: 'uppercase' as const, letterSpacing: 1, marginBottom: 10 },
-  settingsRow: { fontSize: 14, color: '#555', marginBottom: 6 },
-
-  emptyState: { color: '#bbb', textAlign: 'center' as const, padding: 40, fontSize: 14 },
-
-  detailPanel: { width: 320, borderLeft: '1px solid #eee', background: '#fff', padding: 20, overflowY: 'auto' as const },
-  detailHeader: { display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 },
-  detailAvatar: { width: 48, height: 48, borderRadius: 12, background: '#111', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, fontWeight: 700 },
-  closeBtn: { background: 'none', border: '1px solid #ddd', width: 28, height: 28, borderRadius: 8, cursor: 'pointer', fontSize: 14, color: '#999', display: 'flex', alignItems: 'center', justifyContent: 'center' },
-  detailSection: { marginBottom: 20 },
-  detailLabel: { fontSize: 11, fontWeight: 600, color: '#aaa', textTransform: 'uppercase' as const, letterSpacing: 1, marginBottom: 6 },
-
-  toast: { position: 'fixed' as const, bottom: 24, right: 24, background: '#111', color: '#fff', padding: '12px 24px', borderRadius: 10, fontSize: 14, fontWeight: 500, zIndex: 9999, boxShadow: '0 4px 20px rgba(0,0,0,0.15)' },
-};
+const menuStat: React.CSSProperties = { flex: 1, background: '#fff', borderRadius: 16, padding: '16px 20px', textAlign: 'center', border: '1px solid #eee' };
+const menuBtn: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 14, padding: '16px 20px', background: '#fff', border: '1px solid #eee', borderRadius: 14, cursor: 'pointer', fontSize: 14, textAlign: 'left', width: '100%', transition: 'all 0.15s' };
+const buildingCard: React.CSSProperties = { background: '#fff', borderRadius: 14, border: '1px solid #eee', padding: 20, marginBottom: 12 };
+const inputStyle: React.CSSProperties = { width: '100%', padding: '11px 14px', border: '1px solid #ddd', borderRadius: 10, fontSize: 14, outline: 'none', marginBottom: 10, boxSizing: 'border-box', background: '#fafafa' };
+const btnPrimary: React.CSSProperties = { padding: '11px 24px', background: '#111', color: '#fff', border: 'none', borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: 'pointer', width: '100%' };
 
 export default App;
