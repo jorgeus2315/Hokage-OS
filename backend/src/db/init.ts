@@ -1,8 +1,9 @@
 import * as sqlite3 from 'sqlite3';
-import * as path from 'path';
+import path from 'path';
 import { fileURLToPath } from 'url';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 const dbPath = path.resolve(__dirname, '../../data/hokage-os.db');
 
 export const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE, (err) => {
