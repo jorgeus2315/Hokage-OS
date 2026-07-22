@@ -1,11 +1,14 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+dotenv.config();
 import { initSchema } from './db/init.js';
 import { listAgents, createAgent } from './services/agentService.js';
 import { createBusiness } from './services/businessService.js';
 import { approveDecision, rejectDecision, createDecision } from './agents/DecisionHandler.js';
 import { createMessage } from './agents/MessageHandler.js';
+import progressRouter from './routes/progress.js';
+import { askAgent } from './services/aiService.js';
 
 dotenv.config();
 
@@ -41,6 +44,7 @@ app.get('/api/content', async (_req, res) => res.json({ ok: true, data: [] }));
 app.get('/api/market', async (_req, res) => res.json({ ok: true, data: [] }));
 app.get('/api/finance', async (_req, res) => res.json({ ok: true, data: [] }));
 app.get('/api/audit', async (_req, res) => res.json({ ok: true, data: [] }));
+app.use('/api', progressRouter);
 
 app.post('/api/businesses', async (req, res) => {
   try {
@@ -95,6 +99,21 @@ app.put('/api/decisions/:id/reject', async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ ok: false, error: 'No se pudo rechazar la decisión' });
+  }
+});
+
+app.post('/api/agents/:id/ask', async (req, res) => {
+  const { id } = req.params;
+  const { message } = req.body || {};
+  if (!message || !id) {
+    return res.status(400).json({ ok: false, error: 'id y message son requeridos' });
+  }
+  try {
+    const result = await askAgent(Number(id), String(message));
+    res.json(result);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ ok: false, error: 'Error en askAgent' });
   }
 });
 

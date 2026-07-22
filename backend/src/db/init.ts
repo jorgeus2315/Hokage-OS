@@ -135,4 +135,95 @@ export async function initSchema(): Promise<void> {
     details TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
+
+  await run(`CREATE TABLE IF NOT EXISTS agent_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id INTEGER NOT NULL,
+    action TEXT NOT NULL,
+    input TEXT NOT NULL DEFAULT '',
+    output TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'running',
+    started_at TEXT NOT NULL DEFAULT (datetime('now')),
+    finished_at TEXT,
+    tokens_used INTEGER DEFAULT 0,
+    cost REAL DEFAULT 0,
+    FOREIGN KEY (agent_id) REFERENCES agents(id)
+  )`);
+
+  await run(`CREATE TABLE IF NOT EXISTS agent_memory (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id INTEGER NOT NULL,
+    key TEXT NOT NULL,
+    value TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'general',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (agent_id) REFERENCES agents(id)
+  )`);
+
+  await run(`CREATE TABLE IF NOT EXISTS agent_prompts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id INTEGER NOT NULL,
+    prompt_type TEXT NOT NULL DEFAULT 'base',
+    content TEXT NOT NULL,
+    version INTEGER NOT NULL DEFAULT 1,
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (agent_id) REFERENCES agents(id)
+  )`);
+
+  await run(`CREATE TABLE IF NOT EXISTS agent_feedback (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id INTEGER NOT NULL,
+    decision_id INTEGER,
+    feedback_type TEXT NOT NULL,
+    comment TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (agent_id) REFERENCES agents(id)
+  )`);
+
+  await run(`CREATE TABLE IF NOT EXISTS tools (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    category TEXT NOT NULL DEFAULT 'general',
+    config TEXT NOT NULL DEFAULT '{}',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    api_key_ref TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+
+  await run(`CREATE TABLE IF NOT EXISTS agent_tools (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id INTEGER NOT NULL,
+    tool_id INTEGER NOT NULL,
+    permission_level TEXT NOT NULL DEFAULT 'read',
+    max_daily_calls INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (agent_id) REFERENCES agents(id)
+  )`);
+
+  await run(`CREATE TABLE IF NOT EXISTS agent_progress (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity_type TEXT NOT NULL,
+    entity_id INTEGER NOT NULL,
+    xp INTEGER NOT NULL DEFAULT 0,
+    level INTEGER NOT NULL DEFAULT 1,
+    stats TEXT NOT NULL DEFAULT '{}',
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+
+  await run(`CREATE TABLE IF NOT EXISTS achievements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT NOT NULL UNIQUE,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    category TEXT NOT NULL DEFAULT 'general',
+    xp_reward INTEGER NOT NULL DEFAULT 0,
+    condition_type TEXT NOT NULL,
+    condition_value TEXT NOT NULL DEFAULT '{}',
+    icon TEXT,
+    unlocked_by INTEGER,
+    unlocked_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
 }
