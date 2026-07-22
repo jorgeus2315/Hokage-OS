@@ -110,7 +110,10 @@ app.post('/api/agents/:id/ask', async (req, res) => {
   }
   try {
     const result = await askAgent(Number(id), String(message));
-    res.json(result);
+    if (!result.ok) {
+      return res.status(400).json({ ok: false, error: result.error || 'Error en askAgent' });
+    }
+    res.json({ ok: true, data: { response: result.data?.response || '', tokens: result.data?.tokens ?? 0 } });
   } catch (error) {
     console.error(error);
     res.status(500).json({ ok: false, error: 'Error en askAgent' });

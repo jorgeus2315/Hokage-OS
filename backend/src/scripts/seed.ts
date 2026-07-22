@@ -32,7 +32,7 @@ async function seed() {
   ];
   for (const [name, category, enabled] of tools) {
     await run(
-      'INSERT INTO tools (name, category, enabled) VALUES (?, ?, ?)',
+      'INSERT OR IGNORE INTO tools (name, category, enabled) VALUES (?, ?, ?)',
       [name, category, enabled]
     );
   }

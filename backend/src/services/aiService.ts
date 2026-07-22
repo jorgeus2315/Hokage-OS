@@ -4,7 +4,7 @@ const OPENROUTER_BASE = 'https://openrouter.ai/api/v1';
 
 export interface AskResult {
   ok: boolean;
-  response?: string;
+  data?: { response: string; tokens: number };
   error?: string;
 }
 
@@ -16,9 +16,10 @@ export async function askAgent(agentId: number, userMessage: string): Promise<As
     );
     const systemPrompt = promptRow?.content || 'Eres un agente de HOKAGE OS.';
 
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const MODEL = process.env.AI_MODEL || 'anthropic/claude-haiku-4-5';
-if (!OPENROUTER_API_KEY) {      return { ok: false, error: 'Falta OPENROUTER_API_KEY en el entorno' };
+    const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+    const MODEL = process.env.AI_MODEL || 'anthropic/claude-haiku-4-5';
+    if (!OPENROUTER_API_KEY) {
+      return { ok: false, error: 'Falta OPENROUTER_API_KEY en el entorno' };
     }
 
     const url = `${OPENROUTER_BASE}/chat/completions`;
@@ -48,6 +49,10 @@ if (!OPENROUTER_API_KEY) {      return { ok: false, error: 'Falta OPENROUTER_API
     const data = (await res.json()) as any;
     const answer = data?.choices?.[0]?.message?.content || '';
 
+    // Tokens reales de OpenRouter
+    const usage = data?.usage || {};
+    const totalTokens = usage.total_tokens ?? usage.prompt_tokens ?? 0;
+
     // Guardar respuesta en memoria
     await run(
       'INSERT INTO agent_memory (agent_id, key, value, category) VALUES (?, ?, ?, ?)',
@@ -55,13 +60,12 @@ if (!OPENROUTER_API_KEY) {      return { ok: false, error: 'Falta OPENROUTER_API
     );
 
     // Registrar ejecución
-    const runResult = await run(
+    await run(
       'INSERT INTO agent_runs (agent_id, action, status, tokens_used, cost) VALUES (?, ?, ?, ?, ?)',
-      [agentId, 'ask', 'completed', 0, 0]
+      [agentId, 'ask', 'completed', totalTokens, 0]
     );
-    await run('UPDATE agent_runs SET output = ?, finished_at = datetime("now") WHERE id = ?', [answer, runResult.lastID]);
 
-    return { ok: true, response: answer };
+    return { ok: true, data: { response: answer, tokens: totalTokens } };
   } catch (error: any) {
     return { ok: false, error: error?.message || 'Error al consultar OpenRouter' };
   }
