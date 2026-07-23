@@ -15,3 +15,8 @@ export async function createMessage(payload: MessageCreatePayload): Promise<Mess
     created_at: row.created_at,
   };
 }
+
+export async function listMessages(): Promise<any[]> {
+  const { all } = await import("../db/init.js");
+  return all("SELECT * FROM messages ORDER BY created_at DESC LIMIT 50");
+}

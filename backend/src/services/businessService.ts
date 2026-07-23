@@ -16,3 +16,4 @@ export async function createBusiness(payload: BusinessCreatePayload): Promise<Bu
   if (!row) throw new Error('Business not found after insert');
   return row;
 }
+

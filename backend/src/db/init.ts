@@ -38,6 +38,29 @@ export function all<T>(sql: string, params: any[] = []): Promise<T[]> {
   });
 }
 
+export function addEvent(
+  type: string,
+  source: string,
+  payload: Record<string, any>,
+  entityId?: number,
+  correlationId?: string
+): Promise<{ lastID: number }> {
+  const id = `evt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const timestamp = new Date().toISOString();
+  return run(
+    `INSERT INTO events (id, type, source, entity_id, payload, timestamp, correlation_id) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [
+      id,
+      type,
+      source,
+      entityId ?? null,
+      JSON.stringify(payload),
+      timestamp,
+      correlationId ?? null,
+    ]
+  );
+}
+
 export async function initSchema(): Promise<void> {
   await run(`PRAGMA journal_mode = WAL;`);
   await run(`PRAGMA foreign_keys = ON;`);
@@ -225,5 +248,15 @@ export async function initSchema(): Promise<void> {
     unlocked_by INTEGER,
     unlocked_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+
+  await run(`CREATE TABLE IF NOT EXISTS events (
+    id TEXT PRIMARY KEY,
+    type TEXT NOT NULL,
+    source TEXT NOT NULL,
+    entity_id INTEGER,
+    payload TEXT NOT NULL,
+    timestamp TEXT NOT NULL,
+    correlation_id TEXT
   )`);
 }
