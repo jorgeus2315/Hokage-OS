@@ -419,6 +419,115 @@ svg { display: block; flex-shrink: 0; }
 
 .hk-quickrow { display: flex; gap: 8px; }
 
+/* ══════════════ MAPA · ESCENA TYCOON ══════════════ */
+
+.hk-map-layout { display: flex; gap: 16px; align-items: flex-start; }
+.hk-map-rail { width: 200px; flex-shrink: 0; display: flex; flex-direction: column; gap: 12px; }
+.hk-map-center { flex: 1; min-width: 0; }
+
+.hk-rail-title { font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-faint); font-family: var(--font-mono); margin-bottom: 10px; }
+
+.hk-crew-row { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line); cursor: pointer; }
+.hk-crew-row:last-child { border-bottom: none; }
+.hk-crew-row-name { font-size: 11.5px; font-weight: 600; }
+.hk-crew-row-action { font-size: 9.5px; color: var(--ink-faint); font-family: var(--font-mono); }
+
+.hk-scene {
+  position: relative;
+  width: 100%;
+  height: 540px;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(232, 67, 45, 0.05), transparent 55%),
+    repeating-linear-gradient(0deg, transparent, transparent 27px, rgba(255,255,255,0.02) 28px),
+    repeating-linear-gradient(90deg, transparent, transparent 27px, rgba(255,255,255,0.02) 28px);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+@media (max-width: 900px) { .hk-scene { height: 460px; } }
+
+.hk-orbit {
+  position: absolute; left: 50%; top: 50%;
+  border: 1px dashed var(--line);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 0;
+}
+
+.hk-hub {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 128px; height: 128px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 32% 28%, var(--panel-raised), var(--panel));
+  border: 2px solid var(--ember);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  cursor: pointer;
+  z-index: 5;
+  box-shadow: 0 0 0 1px var(--ember-dim), 0 0 34px var(--ember-glow);
+  transition: transform 0.15s ease;
+}
+.hk-hub:hover { transform: translate(-50%, -50%) scale(1.03); }
+.hk-hub::before {
+  content: '';
+  position: absolute; inset: -16px;
+  border-radius: 50%;
+  border: 1px solid var(--ember-dim);
+  opacity: 0.6;
+  animation: hk-hub-ring 3s ease-out infinite;
+}
+@keyframes hk-hub-ring {
+  0% { transform: scale(0.82); opacity: 0.65; }
+  100% { transform: scale(1.3); opacity: 0; }
+}
+.hk-hub-glyph { width: 34px; height: 34px; color: var(--ember); margin-bottom: 6px; }
+.hk-hub-label { font-family: var(--font-display); font-size: 12.5px; font-weight: 700; letter-spacing: 0.03em; }
+.hk-hub-sub { font-size: 9px; color: var(--ink-faint); font-family: var(--font-mono); margin-top: 1px; }
+
+.hk-room {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: 108px;
+  padding: 10px 8px 9px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  text-align: center;
+  cursor: pointer;
+  z-index: 3;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+.hk-room:hover { border-color: var(--line-bright); transform: translate(-50%, -50%) translateY(-2px); }
+.hk-room-alert {
+  position: absolute; top: 5px; right: 5px;
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--ember); box-shadow: 0 0 6px var(--ember);
+  animation: hk-pulse 1.6s ease-in-out infinite;
+}
+.hk-room-glyph { width: 24px; height: 24px; margin: 0 auto 5px; color: var(--ink-dim); }
+.hk-room-name { font-size: 10.5px; font-weight: 700; font-family: var(--font-display); letter-spacing: 0.01em; }
+.hk-room-agent { font-size: 9px; color: var(--ink-faint); margin-top: 2px; font-family: var(--font-mono); }
+
+.hk-token {
+  position: absolute;
+  width: 25px; height: 25px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-mono); font-weight: 700; font-size: 10px; color: #fff;
+  background: var(--signal);
+  border: 2px solid var(--void-deep);
+  transform: translate(-50%, -50%);
+  transition: left 2.8s ease-in-out, top 2.8s ease-in-out;
+  z-index: 6;
+  cursor: pointer;
+  box-shadow: 0 0 8px rgba(0,0,0,0.5);
+}
+.hk-token--working { background: var(--ember); }
+.hk-token-tip {
+  position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
+  font-size: 8.5px; white-space: nowrap;
+  color: var(--ink-faint); margin-top: 3px; font-family: var(--font-mono);
+}
+
 /* ══════════════ BUILDING INTERIOR ══════════════ */
 
 .hk-interior { display: flex; gap: 20px; align-items: flex-start; }

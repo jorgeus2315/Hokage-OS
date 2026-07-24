@@ -1,7 +1,21 @@
+import { useEffect, useRef, useState } from 'react';
 import type { Agent, AgentRun, Decision, WsEvent, Building } from '../shared/types';
 import { BUILDINGS } from '../shared/types';
-import { Panel, Led } from '../shared/ui';
-import { BuildingGlyph, IconComms, IconAlert, IconCrew } from '../shared/icons';
+import { Led } from '../shared/ui';
+import { BuildingGlyph, IconTower, IconComms, IconAlert, IconCrew } from '../shared/icons';
+
+const HUB = BUILDINGS.find((b) => b.id === 'hokage')!;
+const ROOMS = BUILDINGS.filter((b) => b.id !== 'hokage');
+
+// Posiciones en % dentro de la escena: el hub siempre en el centro,
+// las salas repartidas en pentágono a su alrededor.
+const ROOM_POS: Record<string, { x: number; y: number }> = {};
+ROOMS.forEach((room, i) => {
+  const angle = (-90 + (360 / ROOMS.length) * i) * (Math.PI / 180);
+  ROOM_POS[room.id] = { x: 50 + 39 * Math.cos(angle), y: 50 + 37 * Math.sin(angle) };
+});
+
+const RECENT_MS = 5 * 60 * 1000;
 
 export function MapView({
   agents,
@@ -27,26 +41,50 @@ export function MapView({
   onGoCrew: () => void;
 }) {
   const lastRunFor = (agentId: number) => runs.find((r) => r.agent_id === agentId);
+  const isWorking = (agentId: number) => {
+    const last = lastRunFor(agentId);
+    return !!last && Date.now() - new Date(last.started_at).getTime() < RECENT_MS;
+  };
+
+  // Cada agente deambula entre el centro de mando y su sala; si tiene una
+  // ejecución reciente se queda fijo en su sala (está trabajando de verdad).
+  const [atHub, setAtHub] = useState<Record<number, boolean>>({});
+  const runsRef = useRef(runs);
+  runsRef.current = runs;
+
+  useEffect(() => {
+    const timers = agents.map((a) => {
+      const stagger = 2500 + ((a.id * 733) % 4000);
+      return setInterval(() => {
+        setAtHub((prev) => {
+          const last = runsRef.current.find((r) => r.agent_id === a.id);
+          const working = !!last && Date.now() - new Date(last.started_at).getTime() < RECENT_MS;
+          if (working) return prev[a.id] === false ? prev : { ...prev, [a.id]: false };
+          return { ...prev, [a.id]: Math.random() < 0.5 };
+        });
+      }, 4000 + stagger);
+    });
+    return () => timers.forEach(clearInterval);
+  }, [agents]);
 
   return (
-    <div>
-      <Panel className="hk-mb-16">
-        <div className="hk-flex hk-gap-8 hk-mb-16">
-          <Led state="on" />
-          <span className="hk-eyebrow" style={{ color: 'var(--good)' }}>
-            SHIP CREW · {agents.length} ONLINE
-          </span>
-        </div>
-        <div className="hk-crewstrip">
+    <div className="hk-map-layout">
+      <div className="hk-map-rail">
+        <div>
+          <div className="hk-flex hk-gap-8" style={{ marginBottom: 10 }}>
+            <Led state="on" />
+            <span className="hk-rail-title" style={{ marginBottom: 0, color: 'var(--good)' }}>
+              SHIP CREW · {agents.length}
+            </span>
+          </div>
           {agents.map((a) => {
             const building = BUILDINGS.find((b) => b.role === a.role);
             const lastRun = lastRunFor(a.id);
             return (
               <div
-                className="hk-crew-chip"
+                className="hk-crew-row"
                 key={a.id}
                 onClick={() => building && onEnterBuilding(building)}
-                style={{ cursor: building ? 'pointer' : 'default' }}
                 role={building ? 'button' : undefined}
                 tabIndex={building ? 0 : undefined}
                 onKeyDown={(e) => {
@@ -56,78 +94,142 @@ export function MapView({
                   }
                 }}
               >
-                <Led state="on" />
-                <span className="hk-crew-chip-name">{a.name}</span>
-                <span className="hk-crew-chip-action">{lastRun?.action || 'En espera'}</span>
+                <Led state={isWorking(a.id) ? 'alert' : 'on'} />
+                <div>
+                  <div className="hk-crew-row-name">{a.name}</div>
+                  <div className="hk-crew-row-action">{lastRun?.action || 'En espera'}</div>
+                </div>
               </div>
             );
           })}
         </div>
-      </Panel>
 
-      {liveEvents.length > 0 && (
-        <Panel className="hk-mb-16">
-          <div className="hk-eyebrow hk-mb-16">EVENTOS EN VIVO</div>
-          {liveEvents.slice(0, 3).map((e, i) => (
-            <div key={i} style={{ fontSize: 11.5, color: 'var(--ink-dim)', marginBottom: 5 }}>
-              <span
-                style={{
-                  fontWeight: 600,
-                  color: e.type?.includes('error') ? 'var(--ember)' : e.type?.includes('done') ? 'var(--good)' : 'var(--signal)',
+        <div className="hk-quickrow" style={{ flexDirection: 'column' }}>
+          <button className="hk-btn hk-btn--block" onClick={onGoComms}>
+            <IconComms /> Ship Comms {messagesCount > 0 ? `(${messagesCount})` : ''}
+          </button>
+          <button className={`hk-btn hk-btn--block${pending.length > 0 ? ' hk-btn--ghost-danger' : ''}`} onClick={onGoAlerts}>
+            <IconAlert /> Alertas {pending.length > 0 ? `(${pending.length})` : ''}
+          </button>
+          <button className="hk-btn hk-btn--block" onClick={onGoCrew}>
+            <IconCrew /> Equipo
+          </button>
+        </div>
+
+        <div style={{ textAlign: 'center', fontSize: 10, color: connected ? 'var(--good)' : 'var(--ember)', fontFamily: 'var(--font-mono)' }}>
+          WS {connected ? '● conectado' : '○ desconectado'}
+        </div>
+      </div>
+
+      <div className="hk-map-center">
+        <div className="hk-scene">
+          <div className="hk-orbit" style={{ width: '78%', height: '74%' }} />
+
+          <div
+            className="hk-hub"
+            onClick={() => onEnterBuilding(HUB)}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onEnterBuilding(HUB);
+              }
+            }}
+          >
+            <IconTower className="hk-hub-glyph" />
+            <div className="hk-hub-label">HOKAGE</div>
+            <div className="hk-hub-sub">CENTRO DE MANDO</div>
+          </div>
+
+          {ROOMS.map((b) => {
+            const agent = agents.find((a) => a.role === b.role);
+            const pos = ROOM_POS[b.id];
+            const hasPending = pending.some((d) => d.agent_id === agent?.id);
+            return (
+              <div
+                className="hk-room"
+                key={b.id}
+                style={{ left: `${pos.x}%`, top: `${pos.y}%` }}
+                onClick={() => onEnterBuilding(b)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    onEnterBuilding(b);
+                  }
                 }}
               >
-                {e.type}
-              </span>
-              {e.from && <span style={{ color: 'var(--ink-faint)' }}> · {e.from}</span>}
-            </div>
-          ))}
-        </Panel>
-      )}
-
-      <div className="hk-eyebrow hk-mb-16">Selecciona una estación para entrar</div>
-      <div className="hk-building-grid">
-        {BUILDINGS.map((b) => {
-          const agent = agents.find((a) => a.role === b.role);
-          const lastRun = agent ? lastRunFor(agent.id) : undefined;
-          const hasPending = pending.some((d) => d.agent_id === agent?.id);
-          return (
-            <Panel key={b.id} interactive className="hk-building" accent onClick={() => onEnterBuilding(b)}>
-              {hasPending && <div className="hk-building-alert" />}
-              <div className="hk-building-glyph">
-                <BuildingGlyph glyph={b.glyph} />
-              </div>
-              <div className="hk-building-name">{b.name}</div>
-              <div className="hk-building-desc">{b.desc}</div>
-              {agent && (
-                <div className="hk-building-agent">
-                  <div className="hk-building-agent-avatar" style={{ background: 'var(--ember)' }}>
-                    {agent.name[0]}
-                  </div>
-                  <div>
-                    <div className="hk-building-agent-name">{agent.name}</div>
-                    <div className="hk-building-agent-status">{lastRun?.action || 'Activo'}</div>
-                  </div>
+                {hasPending && <div className="hk-room-alert" />}
+                <div className="hk-room-glyph">
+                  <BuildingGlyph glyph={b.glyph} />
                 </div>
-              )}
-            </Panel>
-          );
-        })}
+                <div className="hk-room-name">{b.name}</div>
+                <div className="hk-room-agent">{agent?.name || '—'}</div>
+              </div>
+            );
+          })}
+
+          {(() => {
+            // Sin sala asignada (Hokage/Soporte) → siempre en el anillo del hub.
+            // Trabajando → fijo bajo su sala. Si no, deambula hub ↔ sala.
+            const resolved = agents.map((a) => {
+              const room = ROOMS.find((b) => b.role === a.role);
+              const working = isWorking(a.id);
+              const home = !working && (!room || atHub[a.id] !== false);
+              return { agent: a, room, working, home };
+            });
+            const hubAgents = resolved.filter((r) => r.home);
+
+            return resolved.map(({ agent: a, room, working, home }) => {
+              let target: { x: number; y: number };
+              if (home) {
+                const idx = hubAgents.findIndex((r) => r.agent.id === a.id);
+                const angle = (idx * (360 / Math.max(hubAgents.length, 1)) + 20) * (Math.PI / 180);
+                target = { x: 50 + 21 * Math.cos(angle), y: 50 + 19 * Math.sin(angle) };
+              } else {
+                const rp = ROOM_POS[room!.id];
+                target = { x: rp.x, y: rp.y + 9 };
+              }
+              return (
+                <div
+                  key={a.id}
+                  className={`hk-token${working ? ' hk-token--working' : ''}`}
+                  style={{ left: `${target.x}%`, top: `${target.y}%` }}
+                  onClick={() => room && onEnterBuilding(room)}
+                  title={a.name}
+                >
+                  {a.name[0]}
+                  <span className="hk-token-tip">{a.name}</span>
+                </div>
+              );
+            });
+          })()}
+        </div>
       </div>
 
-      <div className="hk-quickrow" style={{ marginTop: 16 }}>
-        <button className="hk-btn hk-btn--block" onClick={onGoComms}>
-          <IconComms /> Ship Comms {messagesCount > 0 ? `(${messagesCount})` : ''}
-        </button>
-        <button className={`hk-btn hk-btn--block${pending.length > 0 ? ' hk-btn--ghost-danger' : ''}`} onClick={onGoAlerts}>
-          <IconAlert /> Alertas {pending.length > 0 ? `(${pending.length})` : ''}
-        </button>
-        <button className="hk-btn hk-btn--block" onClick={onGoCrew}>
-          <IconCrew /> Equipo
-        </button>
-      </div>
-
-      <div style={{ textAlign: 'center', marginTop: 12, fontSize: 10.5, color: connected ? 'var(--good)' : 'var(--ember)', fontFamily: 'var(--font-mono)' }}>
-        WS {connected ? '● conectado' : '○ desconectado'}
+      <div className="hk-map-rail">
+        <div>
+          <div className="hk-rail-title">EVENTOS EN VIVO</div>
+          {liveEvents.length === 0 ? (
+            <div style={{ fontSize: 11.5, color: 'var(--ink-faint)' }}>Sin eventos todavía.</div>
+          ) : (
+            liveEvents.slice(0, 8).map((e, i) => (
+              <div key={i} style={{ fontSize: 11, color: 'var(--ink-dim)', marginBottom: 7 }}>
+                <span
+                  style={{
+                    fontWeight: 600,
+                    color: e.type?.includes('error') ? 'var(--ember)' : e.type?.includes('done') ? 'var(--good)' : 'var(--signal)',
+                  }}
+                >
+                  {e.type}
+                </span>
+                {e.from && <div style={{ color: 'var(--ink-faint)', fontSize: 10 }}>{e.from}</div>}
+              </div>
+            ))
+          )}
+        </div>
       </div>
     </div>
   );
