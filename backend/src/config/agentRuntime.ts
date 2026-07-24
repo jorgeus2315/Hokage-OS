@@ -58,7 +58,12 @@ const AUTONOMOUS_TASKS: Record<string, { task: string; interval: number }> = {
 
 class AgentRuntime {
   private running = false;
+  private listenersReady = false;
   private timers: Map<string, NodeJS.Timeout> = new Map();
+  // setTimeout del arranque inicial de cada agente, pendientes de disparar.
+  // Sin rastrearlos, un stop() antes de que disparen no los cancela y un
+  // start() posterior los deja correr igual, duplicando ejecuciones.
+  private pendingStarts: NodeJS.Timeout[] = [];
   private lastRun: Map<string, Date> = new Map();
 
   // Iniciar el runtime
@@ -70,8 +75,13 @@ class AgentRuntime {
     this.running = true;
     console.log('[RUNTIME] Iniciando ecosistema de agentes...');
 
-    // Conectar agentes al event bus
-    this.setupEventListeners();
+    // Conectar agentes al event bus (una sola vez: start()/stop() no debe
+    // acumular listeners duplicados en el bus, o cada evento dispararia
+    // sus efectos —p. ej. mensajes— multiples veces)
+    if (!this.listenersReady) {
+      this.setupEventListeners();
+      this.listenersReady = true;
+    }
 
     // Programar tareas autonomas
     this.scheduleAgentTasks();
@@ -84,6 +94,8 @@ class AgentRuntime {
     this.running = false;
     this.timers.forEach(timer => clearInterval(timer));
     this.timers.clear();
+    this.pendingStarts.forEach(timer => clearTimeout(timer));
+    this.pendingStarts = [];
     console.log('[RUNTIME] Ecosistema detenido.');
   }
 
@@ -166,6 +178,7 @@ class AgentRuntime {
   private async scheduleAgentTasks(): Promise<void> {
     // Esperar 5 segundos para que la BD este lista
     await new Promise(r => setTimeout(r, 5000));
+    if (!this.running) return; // se detuvo durante la espera inicial
 
     try {
       const agents = await listAgents();
@@ -177,7 +190,7 @@ class AgentRuntime {
         // Primera ejecucion: esperar un tiempo aleatorio (no todos a la vez)
         const initialDelay = Math.random() * 2 * 60 * 1000; // 0-2 minutos
 
-        setTimeout(async () => {
+        const startTimeout = setTimeout(async () => {
           if (!this.running) return;
           await this.runAgent({
             agentId: agent.id,
@@ -202,6 +215,7 @@ class AgentRuntime {
           this.timers.set(agent.role, timer);
         }, initialDelay);
 
+        this.pendingStarts.push(startTimeout);
         console.log(`[RUNTIME] ${agent.name} programado cada ${config.interval / 60000} min`);
       }
     } catch (error) {
