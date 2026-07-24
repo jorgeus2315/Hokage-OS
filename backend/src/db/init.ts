@@ -1,6 +1,7 @@
 import * as sqlite3 from 'sqlite3';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { modelForRole } from '../config/agentModels.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -36,6 +37,33 @@ export function all<T>(sql: string, params: any[] = []): Promise<T[]> {
       else resolve(rows as T[]);
     });
   });
+}
+
+async function columnExists(table: string, column: string): Promise<boolean> {
+  const columns = await all<{ name: string }>(`PRAGMA table_info(${table})`);
+  return columns.some((c) => c.name === column);
+}
+
+// Migraciones aditivas: nunca borran datos, solo añaden columnas/valores si faltan
+async function runMigrations(): Promise<void> {
+  if (!(await columnExists('agents', 'model'))) {
+    await run(`ALTER TABLE agents ADD COLUMN model TEXT`);
+  }
+  if (!(await columnExists('decisions', 'description'))) {
+    await run(`ALTER TABLE decisions ADD COLUMN description TEXT`);
+  }
+  if (!(await columnExists('decisions', 'reasoning'))) {
+    await run(`ALTER TABLE decisions ADD COLUMN reasoning TEXT`);
+  }
+
+  // Mantener sincronizado el modelo óptimo de cada agente con la fuente de verdad (agentModels.ts)
+  const agents = await all<{ id: number; role: string; model: string | null }>('SELECT id, role, model FROM agents');
+  for (const agent of agents) {
+    const correctModel = modelForRole(agent.role);
+    if (agent.model !== correctModel) {
+      await run('UPDATE agents SET model = ? WHERE id = ?', [correctModel, agent.id]);
+    }
+  }
 }
 
 export function addEvent(
@@ -259,4 +287,6 @@ export async function initSchema(): Promise<void> {
     timestamp TEXT NOT NULL,
     correlation_id TEXT
   )`);
+
+  await runMigrations();
 }

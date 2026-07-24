@@ -3,12 +3,14 @@ export interface Agent {
   name: string;
   role: string;
   status: string;
+  model: string | null;
   created_at: string;
 }
 
 export interface AgentCreatePayload {
   name: string;
   role: string;
+  model?: string;
 }
 
 export interface Business {
@@ -54,6 +56,8 @@ export interface Decision {
   entity_type: string | null;
   entity_id: number | null;
   title: string;
+  description: string | null;
+  reasoning: string | null;
   amount: number | null;
   risk_level: string;
   status: string;
@@ -67,8 +71,8 @@ export interface DecisionCreatePayload {
   entity_type?: string | null;
   entity_id?: number | null;
   title: string;
-  description?: string;
-  reasoning?: string;
+  description?: string | null;
+  reasoning?: string | null;
   amount?: number | null;
   risk_level?: string;
 }

@@ -1,4 +1,5 @@
-import { get, run, all } from '../db/init.js';
+import { get, run } from '../db/init.js';
+import { modelForRole, DEFAULT_MODEL } from '../config/agentModels.js';
 
 const OPENROUTER_BASE = 'https://openrouter.ai/api/v1';
 
@@ -10,14 +11,14 @@ export interface AskResult {
 
 export async function askAgent(agentId: number, userMessage: string): Promise<AskResult> {
   try {
-    const promptRow = await get<any>(
-      'SELECT content FROM agent_prompts WHERE agent_id = ? AND active = 1',
-      [agentId]
-    );
+    const [promptRow, agentRow] = await Promise.all([
+      get<{ content: string }>('SELECT content FROM agent_prompts WHERE agent_id = ? AND active = 1', [agentId]),
+      get<{ role: string; model: string | null }>('SELECT role, model FROM agents WHERE id = ?', [agentId]),
+    ]);
     const systemPrompt = promptRow?.content || 'Eres un agente de HOKAGE OS.';
 
     const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-    const MODEL = process.env.AI_MODEL || 'anthropic/claude-haiku-4-5';
+    const MODEL = agentRow?.model || (agentRow?.role ? modelForRole(agentRow.role) : process.env.AI_MODEL) || DEFAULT_MODEL;
     if (!OPENROUTER_API_KEY) {
       return { ok: false, error: 'Falta OPENROUTER_API_KEY en el entorno' };
     }

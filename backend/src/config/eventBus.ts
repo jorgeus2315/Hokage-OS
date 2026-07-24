@@ -31,20 +31,18 @@ class HokageBus extends EventEmitter {
   private history: AgentEvent[] = [];
   private maxHistory = 100;
 
-  emit(event: string, data: AgentEvent): boolean {
-    this.history.unshift(data);
+  // Publicar evento — único punto de registro/log, sin duplicados
+  publish(data: Omit<AgentEvent, 'timestamp'>): void {
+    const event: AgentEvent = { ...data, timestamp: new Date() };
+
+    this.history.unshift(event);
     if (this.history.length > this.maxHistory) {
       this.history.pop();
     }
-    console.log(`[BUS] ${data.from} → ${data.to || 'todos'} :: ${data.type}`);
-    return super.emit(event, data);
-  }
+    console.log(`[BUS] ${event.from} → ${event.to || 'todos'} :: ${event.type}`);
 
-  // Publicar evento
-  publish(data: Omit<AgentEvent, 'timestamp'>): void {
-    const event: AgentEvent = { ...data, timestamp: new Date() };
-    this.emit(event.type, event);
-    this.emit('*', event); // Listener global para Ship Comms
+    super.emit(event.type, event);
+    super.emit('*', event); // Listener global para Ship Comms
   }
 
   // Suscribirse a un tipo de evento

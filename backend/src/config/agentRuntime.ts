@@ -1,9 +1,8 @@
 import bus from './eventBus.js';
 import { askAgent } from '../services/aiService.js';
 import { listAgents } from '../services/agentService.js';
-import { createDecision } from '../agents/DecisionHandler.js';
-import { createMessage } from '../agents/MessageHandler.js';
-import { run, get, all } from '../db/init.js';
+import { createDecision } from '../services/decisionService.js';
+import { createMessage } from '../services/messageService.js';
 
 // ═══════════════════════════════════════════════════════
 // AGENT RUNTIME — Motor de ejecucion autonoma de agentes
@@ -26,7 +25,7 @@ export interface TaskResult {
 }
 
 // Mapa de tareas autonomas por rol
-const AUTONOMOUS_TASKS: Record<string, { task: string; interval: number; model?: string }> = {
+const AUTONOMOUS_TASKS: Record<string, { task: string; interval: number }> = {
   investigador: {
     task: 'Analiza las tendencias actuales del mercado de productos digitales y Etsy. Detecta 1-2 oportunidades concretas con ROI estimado. Si encuentras algo valioso, indica que quieres proponer una decision.',
     interval: 30 * 60 * 1000, // 30 minutos
@@ -46,6 +45,10 @@ const AUTONOMOUS_TASKS: Record<string, { task: string; interval: number; model?:
   trafico: {
     task: 'Analiza oportunidades de visibilidad y SEO para los productos actuales. Propone 1-2 mejoras concretas.',
     interval: 45 * 60 * 1000, // 45 minutos
+  },
+  soporte: {
+    task: 'Revisa si hay dudas o incidencias de clientes pendientes. Propone mejoras basadas en el feedback reciente. Si no hay nada pendiente, reporta que todo esta al dia.',
+    interval: 40 * 60 * 1000, // 40 minutos
   },
   ceo: {
     task: 'Revisa el estado general del equipo y los negocios. Coordina al equipo y propone la siguiente accion estrategica prioritaria.',
