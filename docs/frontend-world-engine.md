@@ -348,19 +348,121 @@ No se tira nada; se reubica:
 
 ---
 
-## 9. Hoja de ruta
+## 9. Hoja de ruta de ejecución (v2 — plan por fases)
 
-1. **Fase 0 (este documento)** — diseño, sin código.
-2. **Fase 1** — World Engine mínimo: ECS + `WorldCanvas` en Pixi renderizando
-   exactamente lo que ya existe hoy (hub + departamentos + agentes
-   deambulando), para validar que el motor sostiene lo actual antes de
-   añadir nada nuevo.
-3. **Fase 2** — Event Adapter + Animation Director conectados a los eventos
-   reales del backend; aparecen paquetes, documentos y partículas de dinero.
-4. **Fase 3** — Departamentos y tipos visuales pasan de hardcode a tablas
-   (`departments`, `visual_kinds`, `event_reactions`) con endpoints propios.
-5. **Fase 4** — Capa de extensión segura para agentes/IA (registro vía API,
-   validación de esquema, canary + rollback).
+Reemplaza el esbozo anterior con un plan concreto, pensado para que **cada
+fase termine con la app funcionando de punta a punta** (compila, arranca,
+se puede comitear) antes de empezar la siguiente. Ninguna fase reescribe
+`views/`, `panels/`, `shared/` ni `modals/` — todo lo que ya existe
+(Chat, Alertas, Ship Comms, Misiones, el backend entero) sigue funcionando
+igual durante todo el proceso. Solo cambia lo que hay dentro del mapa.
 
-No se construye nada de esto todavía, tal como pediste: es la base para
-decidir con qué empezar de la Fase 1 en adelante.
+### Fase 0 — Hecho
+Diseño arquitectónico (este documento) + mapa tycoon actual en DOM/CSS
+(`MapView.tsx`): hub + 5 salas en pentágono + fichas que deambulan o se
+quedan fijas trabajando. Este es el **contrato visual y funcional mínimo**
+que la Fase 1 debe igualar antes de añadir nada nuevo.
+
+### Fase 1 — World Engine mínimo, paridad visual
+**Objetivo:** mover el mapa de DOM a PixiJS sin añadir ni una función
+nueva. Es el paso de más riesgo técnico (paradigma de render nuevo), así
+que se aísla de cualquier feature nueva.
+
+- Añadir dependencia `pixi.js`.
+- Nuevo módulo `frontend/src/world/` (entidades, componentes, sistemas,
+  `WorldCanvas.tsx`) — carpeta nueva pero aditiva, no toca nada existente.
+- `WorldCanvas` sustituye el `<div className="hk-scene">` de `MapView`;
+  reutiliza el mismo `onEnterBuilding` que ya usan `BuildingView` y el
+  resto — cero cambios en `App.tsx`.
+- Arte: formas/iconos simples (lo que ya hay), todavía sin pixel-art.
+- **Hecho cuando:** el mapa se ve y se comporta igual que hoy, corriendo
+  sobre Pixi.
+
+### Fase 2 — Cámara libre y mundo "infinito"
+- Pan (arrastrar) + zoom (rueda/pellizco) sobre el `Container` de Pixi.
+- Coordenadas de departamento pasan de `%` de pantalla a unidades de mundo
+  fijas (para que el mapa pueda crecer sin recalcular todo).
+- Minimapa simple en una esquina (como en la referencia).
+- **Hecho cuando:** se puede navegar libremente el mismo mapa de la Fase 1.
+
+### Fase 3 — Departamentos como datos, no como array fijo
+- Tabla `departments` nueva (migración aditiva, mismo patrón que ya usa
+  `db/init.ts` para `agents.model`) + `GET/POST /api/departments`.
+- Se siembra con los 6 actuales **más** los que pediste (Shopify, Etsy,
+  Fiverr, Automatizaciones, Recursos Humanos, Servidores...) — los que
+  todavía no tienen agente asignado se muestran igualmente, en estado
+  "sin operar" (el diseño de §4.1 ya contempla 0 agentes por depto).
+- El layout deja de ser "un pentágono de 5" y pasa a "N departamentos en
+  anillos concéntricos".
+- **Hecho cuando:** añadir un departamento es una fila en BD, no un
+  despliegue de frontend.
+
+### Fase 4 — Agentes visibles con estados (arte placeholder)
+- Sistema de animación real (estados idle/working/error → clip), con
+  sprites geométricos simples por ahora — **decisión pendiente tuya**: el
+  pixel-art de la referencia necesita sprites reales (comprados,
+  encargados o generados), y quiero que se decida antes de esta fase, no
+  durante. El sistema se construye para que el arte se pueda enchufar
+  después sin tocar código (es justo lo que permite el registro de
+  "visual kinds" de §6).
+- **Hecho cuando:** cada agente se distingue visualmente por su estado
+  real, con el motor de animación ya desacoplado del arte final.
+
+### Fase 5 — Eventos reales → animación (aquí deja de ser decorativo)
+- Se implementan el Event Adapter y el Animation Director de §3 sobre el
+  vocabulario que **ya existe** en `eventBus.ts` (nada nuevo en backend
+  salvo, si hace falta, emitir `sale.made` desde el flujo de negocio real
+  cuando exista — hoy no hay integración de ventas real, así que ese
+  evento aún no se dispara desde ningún sitio).
+- Paquete viaja en `sale.made`, documento viaja en `content.created`,
+  agente camina a su sala en `agent.task.start`/`done`, badge de alerta en
+  `decision.created`, partícula de dinero en ingresos.
+- **Hecho cuando:** dejar la pantalla abierta unos minutos con el runtime
+  activo muestra actividad real, nunca inventada.
+
+### Fase 6 — Vista de departamento y ficha de agente
+- Clicar una sala/agente en Pixi abre lo que **ya existe**:
+  `BuildingView` + `ChatPanel`/`StatsPanel`/`PipelinePanel`/`AlertsPanel`
+  — solo cambia el disparador (Pixi en vez de un div).
+- Dos paneles nuevos que son casi gratis porque el backend ya los expone:
+  **Memoria** (`GET /api/agent-memory/:id`, ya existe) y **Herramientas**
+  (`GET /api/tools`, ya existe).
+- Vistas específicas por tipo de departamento (catálogo de Shopify, logs
+  del Laboratorio IA...) **requieren integraciones que hoy no existen**
+  (no hay conector de Shopify/Etsy/Fiverr en el backend). Esas salas usan
+  la vista genérica hasta que la integración real se construya —
+  nunca se rellenan con datos falsos.
+- **Hecho cuando:** toda la información de un departamento/agente que ya
+  tenemos backend para mostrar, se ve desde el mapa nuevo.
+
+### Fase 7 — Modo edición
+- Arrastrar para mover un departamento (persiste en la tabla de la Fase
+  3), formulario para añadir departamento, añadir agente (reutiliza
+  `POST /api/agents`, ya existe), redimensionar sala.
+- **Hecho cuando:** reorganizar el mundo no requiere tocar código —
+  mismo principio de "configuración sobre código" de `architecture.md` §16.
+
+### Por qué este orden
+Cada fase es la base estricta de la siguiente (motor → cámara → datos →
+personajes → eventos → paneles → edición), y cada una deja el sistema
+comiteable y funcionando. La Fase 1 es intencionalmente la más aburrida
+(cero features nuevas) porque es la que más puede salir mal — mejor
+descubrirlo ahí que mezclado con diez cosas nuevas a la vez.
+
+### Decisiones ya tomadas (2026-07-25)
+
+1. **Arte pixel-art (Fase 4):** se genera con un modelo de imagen (familia
+   Gemini "Nano Banana"), no se compra asset pack ni se dibuja a mano.
+   Nota técnica: hoy esta sesión de Claude no tiene una herramienta de
+   generación de imagen nativa disponible — para que esto sea real hace
+   falta exponerlo como una **tool más del sistema de agentes** (igual que
+   `EtsyTool`/`PrintifyTool` en `backend/src/tools/`): una `ImageGenTool`
+   que llama a la API de Gemini con una API key propia. Esto se monta en
+   la Fase 4, cuando se decida esa API key — no bloquea las fases 1-3.
+2. **Shopify / Etsy / Fiverr:** no son departamentos propios. Son
+   **canales de venta dentro de Tienda** (el departamento que ya existe,
+   ligado al agente de Tráfico). Cuando la Fase 3 haga los departamentos
+   de datos, Tienda lleva un campo `channels: ['shopify','etsy','fiverr']`
+   en vez de generar tres salas nuevas en el mapa.
+3. **Orden de arranque:** Fase 1, tal como está descrita arriba. Empieza
+   ahora.

@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import type { Agent, AgentRun, Decision, WsEvent, Building } from '../shared/types';
 import { BUILDINGS } from '../shared/types';
 import { Led } from '../shared/ui';
-import { BuildingGlyph, IconTower, IconComms, IconAlert, IconCrew } from '../shared/icons';
+import { IconComms, IconAlert, IconCrew } from '../shared/icons';
+import { WorldCanvas } from '../world';
 
 const HUB = BUILDINGS.find((b) => b.id === 'hokage')!;
 const ROOMS = BUILDINGS.filter((b) => b.id !== 'hokage');
@@ -122,56 +123,22 @@ export function MapView({
       </div>
 
       <div className="hk-map-center">
-        <div className="hk-scene">
-          <div className="hk-orbit" style={{ width: '78%', height: '74%' }} />
-
-          <div
-            className="hk-hub"
-            onClick={() => onEnterBuilding(HUB)}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                onEnterBuilding(HUB);
-              }
-            }}
-          >
-            <IconTower className="hk-hub-glyph" />
-            <div className="hk-hub-label">HOKAGE</div>
-            <div className="hk-hub-sub">CENTRO DE MANDO</div>
-          </div>
-
-          {ROOMS.map((b) => {
+        <WorldCanvas
+          hub={{ label: 'HOKAGE', sublabel: 'CENTRO DE MANDO', onClick: () => onEnterBuilding(HUB) }}
+          rooms={ROOMS.map((b) => {
             const agent = agents.find((a) => a.role === b.role);
             const pos = ROOM_POS[b.id];
-            const hasPending = pending.some((d) => d.agent_id === agent?.id);
-            return (
-              <div
-                className="hk-room"
-                key={b.id}
-                style={{ left: `${pos.x}%`, top: `${pos.y}%` }}
-                onClick={() => onEnterBuilding(b)}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    onEnterBuilding(b);
-                  }
-                }}
-              >
-                {hasPending && <div className="hk-room-alert" />}
-                <div className="hk-room-glyph">
-                  <BuildingGlyph glyph={b.glyph} />
-                </div>
-                <div className="hk-room-name">{b.name}</div>
-                <div className="hk-room-agent">{agent?.name || '—'}</div>
-              </div>
-            );
+            return {
+              id: b.id,
+              x: pos.x,
+              y: pos.y,
+              label: b.name,
+              sublabel: agent?.name || '—',
+              pending: pending.some((d) => d.agent_id === agent?.id),
+              onClick: () => onEnterBuilding(b),
+            };
           })}
-
-          {(() => {
+          tokens={(() => {
             // Sin sala asignada (Hokage/Soporte) → siempre en el anillo del hub.
             // Trabajando → fijo bajo su sala. Si no, deambula hub ↔ sala.
             const resolved = agents.map((a) => {
@@ -192,21 +159,17 @@ export function MapView({
                 const rp = ROOM_POS[room!.id];
                 target = { x: rp.x, y: rp.y + 9 };
               }
-              return (
-                <div
-                  key={a.id}
-                  className={`hk-token${working ? ' hk-token--working' : ''}`}
-                  style={{ left: `${target.x}%`, top: `${target.y}%` }}
-                  onClick={() => room && onEnterBuilding(room)}
-                  title={a.name}
-                >
-                  {a.name[0]}
-                  <span className="hk-token-tip">{a.name}</span>
-                </div>
-              );
+              return {
+                id: String(a.id),
+                x: target.x,
+                y: target.y,
+                label: a.name,
+                working,
+                onClick: room ? () => onEnterBuilding(room) : undefined,
+              };
             });
           })()}
-        </div>
+        />
       </div>
 
       <div className="hk-map-rail">
