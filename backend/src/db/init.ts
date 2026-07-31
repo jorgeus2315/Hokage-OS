@@ -288,5 +288,44 @@ export async function initSchema(): Promise<void> {
     correlation_id TEXT
   )`);
 
+  await run(`CREATE TABLE IF NOT EXISTS departments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    key TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    desc TEXT NOT NULL DEFAULT '',
+    role TEXT NOT NULL,
+    glyph TEXT NOT NULL DEFAULT 'default',
+    color TEXT NOT NULL DEFAULT '#4fd1c5',
+    pos_x REAL NOT NULL DEFAULT 1000,
+    pos_y REAL NOT NULL DEFAULT 1000,
+    is_hub INTEGER NOT NULL DEFAULT 0,
+    active INTEGER NOT NULL DEFAULT 1,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+
+  const deptCount = await get<{ count: number }>('SELECT COUNT(*) as count FROM departments');
+  if (!deptCount || deptCount.count === 0) await seedDepartments();
+
   await runMigrations();
+}
+
+async function seedDepartments(): Promise<void> {
+  // Posiciones precalculadas del pentágono (WORLD_CENTER={1000,1000}, RADIO=400)
+  const seed = [
+    { key: 'hokage', name: 'Torre Hokage', desc: 'Centro de mando', role: 'ceo',          glyph: 'tower',    color: '#e8432d', pos_x: 1000,   pos_y: 1000,   is_hub: 1, sort_order: 0 },
+    { key: 'lab',    name: 'Laboratorio',  desc: 'Investigación',   role: 'investigador',  glyph: 'lab',      color: '#4fd1c5', pos_x: 1000,   pos_y: 600,    is_hub: 0, sort_order: 1 },
+    { key: 'estudio',name: 'Estudio',      desc: 'Fábrica contenido',role: 'contenido',    glyph: 'studio',   color: '#c77dff', pos_x: 1380.4, pos_y: 876.4,  is_hub: 0, sort_order: 2 },
+    { key: 'tienda', name: 'Tienda',       desc: 'Sala de ventas',  role: 'trafico',       glyph: 'shop',     color: '#f0a93b', pos_x: 1235.1, pos_y: 1323.6, is_hub: 0, sort_order: 3 },
+    { key: 'banco',  name: 'Banco',        desc: 'Sala financiera', role: 'finanzas',      glyph: 'bank',     color: '#3ecf6a', pos_x: 764.9,  pos_y: 1323.6, is_hub: 0, sort_order: 4 },
+    { key: 'taller', name: 'Taller',       desc: 'Sala técnica',    role: 'operaciones',   glyph: 'workshop', color: '#4f8cff', pos_x: 619.6,  pos_y: 876.4,  is_hub: 0, sort_order: 5 },
+  ];
+  for (const d of seed) {
+    await run(
+      `INSERT INTO departments (key,name,desc,role,glyph,color,pos_x,pos_y,is_hub,sort_order)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      [d.key, d.name, d.desc, d.role, d.glyph, d.color, d.pos_x, d.pos_y, d.is_hub, d.sort_order]
+    );
+  }
+  console.log('[DB] Departamentos sembrados correctamente');
 }

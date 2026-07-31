@@ -6,7 +6,8 @@ dotenv.config();
 import { createServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 
-import { initSchema } from './db/init.js';
+import { run, get, all, initSchema } from './db/init.js';
+import type { Department, DepartmentUpdatePayload } from './types/index.js';
 import { listAgents, createAgent } from './services/agentService.js';
 import { createBusiness, listBusinesses } from './services/businessService.js';
 import { approveDecision, rejectDecision, createDecision, listDecisions } from './services/decisionService.js';
@@ -180,6 +181,43 @@ app.post('/api/runtime/start', (_req, res) => {
 app.post('/api/runtime/stop', (_req, res) => {
   runtime.stop();
   res.json({ ok: true, data: { running: false } });
+});
+
+// ═══════════ DEPARTAMENTOS ═══════════
+app.get('/api/departments', async (_req, res) => {
+  try {
+    const depts = await all<Department>('SELECT * FROM departments WHERE active = 1 ORDER BY sort_order ASC');
+    res.json({ ok: true, data: depts });
+  } catch { res.status(500).json({ ok: false, error: 'Error listando departamentos' }); }
+});
+
+app.post('/api/departments', async (req, res) => {
+  try {
+    const { key, name, desc = '', role, glyph = 'default', color = '#4fd1c5', pos_x = 1000, pos_y = 1000, is_hub = 0, sort_order = 0 } = req.body;
+    if (!key || !name || !role) return res.status(400).json({ ok: false, error: 'Faltan campos obligatorios: key, name, role' });
+    const existing = await get<Department>('SELECT id FROM departments WHERE key = ?', [key]);
+    if (existing) return res.status(409).json({ ok: false, error: `Ya existe un departamento con key "${key}"` });
+    const result = await run(
+      `INSERT INTO departments (key,name,desc,role,glyph,color,pos_x,pos_y,is_hub,sort_order) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      [key, name, desc, role, glyph, color, pos_x, pos_y, is_hub, sort_order]
+    );
+    const dept = await get<Department>('SELECT * FROM departments WHERE id = ?', [result.lastID]);
+    res.status(201).json({ ok: true, data: dept });
+  } catch (e: any) { res.status(400).json({ ok: false, error: e.message }); }
+});
+
+app.put('/api/departments/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const payload = req.body as DepartmentUpdatePayload;
+    const allowed: (keyof DepartmentUpdatePayload)[] = ['name', 'desc', 'color', 'pos_x', 'pos_y', 'active'];
+    const sets = allowed.filter((k) => payload[k] !== undefined).map((k) => `${k} = ?`);
+    const vals = allowed.filter((k) => payload[k] !== undefined).map((k) => payload[k]);
+    if (sets.length === 0) return res.status(400).json({ ok: false, error: 'Sin campos a actualizar' });
+    await run(`UPDATE departments SET ${sets.join(', ')} WHERE id = ?`, [...vals, id]);
+    const dept = await get<Department>('SELECT * FROM departments WHERE id = ?', [id]);
+    res.json({ ok: true, data: dept });
+  } catch (e: any) { res.status(400).json({ ok: false, error: e.message }); }
 });
 
 // ═══════════ EVENTOS DEL BUS ═══════════

@@ -5,20 +5,15 @@ import { Led } from '../shared/ui';
 import { IconComms, IconAlert, IconCrew } from '../shared/icons';
 import { WorldCanvas } from '../world';
 
-const HUB = BUILDINGS.find((b) => b.id === 'hokage')!;
-const ROOMS = BUILDINGS.filter((b) => b.id !== 'hokage');
-
-// Posiciones en % dentro de la escena: el hub siempre en el centro,
-// las salas repartidas en pentágono a su alrededor.
-const ROOM_POS: Record<string, { x: number; y: number }> = {};
-ROOMS.forEach((room, i) => {
-  const angle = (-90 + (360 / ROOMS.length) * i) * (Math.PI / 180);
-  ROOM_POS[room.id] = { x: 50 + 39 * Math.cos(angle), y: 50 + 37 * Math.sin(angle) };
-});
+const WORLD_CENTER = { x: 1000, y: 1000 };
+const ROOM_RADIUS = 400;
+const TOKEN_ORBIT = 220;
+const TOKEN_ROOM_OFFSET = 50;
 
 const RECENT_MS = 5 * 60 * 1000;
 
 export function MapView({
+  departments: departmentsProp,
   agents,
   runs,
   pending,
@@ -30,6 +25,7 @@ export function MapView({
   onGoAlerts,
   onGoCrew,
 }: {
+  departments?: Building[];
   agents: Agent[];
   runs: AgentRun[];
   pending: Decision[];
@@ -41,6 +37,20 @@ export function MapView({
   onGoAlerts: () => void;
   onGoCrew: () => void;
 }) {
+  const allDepts = departmentsProp && departmentsProp.length > 0 ? departmentsProp : BUILDINGS;
+  const HUB = allDepts.find((b) => b.is_hub || b.id === 'hokage') ?? allDepts[0];
+  const ROOMS = allDepts.filter((b) => !b.is_hub && b.id !== 'hokage');
+
+  const ROOM_POS: Record<string, { x: number; y: number }> = {};
+  ROOMS.forEach((room, i) => {
+    if (room.pos_x !== undefined && room.pos_y !== undefined) {
+      ROOM_POS[room.id] = { x: room.pos_x, y: room.pos_y };
+    } else {
+      const angle = (-90 + (360 / ROOMS.length) * i) * (Math.PI / 180);
+      ROOM_POS[room.id] = { x: WORLD_CENTER.x + ROOM_RADIUS * Math.cos(angle), y: WORLD_CENTER.y + ROOM_RADIUS * Math.sin(angle) };
+    }
+  });
+
   const lastRunFor = (agentId: number) => runs.find((r) => r.agent_id === agentId);
   const isWorking = (agentId: number) => {
     const last = lastRunFor(agentId);
@@ -79,7 +89,7 @@ export function MapView({
             </span>
           </div>
           {agents.map((a) => {
-            const building = BUILDINGS.find((b) => b.role === a.role);
+            const building = allDepts.find((b) => b.role === a.role);
             const lastRun = lastRunFor(a.id);
             return (
               <div
@@ -124,7 +134,7 @@ export function MapView({
 
       <div className="hk-map-center">
         <WorldCanvas
-          hub={{ label: 'HOKAGE', sublabel: 'CENTRO DE MANDO', onClick: () => onEnterBuilding(HUB) }}
+          hub={{ label: 'HOKAGE', sublabel: 'CENTRO DE MANDO', x: HUB.pos_x ?? WORLD_CENTER.x, y: HUB.pos_y ?? WORLD_CENTER.y, onClick: () => onEnterBuilding(HUB) }}
           rooms={ROOMS.map((b) => {
             const agent = agents.find((a) => a.role === b.role);
             const pos = ROOM_POS[b.id];
@@ -135,6 +145,7 @@ export function MapView({
               label: b.name,
               sublabel: agent?.name || '—',
               pending: pending.some((d) => d.agent_id === agent?.id),
+              color: Number(b.color.replace('#', '0x')),
               onClick: () => onEnterBuilding(b),
             };
           })}
@@ -154,10 +165,13 @@ export function MapView({
               if (home) {
                 const idx = hubAgents.findIndex((r) => r.agent.id === a.id);
                 const angle = (idx * (360 / Math.max(hubAgents.length, 1)) + 20) * (Math.PI / 180);
-                target = { x: 50 + 21 * Math.cos(angle), y: 50 + 19 * Math.sin(angle) };
+                target = {
+                  x: WORLD_CENTER.x + TOKEN_ORBIT * Math.cos(angle),
+                  y: WORLD_CENTER.y + TOKEN_ORBIT * Math.sin(angle),
+                };
               } else {
                 const rp = ROOM_POS[room!.id];
-                target = { x: rp.x, y: rp.y + 9 };
+                target = { x: rp.x, y: rp.y + TOKEN_ROOM_OFFSET };
               }
               return {
                 id: String(a.id),

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { Agent, Business, Decision, Achievement, AgentRun, CommMsg, WsEvent, WsEnvelope, ChatMsg, Building, Screen, BuildingSection } from './shared';
+import { BUILDINGS } from './shared';
 import { api, useWebSocket, TopBar } from './shared';
 import { BootView, MenuView, MapView, BuildingView, CommsView, MissionsView, AlertsView, CrewView } from './views';
 import { Toast } from './modals';
@@ -18,6 +19,7 @@ export default function App() {
   const [level, setLevel] = useState(1);
   const [runtimeOn, setRuntimeOn] = useState(false);
   const [toast, setToast] = useState('');
+  const [departments, setDepartments] = useState<Building[]>(BUILDINGS);
 
   const [activeBuilding, setActiveBuilding] = useState<Building | null>(null);
   const [section, setSection] = useState<BuildingSection>('chat');
@@ -62,6 +64,11 @@ export default function App() {
       setLevel(data[0].level);
     }
   }, []);
+  const loadDepartments = useCallback(async () => {
+    const data = await api.departments();
+    if (data && data.length > 0) setDepartments(data);
+  }, []);
+
   const loadRuntimeStatus = useCallback(async () => {
     const data = await api.runtimeStatus();
     if (data) setRuntimeOn(data.running);
@@ -87,6 +94,7 @@ export default function App() {
   const wsConnected = useWebSocket(handleWsEvent);
 
   useEffect(() => {
+    loadDepartments();
     loadAgents();
     loadBusinesses();
     loadDecisions();
@@ -217,6 +225,7 @@ export default function App() {
       <div className="hk-shell" style={{ maxWidth: screen === 'building' || screen === 'comms' ? 1180 : 760 }}>
         {screen === 'map' && (
           <MapView
+            departments={departments}
             agents={agents}
             runs={runs}
             pending={pending}

@@ -149,6 +149,31 @@ export interface FinanceCreatePayload {
   source?: string | null;
 }
 
+export interface Department {
+  id: number;
+  key: string;
+  name: string;
+  desc: string;
+  role: string;
+  glyph: string;
+  color: string;
+  pos_x: number;
+  pos_y: number;
+  is_hub: number;
+  active: number;
+  sort_order: number;
+  created_at: string;
+}
+
+export interface DepartmentUpdatePayload {
+  name?: string;
+  desc?: string;
+  color?: string;
+  pos_x?: number;
+  pos_y?: number;
+  active?: number;
+}
+
 export interface AuditLog {
   id: number;
   action: string;

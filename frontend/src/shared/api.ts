@@ -36,6 +36,15 @@ export const api = {
   approve: (id: number) => req(`/decisions/${id}/approve`, { method: 'PUT' }),
   reject: (id: number) => req(`/decisions/${id}/reject`, { method: 'PUT' }),
 
+  departments: async (): Promise<import('./types').Building[] | null> => {
+    type Raw = { id: number; key: string; name: string; desc: string; role: string; glyph: string; color: string; pos_x: number; pos_y: number; is_hub: number };
+    const raw = await req<Raw[]>('/departments');
+    if (!raw) return null;
+    return raw.map((d) => ({ id: d.key, name: d.name, desc: d.desc, role: d.role, glyph: d.glyph, color: d.color, db_id: d.id, pos_x: d.pos_x, pos_y: d.pos_y, is_hub: d.is_hub === 1 }));
+  },
+  updateDepartment: (dbId: number, payload: { name?: string; desc?: string; color?: string; pos_x?: number; pos_y?: number; active?: number }) =>
+    req(`/departments/${dbId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }),
+
   runtimeStatus: () => req<{ running: boolean }>('/runtime/status'),
   runtimeStart: () => req('/runtime/start', { method: 'POST' }),
   runtimeStop: () => req('/runtime/stop', { method: 'POST' }),

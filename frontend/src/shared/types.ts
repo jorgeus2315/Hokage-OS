@@ -85,6 +85,11 @@ export interface Building {
   role: string;
   glyph: string;
   color: string;
+  // Fase 3: campos opcionales cuando viene de la BD
+  db_id?: number;
+  pos_x?: number;
+  pos_y?: number;
+  is_hub?: boolean;
 }
 
 export type Screen = 'boot' | 'menu' | 'map' | 'building' | 'crew' | 'missions' | 'alerts' | 'comms';
