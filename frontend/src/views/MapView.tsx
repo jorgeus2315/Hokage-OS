@@ -11,6 +11,7 @@ const TOKEN_ORBIT = 220;
 const TOKEN_ROOM_OFFSET = 50;
 
 const RECENT_MS = 5 * 60 * 1000;
+const JUST_ACTED_MS = 30_000;
 
 export function MapView({
   departments: departmentsProp,
@@ -55,6 +56,10 @@ export function MapView({
   const isWorking = (agentId: number) => {
     const last = lastRunFor(agentId);
     return !!last && Date.now() - new Date(last.started_at).getTime() < RECENT_MS;
+  };
+  const isJustActed = (agentId: number) => {
+    const last = lastRunFor(agentId);
+    return !!last && Date.now() - new Date(last.started_at).getTime() < JUST_ACTED_MS;
   };
 
   // Cada agente deambula entre el centro de mando y su sala; si tiene una
@@ -105,7 +110,7 @@ export function MapView({
                   }
                 }}
               >
-                <Led state={isWorking(a.id) ? 'alert' : 'on'} />
+                <Led state={isJustActed(a.id) ? 'signal' : isWorking(a.id) ? 'alert' : 'on'} />
                 <div>
                   <div className="hk-crew-row-name">{a.name}</div>
                   <div className="hk-crew-row-action">{lastRun?.action || 'En espera'}</div>
@@ -138,20 +143,22 @@ export function MapView({
           rooms={ROOMS.map((b) => {
             const agent = agents.find((a) => a.role === b.role);
             const pos = ROOM_POS[b.id];
+            const agentWorking = !!agent && isWorking(agent.id);
+            const currentAction = agent ? lastRunFor(agent.id)?.action : undefined;
             return {
               id: b.id,
               x: pos.x,
               y: pos.y,
               label: b.name,
-              sublabel: agent?.name || '—',
+              // Muestra la acción actual si el agente está trabajando
+              sublabel: agentWorking && currentAction ? currentAction : (agent?.name || '—'),
               pending: pending.some((d) => d.agent_id === agent?.id),
+              active: agentWorking,
               color: Number(b.color.replace('#', '0x')),
               onClick: () => onEnterBuilding(b),
             };
           })}
           tokens={(() => {
-            // Sin sala asignada (Hokage/Soporte) → siempre en el anillo del hub.
-            // Trabajando → fijo bajo su sala. Si no, deambula hub ↔ sala.
             const resolved = agents.map((a) => {
               const room = ROOMS.find((b) => b.role === a.role);
               const working = isWorking(a.id);
@@ -179,6 +186,8 @@ export function MapView({
                 y: target.y,
                 label: a.name,
                 working,
+                justActed: isJustActed(a.id),
+                action: lastRunFor(a.id)?.action,
                 onClick: room ? () => onEnterBuilding(room) : undefined,
               };
             });

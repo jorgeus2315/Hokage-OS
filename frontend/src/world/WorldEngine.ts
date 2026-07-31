@@ -1,12 +1,12 @@
 import type { Vec2, WorldNode } from './types';
 
-// Fracción de la distancia al objetivo que se recorre en cada tick.
-// Sustituye a las CSS transitions: el motor interpola la posición cada
-// frame, con independencia del ciclo de render de React.
 const EASE = 0.06;
+const TRAIL_EVERY = 5;   // frames entre cada punto del trail
+const TRAIL_MAX = 7;     // máx puntos en el historial
 
 export class WorldEngine {
   private nodes = new Map<string, WorldNode>();
+  private frame = 0;
 
   upsert(id: string, initial: Vec2, color: number, label: string): WorldNode {
     const existing = this.nodes.get(id);
@@ -15,7 +15,7 @@ export class WorldEngine {
       existing.label = label;
       return existing;
     }
-    const node: WorldNode = { id, pos: { ...initial }, target: { ...initial }, color, label };
+    const node: WorldNode = { id, pos: { ...initial }, target: { ...initial }, color, label, trail: [] };
     this.nodes.set(id, node);
     return node;
   }
@@ -41,9 +41,15 @@ export class WorldEngine {
     this.nodes.clear();
   }
 
-  // MovementSystem: se llama una vez por frame.
   tick(): void {
+    this.frame++;
+    const recordTrail = this.frame % TRAIL_EVERY === 0;
+
     for (const node of this.nodes.values()) {
+      if (recordTrail) {
+        node.trail.push({ ...node.pos });
+        if (node.trail.length > TRAIL_MAX) node.trail.shift();
+      }
       node.pos.x += (node.target.x - node.pos.x) * EASE;
       node.pos.y += (node.target.y - node.pos.y) * EASE;
     }

@@ -9,29 +9,36 @@ export interface WorldNode {
   target: Vec2;
   color: number;
   label: string;
+  trail: Vec2[];  // historial de posiciones para trail de movimiento
 }
 
 export interface HubDescriptor {
   label: string;
   sublabel: string;
+  x: number;
+  y: number;
   onClick: () => void;
 }
 
 export interface RoomDescriptor {
   id: string;
-  x: number; // % 0-100 dentro de la escena
+  x: number;
   y: number;
   label: string;
   sublabel: string;
   pending: boolean;
+  active: boolean;  // agente trabajando activamente aquí ahora mismo
+  color: number;
   onClick: () => void;
 }
 
 export interface TokenDescriptor {
   id: string;
-  x: number; // % objetivo — el motor interpola el movimiento real
+  x: number;
   y: number;
   label: string;
   working: boolean;
+  justActed?: boolean;  // actuó en los últimos 30s — animación intensa
+  action?: string;      // texto de la acción actual
   onClick?: () => void;
 }
