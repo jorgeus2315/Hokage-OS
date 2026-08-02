@@ -18,7 +18,6 @@ export const AGENT_MODELS: Record<string, string> = {
 
 // Modelos con soporte real de function calling vía OpenRouter.
 // Llama 3.1 8B no soporta tools de forma fiable → se excluye.
-// Añadir aquí cuando se confirme soporte en un nuevo modelo.
 const TOOL_CAPABLE_MODELS = new Set([
   'anthropic/claude-sonnet-4.5',
   'anthropic/claude-haiku-4.5',
@@ -26,12 +25,26 @@ const TOOL_CAPABLE_MODELS = new Set([
   'google/gemini-flash-1.5',
 ]);
 
+// Tools disponibles por rol. Solo se incluyen en la llamada a OpenRouter
+// si el modelo del agente soporta function calling.
+const AGENT_TOOLS: Record<string, string[]> = {
+  ceo:          ['web.browser'],
+  investigador: ['google.trends', 'web.browser'],
+  contenido:    ['web.browser'],
+  trafico:      ['google.trends', 'web.browser'],
+  finanzas:     [],
+  operaciones:  [],
+  soporte:      [],
+};
+
 export function modelForRole(role: string): string {
   return AGENT_MODELS[role] || DEFAULT_MODEL;
 }
 
-// Determina si el modelo soporta function calling.
-// Usar en aiService.ts antes de incluir el campo `tools` en la petición a OpenRouter.
 export function modelSupportsTools(model: string): boolean {
   return TOOL_CAPABLE_MODELS.has(model);
+}
+
+export function toolsForRole(role: string): string[] {
+  return AGENT_TOOLS[role] || [];
 }

@@ -290,6 +290,39 @@ export async function initSchema(): Promise<void> {
   await run(`CREATE INDEX IF NOT EXISTS idx_work_items_agent_status ON work_items(agent_id, status)`);
   await run(`CREATE INDEX IF NOT EXISTS idx_work_items_priority ON work_items(priority DESC, created_at ASC)`);
 
+  await run(`CREATE TABLE IF NOT EXISTS agent_costs (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id        INTEGER NOT NULL REFERENCES agents(id),
+    business_id     INTEGER REFERENCES businesses(id),
+    work_item_id    INTEGER REFERENCES work_items(id),
+    tokens_in       INTEGER DEFAULT 0,
+    tokens_out      INTEGER DEFAULT 0,
+    llm_cost_usd    REAL DEFAULT 0,
+    tool_cost_usd   REAL DEFAULT 0,
+    created_at      TEXT DEFAULT (datetime('now'))
+  )`);
+
+  await run(`CREATE INDEX IF NOT EXISTS idx_agent_costs_agent ON agent_costs(agent_id, created_at)`);
+
+  await run(`CREATE TABLE IF NOT EXISTS agent_budgets (
+    agent_id          INTEGER PRIMARY KEY REFERENCES agents(id),
+    monthly_limit_usd REAL NOT NULL DEFAULT 5.0,
+    current_month_usd REAL NOT NULL DEFAULT 0,
+    reset_date        TEXT NOT NULL DEFAULT (strftime('%Y-%m-01', 'now', '+1 month')),
+    status            TEXT NOT NULL DEFAULT 'active'
+  )`);
+
+  await run(`CREATE TABLE IF NOT EXISTS tool_runs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    tool_id     TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'completed',
+    ok          INTEGER NOT NULL DEFAULT 1,
+    error       TEXT,
+    cost        REAL DEFAULT 0,
+    duration_ms INTEGER DEFAULT 0,
+    created_at  TEXT DEFAULT (datetime('now'))
+  )`);
+
   await run(`CREATE TABLE IF NOT EXISTS departments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     key TEXT NOT NULL UNIQUE,

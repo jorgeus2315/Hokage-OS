@@ -309,6 +309,23 @@ INSTRUCCIONES DE FORMATO:
     );
 
     for (const item of pending) {
+      // Verificar presupuesto antes de asignar
+      const budget = await get<{ monthly_limit_usd: number; current_month_usd: number; status: string }>(
+        'SELECT monthly_limit_usd, current_month_usd, status FROM agent_budgets WHERE agent_id = ?',
+        [item.agent_id]
+      );
+      if (budget) {
+        const pct = budget.current_month_usd / budget.monthly_limit_usd;
+        if (budget.status === 'paused' || pct >= 1.0) {
+          console.warn(`[STAGE2] Agente ${item.agent_id} bloqueado por presupuesto (${(pct * 100).toFixed(0)}%)`);
+          await run(`UPDATE work_items SET status = 'cancelled', resolved_at = datetime('now') WHERE id = ?`, [item.id]);
+          continue;
+        }
+        if (pct >= 0.8) {
+          console.warn(`[STAGE2] Agente ${item.agent_id} al ${(pct * 100).toFixed(0)}% del límite mensual`);
+        }
+      }
+
       await run(
         `UPDATE work_items SET status = 'in_progress', locked_at = ? WHERE id = ? AND status = 'pending'`,
         [nowIso(), item.id]
