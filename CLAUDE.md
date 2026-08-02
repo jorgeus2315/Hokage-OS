@@ -27,24 +27,55 @@
 
 ---
 
-## 3. FLUJO DE TRABAJO
+## 3. POLÍTICA DE SKILLS — OBLIGATORIA ANTES DE CADA TAREA
+
+Antes de generar cualquier solución, código o respuesta técnica:
+
+1. **Descubrir** las skills disponibles con `Skill tool` o leyendo `~/.claude/skills/`.
+2. **Seleccionar** la más adecuada para la tarea actual.
+3. **Justificar** la elección si varias skills aplican (una línea basta).
+4. **Ejecutar** la skill antes de producir cualquier solución.
+5. **Omitir** solo si ninguna skill resulta apropiada — en ese caso, indicarlo explícitamente.
+
+### Skills automáticas por situación
+
+| Situación | Skill a invocar |
+|-----------|----------------|
+| Cualquier cambio visual en React | `frontend-design` |
+| Planificar algo nuevo antes de codificar | `napkin` |
+| Animaciones, micro-interacciones, polish | `emil-design-eng` |
+| Bug difícil o regresión inesperada | `diagnose` |
+| Detectar bugs reales con número de línea | `find-bugs` |
+| Revisar código propio antes de hacer commit | `caveman-review` |
+| Escribir mensaje de commit | `caveman-commit` |
+| Refactorizar o simplificar código complejo | `caveman` o `simplify` |
+| Tests antes de implementar | `tdd-hybrid` |
+| Mejorar arquitectura | `improve-codebase-architecture` |
+| Conectar nueva API externa (Etsy, Printify…) | `mcp-builder` |
+
+Esta política forma parte del flujo de trabajo. No es opcional.
+
+---
+
+## 4. FLUJO DE TRABAJO
 
 Orden recomendado al iniciar sesión:
 
 1. Leer memoria permanente relevante.
 2. Leer `Roadmap.md` para identificar la fase y siguiente tarea.
-3. Leer `ARCHITECTURE.md` solo si la tarea toca arquitectura.
-4. Leer archivos afectados por la tarea.
-5. Planificar en máximo 1 documento corto: qué cambia, qué no cambia, riesgos.
-6. Programar.
-7. Compilar.
-8. Verificar.
-9. Hacer commit con mensaje claro.
-10. Guardar memoria solo si queda una lección duradera.
+3. **Aplicar política de skills** (§3) según la naturaleza de la tarea.
+4. Leer `ARCHITECTURE.md` solo si la tarea toca arquitectura.
+5. Leer archivos afectados por la tarea.
+6. Planificar en máximo 1 documento corto: qué cambia, qué no cambia, riesgos.
+7. Programar.
+8. Compilar.
+9. Verificar.
+10. Hacer commit con mensaje claro.
+11. Guardar memoria solo si queda una lección duradera.
 
 ---
 
-## 4. DOCUMENTACIÓN OFICIAL
+## 5. DOCUMENTACIÓN OFICIAL
 
 | Documento | Qué contiene | Cuándo leerlo |
 |---|---|---|
@@ -58,7 +89,7 @@ Regla: no copies contenido. Solo enlázalo conceptualmente desde tu razonamiento
 
 ---
 
-## 5. REGLAS ABSOLUTAS
+## 6. REGLAS ABSOLUTAS
 
 - Nunca hardcodear secretos ni API keys.
 - Nunca romper el contrato del Event Bus.
@@ -70,7 +101,7 @@ Regla: no copies contenido. Solo enlázalo conceptualmente desde tu razonamiento
 
 ---
 
-## 6. TOMA DE DECISIONES
+## 7. TOMA DE DECISIONES
 
 Orden de prioridad:
 
@@ -86,7 +117,7 @@ Si la tarea entra en conflicto con filosofía o reglas, se detiene y se expone l
 
 ---
 
-## 7. MODELO MENTAL
+## 8. MODELO MENTAL
 
 - **Backend:** cerebro del sistema.
 - **Frontend:** representación visual del cerebro.
@@ -99,7 +130,7 @@ Consecuencia operativa: el frontend nunca debe hacer lógica de negocio. Los age
 
 ---
 
-## 8. CHECKLIST
+## 9. CHECKLIST
 
 Antes de finalizar cualquier tarea:
 
@@ -115,7 +146,7 @@ Antes de finalizar cualquier tarea:
 
 ---
 
-## 9. MEMORIA
+## 10. MEMORIA
 
 - Guardar solo hechos duraderos: convenciones, decisiones estructurales, errores recurrentes, configuraciones estables.
 - No guardar progreso temporal, logs de ejecución, IDs efímeros ni tareas pendientes triviales.
@@ -124,7 +155,7 @@ Antes de finalizar cualquier tarea:
 
 ---
 
-## 10. PROMPT ENGINEERING
+## 11. PROMPT ENGINEERING
 
 - Leer solo los documentos necesarios para la tarea actual.
 - No releer archivos ya confirmados en la misma sesión a menos que cambien.
