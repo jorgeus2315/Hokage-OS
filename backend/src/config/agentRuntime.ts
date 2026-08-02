@@ -169,6 +169,7 @@ class AgentRuntime {
 
 INSTRUCCIONES DE FORMATO:
 - Si detectas una tendencia de mercado accionable, añade: [TENDENCIA: keyword | descripcion breve]
+- Si acabas de crear contenido listo para distribuir, añade: [CONTENIDO: keyword | resumen de 1 linea]
 - Si necesitas que Jorge apruebe algo (publicar contenido, gastar dinero, cambiar configuración), añade: [DECISION: título en menos de 80 caracteres]
 - Si descubres un hecho relevante para recordar en el futuro, añade: [MEMORIA: clave_snake_case=valor en menos de 150 caracteres] (máximo 3 por respuesta)
 - Usa los marcadores solo cuando realmente sean necesarios.`;
@@ -314,8 +315,8 @@ INSTRUCCIONES DE FORMATO:
             content: `Contenido listo para "${payload.keyword}". Necesito análisis SEO y plan de distribución.`,
             channel: 'internal',
           });
+          console.log(`[STAGE6] Pipeline derivado: contenido → tráfico`);
         }
-        console.log(`[STAGE6] Pipeline derivado: contenido → tráfico`);
       }
     }
   }

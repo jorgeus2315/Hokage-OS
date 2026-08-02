@@ -9,8 +9,9 @@ const MAX_TOOL_TURNS  = 3; // máx iteraciones tool_call → resultado → LLM
 // Precios por millón de tokens (input/output) por modelo OpenRouter
 // Fuente: openrouter.ai/models — actualizar si cambian
 const MODEL_PRICES: Record<string, { in: number; out: number }> = {
-  'anthropic/claude-sonnet-4-5':          { in: 3.00,  out: 15.00 },
-  'anthropic/claude-haiku-4-5':           { in: 0.80,  out: 4.00  },
+  'anthropic/claude-sonnet-4.5':          { in: 3.00,  out: 15.00 },
+  'anthropic/claude-haiku-4.5':           { in: 0.80,  out: 4.00  },
+  'google/gemini-2.5-flash':              { in: 0.15,  out: 0.60  },
   'google/gemini-flash-1.5':              { in: 0.075, out: 0.30  },
   'meta-llama/llama-3.1-8b-instruct':    { in: 0.06,  out: 0.06  },
 };
@@ -120,10 +121,12 @@ export async function askAgent(agentId: number, userMessage: string): Promise<As
       }
 
       const data = (await res.json()) as any;
-      const usage = data?.usage || {};
-      tokensIn    += usage.prompt_tokens     ?? 0;
-      tokensOut   += usage.completion_tokens ?? 0;
-      totalTokens += usage.total_tokens ?? (tokensIn + tokensOut);
+      const usage    = data?.usage || {};
+      const turnIn   = usage.prompt_tokens     ?? 0;
+      const turnOut  = usage.completion_tokens ?? 0;
+      tokensIn    += turnIn;
+      tokensOut   += turnOut;
+      totalTokens += usage.total_tokens ?? (turnIn + turnOut);
 
       const choice    = data?.choices?.[0];
       const message   = choice?.message;
