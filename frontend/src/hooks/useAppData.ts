@@ -83,6 +83,27 @@ export function useAppData(): AppData {
   }, []);
 
   const handleWsEvent = useCallback((envelope: { type: string; data?: unknown }) => {
+    // Snapshot inicial: sustituye el estado REST con datos frescos del servidor
+    if (envelope.type === 'initial_snapshot' && envelope.data && typeof envelope.data === 'object') {
+      const snap = envelope.data as {
+        agents?: Agent[];
+        decisions?: Decision[];
+        departments?: Building[];
+        recent_events?: WsEvent[];
+      };
+      if (snap.agents)       setAgents(snap.agents);
+      if (snap.decisions)    setDecisions(snap.decisions);
+      if (snap.recent_events) setLiveEvents(snap.recent_events.slice(0, 50));
+      if (snap.departments)  setDepartments(
+        snap.departments.map((d: any) => ({
+          id: d.key, name: d.name, desc: d.desc, role: d.role,
+          glyph: d.glyph, color: d.color, db_id: d.id,
+          pos_x: d.pos_x, pos_y: d.pos_y, is_hub: d.is_hub === 1,
+        }))
+      );
+      return;
+    }
+
     if (envelope.type === 'agent.event' && envelope.data && typeof envelope.data === 'object') {
       const inner = envelope.data as WsEvent;
       setLiveEvents((prev) => [inner, ...prev].slice(0, 50));
@@ -106,11 +127,6 @@ export function useAppData(): AppData {
     loadMessages();
     loadProgress();
     loadRuntimeStatus();
-    const pollTimer = setInterval(() => {
-      loadDecisions();
-      loadRuns();
-    }, 15000);
-    return () => clearInterval(pollTimer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

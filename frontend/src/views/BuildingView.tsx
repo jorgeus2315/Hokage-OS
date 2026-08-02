@@ -139,7 +139,7 @@ export function BuildingView({
           )}
           {section === 'feed' && <LiveFeedPanel events={agentEvents} />}
           {section === 'stats' && <StatsPanel runs={runs} decisions={decisions} messages={messagesForAgent} />}
-          {section === 'pipeline' && <PipelinePanel runs={runs} />}
+          {section === 'pipeline' && <PipelinePanel agentId={agent?.id} />}
           {section === 'alerts' && <AlertsPanel decisions={pendingForAgent} onApprove={onApprove} onReject={onReject} />}
         </Panel>
       </div>

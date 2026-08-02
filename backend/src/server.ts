@@ -85,7 +85,7 @@ app.use('/api/runtime', runtimeLimiter);
 const wss = new WebSocketServer({ server: httpServer });
 const clients = new Set<WebSocket>();
 
-wss.on('connection', (ws, req) => {
+wss.on('connection', async (ws, req) => {
   const token = new URL(req.url || '', 'http://localhost').searchParams.get('token') || '';
   if (!token || token !== ADMIN_TOKEN) {
     ws.close(1008, 'Token inválido o faltante');
@@ -94,8 +94,31 @@ wss.on('connection', (ws, req) => {
 
   clients.add(ws);
   console.log(`[WS] Cliente conectado. Total: ${clients.size}`);
-  ws.send(JSON.stringify({ type: 'connected', data: { message: 'HOKAGE OS conectado' } }));
   ws.on('close', () => { clients.delete(ws); });
+
+  // Snapshot inicial — el cliente no necesita REST para el arranque
+  try {
+    const [agents, decisions, departments] = await Promise.all([
+      listAgents(),
+      listDecisions(),
+      all<{ id: number; key: string; name: string; desc: string; role: string; glyph: string; color: string; pos_x: number; pos_y: number; is_hub: number }>(
+        'SELECT * FROM departments WHERE active = 1 ORDER BY sort_order ASC'
+      ),
+    ]);
+    ws.send(JSON.stringify({
+      type: 'initial_snapshot',
+      data: {
+        agents,
+        decisions,
+        departments,
+        recent_events: bus.getHistory(30),
+        timestamp: new Date().toISOString(),
+      },
+    }));
+  } catch (err) {
+    console.error('[WS] Error enviando snapshot inicial:', err);
+    ws.send(JSON.stringify({ type: 'connected', data: { message: 'HOKAGE OS conectado' } }));
+  }
 });
 
 // Broadcast a todos los clientes WebSocket
@@ -294,6 +317,28 @@ app.put('/api/departments/:id', requireAdmin, async (req, res) => {
     res.json({ ok: true, data: dept });
   } catch (e: any) { sendError(res, 400, e, 'Error actualizando departamento'); }
 });
+// Work items por agente — fuente de verdad del Pipeline tab
+app.get('/api/agents/:id/work-items', async (req, res) => {
+  try {
+    const agentId = Number(req.params.id);
+    const items = await all<{
+      id: number; agent_id: number; type: string; priority: number;
+      status: string; context: string | null; result: string | null;
+      locked_at: string | null; retry_count: number; created_at: string; resolved_at: string | null;
+    }>(
+      `SELECT id, agent_id, type, priority, status, context, result, locked_at, retry_count, created_at, resolved_at
+       FROM work_items
+       WHERE agent_id = ?
+       ORDER BY
+         CASE status WHEN 'in_progress' THEN 0 WHEN 'pending' THEN 1 WHEN 'failed' THEN 2 WHEN 'done' THEN 3 ELSE 4 END,
+         priority DESC, created_at DESC
+       LIMIT 30`,
+      [agentId]
+    );
+    res.json({ ok: true, data: items });
+  } catch (e: any) { sendError(res, 500, e, 'Error listando work items'); }
+});
+
 app.get('/api/events', requireAdmin, (_req, res) => {
   res.json({ ok: true, data: bus.getHistory(50) });
 });

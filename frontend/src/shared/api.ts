@@ -73,6 +73,8 @@ export const api = {
   updateDepartment: (dbId: number, payload: { name?: string; desc?: string; color?: string; pos_x?: number; pos_y?: number; active?: number }) =>
     req(`/departments/${dbId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }),
 
+  workItems: (agentId: number) => req<import('./types').WorkItem[]>(`/agents/${agentId}/work-items`),
+
   runtimeStatus: () => req<{ running: boolean }>('/runtime/status'),
   runtimeStart: () => req('/runtime/start', { method: 'POST' }),
   runtimeStop: () => req('/runtime/stop', { method: 'POST' }),

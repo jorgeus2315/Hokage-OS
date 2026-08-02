@@ -92,6 +92,20 @@ export interface Building {
   is_hub?: boolean;
 }
 
+export interface WorkItem {
+  id: number;
+  agent_id: number;
+  type: 'autonomous_run' | 'event_triggered' | 'decision_execution';
+  priority: number;
+  status: 'pending' | 'in_progress' | 'done' | 'failed' | 'cancelled';
+  context: string | null;
+  result: string | null;
+  locked_at: string | null;
+  retry_count: number;
+  created_at: string;
+  resolved_at: string | null;
+}
+
 export type Screen = 'boot' | 'menu' | 'map' | 'building' | 'crew' | 'missions' | 'alerts' | 'comms';
 
 export type BuildingSection = 'chat' | 'feed' | 'stats' | 'pipeline' | 'alerts';
