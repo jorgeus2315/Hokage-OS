@@ -219,10 +219,15 @@ function buildToken(): PIXI.Container {
 
   const tip = makeText('', { fontSize: 7.5, fill: COLOR.inkDim });
   tip.anchor.set(0.5);
-  tip.position.set(0, 24);
+  tip.position.set(0, 26);
 
-  container.addChild(ringOuter, ring, diamond, inner, label, tip);
-  Object.assign(container, { __ring: ring, __ringOuter: ringOuter, __diamond: diamond, __label: label, __tip: tip });
+  // Fondo de burbuja de acción — visible solo cuando el agente tiene texto de acción
+  const bubble = new PIXI.Graphics();
+  bubble.visible = false;
+  bubble.position.set(0, 0);
+
+  container.addChild(ringOuter, ring, diamond, inner, label, bubble, tip);
+  Object.assign(container, { __ring: ring, __ringOuter: ringOuter, __diamond: diamond, __label: label, __tip: tip, __bubble: bubble });
   return container;
 }
 
@@ -495,17 +500,35 @@ export function WorldCanvas({
             __diamond: PIXI.Graphics;
             __label: PIXI.Text;
             __tip: PIXI.Text;
+            __bubble: PIXI.Graphics;
           }> | undefined;
           if (!gfx) continue;
 
           gfx.position.set(node.pos.x, node.pos.y);
           gfx.__diamond.tint = node.color;
           gfx.__label.text = node.label[0]?.toUpperCase() || '';
-          gfx.__tip.text = node.label;
 
           const state = tokenState.get(node.id);
           const isWorking = state?.working ?? false;
           const isJustActed = state?.justActed ?? false;
+
+          // Burbuja de acción: muestra qué está haciendo el agente ahora mismo
+          const actionText = (isWorking || isJustActed) ? (state?.action || '') : '';
+          if (actionText) {
+            const truncated = actionText.length > 22 ? actionText.slice(0, 22) + '…' : actionText;
+            gfx.__tip.text = truncated;
+            gfx.__tip.style.fill = isJustActed ? COLOR.amber : COLOR.signal;
+            const bw = Math.min(truncated.length * 5.4 + 16, 148);
+            gfx.__bubble.clear()
+              .roundRect(-bw / 2, 18, bw, 13, 3)
+              .fill({ color: COLOR.panel, alpha: 0.88 })
+              .stroke({ width: 0.5, color: isJustActed ? COLOR.amber : COLOR.signal, alpha: 0.5 });
+            gfx.__bubble.visible = true;
+          } else {
+            gfx.__tip.text = node.label;
+            gfx.__tip.style.fill = COLOR.inkDim;
+            gfx.__bubble.visible = false;
+          }
 
           if (isJustActed) {
             // Estado más intenso: anillo doble pulsante, rotación del diamante

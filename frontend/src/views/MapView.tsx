@@ -8,7 +8,6 @@ import { WorldCanvas } from '../world';
 const WORLD_CENTER = { x: 1000, y: 1000 };
 const ROOM_RADIUS = 400;
 const TOKEN_ORBIT = 220;
-const TOKEN_ROOM_OFFSET = 50;
 
 const RECENT_MS = 5 * 60 * 1000;
 const JUST_ACTED_MS = 30_000;
@@ -62,8 +61,7 @@ export function MapView({
     return !!last && Date.now() - new Date(last.started_at).getTime() < JUST_ACTED_MS;
   };
 
-  // Cada agente deambula entre el centro de mando y su sala; si tiene una
-  // ejecución reciente se queda fijo en su sala (está trabajando de verdad).
+  // Wander hub↔sala: si trabaja se queda en la sala, si idle puede ir al hub.
   const [atHub, setAtHub] = useState<Record<number, boolean>>({});
   const runsRef = useRef(runs);
   runsRef.current = runs;
@@ -79,6 +77,23 @@ export function MapView({
           return { ...prev, [a.id]: Math.random() < 0.5 };
         });
       }, 4000 + stagger);
+    });
+    return () => timers.forEach(clearInterval);
+  }, [agents]);
+
+  // Wander dentro de la sala: offset aleatorio que cambia cada 3-6s por agente.
+  // Hace que los agentes se muevan por su departamento en vez de quedarse fijos.
+  const [roomWander, setRoomWander] = useState<Record<number, { dx: number; dy: number }>>({});
+  useEffect(() => {
+    if (!agents.length) return;
+    const timers = agents.map((a) => {
+      const interval = 3200 + ((a.id * 613) % 2800);
+      return setInterval(() => {
+        setRoomWander((prev) => ({
+          ...prev,
+          [a.id]: { dx: (Math.random() - 0.5) * 60, dy: (Math.random() - 0.5) * 28 },
+        }));
+      }, interval);
     });
     return () => timers.forEach(clearInterval);
   }, [agents]);
@@ -178,7 +193,8 @@ export function MapView({
                 };
               } else {
                 const rp = ROOM_POS[room!.id];
-                target = { x: rp.x, y: rp.y + TOKEN_ROOM_OFFSET };
+                const w = roomWander[a.id] ?? { dx: 0, dy: 0 };
+                target = { x: rp.x + w.dx, y: rp.y + w.dy };
               }
               return {
                 id: String(a.id),
