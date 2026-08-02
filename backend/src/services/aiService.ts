@@ -6,6 +6,21 @@ const OPENROUTER_BASE = 'https://openrouter.ai/api/v1';
 const AI_TIMEOUT_MS   = 120_000;
 const MAX_TOOL_TURNS  = 3; // máx iteraciones tool_call → resultado → LLM
 
+// Precios por millón de tokens (input/output) por modelo OpenRouter
+// Fuente: openrouter.ai/models — actualizar si cambian
+const MODEL_PRICES: Record<string, { in: number; out: number }> = {
+  'anthropic/claude-sonnet-4-5':          { in: 3.00,  out: 15.00 },
+  'anthropic/claude-haiku-4-5':           { in: 0.80,  out: 4.00  },
+  'google/gemini-flash-1.5':              { in: 0.075, out: 0.30  },
+  'meta-llama/llama-3.1-8b-instruct':    { in: 0.06,  out: 0.06  },
+};
+const DEFAULT_PRICE = { in: 1.00, out: 5.00 }; // fallback conservador
+
+function calcCostUsd(model: string, tokensIn: number, tokensOut: number): number {
+  const price = MODEL_PRICES[model] ?? DEFAULT_PRICE;
+  return (tokensIn * price.in + tokensOut * price.out) / 1_000_000;
+}
+
 function openRouterHeaders(apiKey: string): Record<string, string> {
   return {
     'Content-Type': 'application/json',
@@ -82,6 +97,8 @@ export async function askAgent(agentId: number, userMessage: string): Promise<As
 
     const url = `${OPENROUTER_BASE}/chat/completions`;
     let totalTokens = 0;
+    let tokensIn = 0;
+    let tokensOut = 0;
     let finalResponse = '';
 
     // Loop de function calling (máx MAX_TOOL_TURNS iteraciones)
@@ -104,7 +121,9 @@ export async function askAgent(agentId: number, userMessage: string): Promise<As
 
       const data = (await res.json()) as any;
       const usage = data?.usage || {};
-      totalTokens += usage.total_tokens ?? usage.prompt_tokens ?? 0;
+      tokensIn    += usage.prompt_tokens     ?? 0;
+      tokensOut   += usage.completion_tokens ?? 0;
+      totalTokens += usage.total_tokens ?? (tokensIn + tokensOut);
 
       const choice    = data?.choices?.[0];
       const message   = choice?.message;
@@ -138,17 +157,27 @@ export async function askAgent(agentId: number, userMessage: string): Promise<As
       }
     }
 
+    const costUsd = calcCostUsd(MODEL, tokensIn, tokensOut);
+
     // Persistir en agent_runs
     await run(
       'INSERT INTO agent_runs (agent_id, action, status, tokens_used, cost) VALUES (?, ?, ?, ?, ?)',
-      [agentId, 'ask', 'completed', totalTokens, 0]
+      [agentId, 'ask', 'completed', totalTokens, costUsd]
     );
 
     // Registrar coste en agent_costs
     await run(
-      'INSERT INTO agent_costs (agent_id, tokens_in, tokens_out) VALUES (?, ?, ?)',
-      [agentId, 0, totalTokens]
-    ).catch(() => {}); // no bloquear si la tabla aún no existe
+      'INSERT INTO agent_costs (agent_id, tokens_in, tokens_out, llm_cost_usd) VALUES (?, ?, ?, ?)',
+      [agentId, tokensIn, tokensOut, costUsd]
+    ).catch(() => {});
+
+    // Actualizar gasto mensual en agent_budgets (upsert — crea la fila si no existe)
+    await run(
+      `INSERT INTO agent_budgets (agent_id, monthly_limit_usd, current_month_usd)
+       VALUES (?, 5.0, ?)
+       ON CONFLICT(agent_id) DO UPDATE SET current_month_usd = current_month_usd + ?`,
+      [agentId, costUsd, costUsd]
+    ).catch(() => {});
 
     return { ok: true, data: { response: finalResponse, tokens: totalTokens } };
   } catch (error: any) {
