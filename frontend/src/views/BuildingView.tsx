@@ -1,4 +1,4 @@
-import type { Agent, AgentRun, Decision, WsEvent, CommMsg, ChatMsg, Building, BuildingSection } from '../shared/types';
+import type { Agent, WsEvent, ChatMsg, Building, BuildingSection, Decision } from '../shared/types';
 import { ROLES } from '../shared/types';
 import { Panel, Led, Badge } from '../shared/ui';
 import { BuildingGlyph, SectionIcon, IconPlay } from '../shared/icons';
@@ -27,10 +27,7 @@ export function BuildingView({
   onChangeChatInput,
   onSendChat,
   liveEvents,
-  runs,
-  decisions,
   pendingForAgent,
-  messagesForAgent,
   onApprove,
   onReject,
   onRunNow,
@@ -45,10 +42,7 @@ export function BuildingView({
   onChangeChatInput: (v: string) => void;
   onSendChat: () => void;
   liveEvents: WsEvent[];
-  runs: AgentRun[];
-  decisions: Decision[];
   pendingForAgent: Decision[];
-  messagesForAgent: CommMsg[];
   onApprove: (id: number) => void;
   onReject: (id: number) => void;
   onRunNow: () => void;
@@ -138,7 +132,7 @@ export function BuildingView({
             />
           )}
           {section === 'feed' && <LiveFeedPanel events={agentEvents} />}
-          {section === 'stats' && <StatsPanel runs={runs} decisions={decisions} messages={messagesForAgent} />}
+          {section === 'stats' && <StatsPanel agentId={agent?.id} />}
           {section === 'pipeline' && <PipelinePanel agentId={agent?.id} />}
           {section === 'alerts' && <AlertsPanel decisions={pendingForAgent} onApprove={onApprove} onReject={onReject} />}
         </Panel>

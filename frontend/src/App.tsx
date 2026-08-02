@@ -15,7 +15,7 @@ export default function App() {
   const [toast, setToast] = useState('');
 
   const {
-    agents, businesses, decisions, achievements, runs, messages, liveEvents,
+    agents, businesses, achievements, runs, messages, liveEvents,
     departments, xp, level, runtimeOn, pending, wsConnected, reload,
   } = useAppData();
 
@@ -114,10 +114,7 @@ export default function App() {
   };
 
   const buildingAgent = activeBuilding ? agents.find((a) => a.role === activeBuilding.role) : undefined;
-  const runsForAgent = buildingAgent ? runs.filter((r) => r.agent_id === buildingAgent.id) : [];
-  const decisionsForAgent = buildingAgent ? decisions.filter((d) => d.agent_id === buildingAgent.id) : [];
   const pendingForAgent = buildingAgent ? pending.filter((d) => d.agent_id === buildingAgent.id) : [];
-  const messagesForAgent = buildingAgent ? messages.filter((m) => m.sender_id === buildingAgent.id) : [];
 
   return (
     <div className="hk-app">
@@ -160,10 +157,7 @@ export default function App() {
             onChangeChatInput={setChatInput}
             onSendChat={sendChat}
             liveEvents={liveEvents}
-            runs={runsForAgent}
-            decisions={decisionsForAgent}
             pendingForAgent={pendingForAgent}
-            messagesForAgent={messagesForAgent}
             onApprove={approve}
             onReject={reject}
             onRunNow={runNow}

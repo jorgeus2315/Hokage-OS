@@ -32,7 +32,7 @@ const AUTONOMOUS_TASKS: Record<string, { task: string; interval: number }> = {
     interval: 30 * 60 * 1000,
   },
   contenido: {
-    task: 'Revisa tu contexto de trabajo. Si recibes una tendencia del Explorador, crea una descripcion de producto SEO-optimizada (titulo, descripcion, 5 tags). Cuando el contenido este listo para publicar, añade: [DECISION: Publicar contenido SEO — keyword]. Si no hay trabajo, reporta estado.',
+    task: 'Revisa tu contexto de trabajo. Si recibes una tendencia del Explorador, crea una descripcion de producto SEO-optimizada (titulo, descripcion, 5 tags). Cuando termines añade: [CONTENIDO: keyword | resumen de 1 linea] y [DECISION: Publicar contenido SEO — keyword]. Si no hay trabajo nuevo, reporta estado brevemente.',
     interval: 20 * 60 * 1000,
   },
   finanzas: {
@@ -194,6 +194,19 @@ INSTRUCCIONES DE FORMATO:
         await writeAgentMemory(task.agentId, match[1].trim().toLowerCase(), match[2].trim());
       }
 
+      // Contenido listo del Escritor → dispara pipeline Tráfico
+      const contenidoMatches = [...response.matchAll(/\[CONTENIDO:\s*([^|]{2,60})\|([^\]]{5,120})\]/gi)];
+      for (const match of contenidoMatches.slice(0, 2)) {
+        const keyword = match[1].trim();
+        const summary = match[2].trim();
+        bus.publish({
+          type: 'content.created',
+          from: task.agentName,
+          payload: { keyword, summary, agentId: task.agentId, createdAt: nowIso() },
+        });
+        console.log(`[PIPELINE] content.created → ${keyword}`);
+      }
+
       // Tendencias detectadas por el Explorador → dispara pipeline Escritor
       const tendenciaMatches = [...response.matchAll(/\[TENDENCIA:\s*([^|]{2,60})\|([^\]]{5,120})\]/gi)];
       for (const match of tendenciaMatches.slice(0, 3)) {
@@ -245,7 +258,7 @@ INSTRUCCIONES DE FORMATO:
       await this.stage2_assignWork();
       await this.stage3_executeAgents();   // incluye Etapa 5 (guardar resultado) inline
       await this.stage4_checkTTLs();
-      // Etapa 6 (pipeline derivado) — Fase 2
+      // Etapa 6: pipeline derivado gestionado via bus eventos en stage1_drainBusEvents
       await this.stage7_closeDecisionLoop();
       await this.stage8_updateMetrics();
     } catch (error) {
@@ -268,19 +281,41 @@ INSTRUCCIONES DE FORMATO:
       if (event.type === 'trend.detected') {
         const escritor = agents.find((a) => a.role === 'contenido');
         if (escritor) {
+          const payload = event.payload as { keyword?: string; description?: string };
           await createWorkItem({
             agentId: escritor.id,
             type: 'event_triggered',
             priority: 7,
-            context: `Nueva tendencia detectada: ${JSON.stringify(event.payload)}. Crea contenido optimizado para esta tendencia.`,
+            context: `Tendencia detectada por el Explorador — keyword: "${payload.keyword}". ${payload.description ?? ''}. Crea contenido SEO optimizado (titulo, descripcion, 5 tags). Cuando termines añade: [CONTENIDO: ${payload.keyword} | resumen breve] y [DECISION: Publicar contenido SEO — ${payload.keyword}]`,
           });
           await createMessage({
             sender_id: agents.find((a) => a.role === 'investigador')?.id ?? 1,
             receiver_id: escritor.id,
-            content: `Tendencia detectada: ${JSON.stringify(event.payload)}`,
+            content: `Tendencia detectada: "${payload.keyword}" — ${payload.description ?? ''}`,
             channel: 'internal',
           });
         }
+      }
+
+      // Stage 6: contenido listo → Tráfico analiza SEO y visibilidad
+      if (event.type === 'content.created') {
+        const trafico = agents.find((a) => a.role === 'trafico');
+        if (trafico) {
+          const payload = event.payload as { keyword?: string; summary?: string };
+          await createWorkItem({
+            agentId: trafico.id,
+            type: 'event_triggered',
+            priority: 6,
+            context: `El Escritor ha creado contenido para la keyword "${payload.keyword}". Resumen: ${payload.summary ?? ''}. Analiza oportunidades SEO adicionales, hashtags y canales de distribución para maximizar visibilidad. Propón 2-3 acciones concretas.`,
+          });
+          await createMessage({
+            sender_id: agents.find((a) => a.role === 'contenido')?.id ?? 1,
+            receiver_id: trafico.id,
+            content: `Contenido listo para "${payload.keyword}". Necesito análisis SEO y plan de distribución.`,
+            channel: 'internal',
+          });
+        }
+        console.log(`[STAGE6] Pipeline derivado: contenido → tráfico`);
       }
     }
   }
@@ -464,6 +499,7 @@ INSTRUCCIONES DE FORMATO:
   // Bus listeners: solo encolar, nunca procesar inline
   private setupEventListeners(): void {
     bus.subscribe('trend.detected',    (event) => this.busEventQueue.push(event));
+    bus.subscribe('content.created',   (event) => this.busEventQueue.push(event));
     bus.subscribe('decision.approved', (event) => this.busEventQueue.push(event));
     bus.subscribe('decision.created',  (event) => this.busEventQueue.push(event));
     bus.subscribe('sale.made',         (event) => this.busEventQueue.push(event));

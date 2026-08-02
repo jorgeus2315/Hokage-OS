@@ -339,6 +339,55 @@ app.get('/api/agents/:id/work-items', async (req, res) => {
   } catch (e: any) { sendError(res, 500, e, 'Error listando work items'); }
 });
 
+app.get('/api/agents/:id/stats', async (req, res) => {
+  try {
+    const agentId = Number(req.params.id);
+    const [runs, costs, workItems, decisions] = await Promise.all([
+      all<{ status: string; tokens_used: number; started_at: string }>(
+        `SELECT status, tokens_used, started_at FROM agent_runs WHERE agent_id = ? ORDER BY started_at DESC LIMIT 200`,
+        [agentId]
+      ),
+      get<{ tokens_in: number; tokens_out: number; cost_sum: number }>(
+        `SELECT COALESCE(SUM(tokens_in),0) as tokens_in, COALESCE(SUM(tokens_out),0) as tokens_out,
+                COALESCE(SUM(llm_cost_usd),0) as cost_sum
+         FROM agent_costs WHERE agent_id = ?`,
+        [agentId]
+      ),
+      get<{ active: number; pending: number }>(
+        `SELECT SUM(CASE WHEN status='in_progress' THEN 1 ELSE 0 END) as active,
+                SUM(CASE WHEN status='pending'     THEN 1 ELSE 0 END) as pending
+         FROM work_items WHERE agent_id = ?`,
+        [agentId]
+      ),
+      get<{ proposed: number }>(
+        `SELECT COUNT(*) as proposed FROM decisions WHERE agent_id = ? AND status IN ('proposed','pending')`,
+        [agentId]
+      ),
+    ]);
+
+    const total = runs.length;
+    const successful = runs.filter(r => r.status === 'completed').length;
+    const failed     = runs.filter(r => r.status === 'failed').length;
+    const lastRunAt  = runs[0]?.started_at ?? null;
+
+    res.json({
+      ok: true,
+      data: {
+        total_runs: total,
+        successful_runs: successful,
+        failed_runs: failed,
+        success_rate: total ? Math.round((successful / total) * 100) : null,
+        total_tokens: (costs?.tokens_in ?? 0) + (costs?.tokens_out ?? 0),
+        total_cost_usd: Number((costs?.cost_sum ?? 0).toFixed(4)),
+        active_work_items: workItems?.active ?? 0,
+        pending_work_items: workItems?.pending ?? 0,
+        pending_decisions: decisions?.proposed ?? 0,
+        last_run_at: lastRunAt,
+      },
+    });
+  } catch (e: any) { sendError(res, 500, e, 'Error calculando stats del agente'); }
+});
+
 app.get('/api/events', requireAdmin, (_req, res) => {
   res.json({ ok: true, data: bus.getHistory(50) });
 });
