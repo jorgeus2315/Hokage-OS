@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Agent, AgentRun, Decision, WsEvent, Building } from '../shared/types';
-import { BUILDINGS } from '../shared/types';
+import { BUILDINGS } from '../shared/constants';
 import { Led } from '../shared/ui';
 import { IconComms, IconAlert, IconCrew } from '../shared/icons';
 import { WorldCanvas } from '../world';

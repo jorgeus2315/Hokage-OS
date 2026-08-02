@@ -1,4 +1,5 @@
 import { EventEmitter } from 'events';
+import { addEvent } from '../db/init.js';
 
 // ═══════════════════════════════════════════════════════
 // EVENT BUS — Comunicacion entre agentes en tiempo real
@@ -43,6 +44,10 @@ class HokageBus extends EventEmitter {
 
     super.emit(event.type, event);
     super.emit('*', event); // Listener global para Ship Comms
+
+    // Persistir en disco sin bloquear el bus si la BD falla
+    addEvent(event.type, event.from, event.payload)
+      .catch((err) => console.error('[BUS] Error persistiendo evento:', err.message));
   }
 
   // Suscribirse a un tipo de evento

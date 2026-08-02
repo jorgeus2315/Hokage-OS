@@ -288,6 +288,13 @@ export async function initSchema(): Promise<void> {
     correlation_id TEXT
   )`);
 
+  await run(`CREATE TABLE IF NOT EXISTS agent_schedules (
+    agent_role TEXT PRIMARY KEY,
+    interval_minutes INTEGER NOT NULL,
+    last_run_at TEXT,
+    next_run_at TEXT NOT NULL
+  )`);
+
   await run(`CREATE TABLE IF NOT EXISTS departments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     key TEXT NOT NULL UNIQUE,

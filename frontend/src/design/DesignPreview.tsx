@@ -1,5 +1,5 @@
 import { GlowText, ProgressBar, StatusDot, TerminalCard, AgentAvatar } from './components';
-import { BUILDINGS } from '../shared/types';
+import { BUILDINGS } from '../shared/constants';
 
 export function DesignPreview() {
   return (

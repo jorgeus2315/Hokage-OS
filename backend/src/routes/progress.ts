@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { sendError } from '../middleware/errorHandler.js';
 import { all, get, run } from '../db/init.js';
 
 const router = Router();
@@ -10,10 +11,7 @@ router.get('/agent-runs', async (req, res) => {
       ? await all('SELECT * FROM agent_runs WHERE agent_id = ? ORDER BY started_at DESC', [agentId])
       : await all('SELECT * FROM agent_runs ORDER BY started_at DESC');
     res.json({ ok: true, data: runs });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ ok: false, error: 'No se pudieron obtener los runs' });
-  }
+  } catch (e: any) { sendError(res, 500, e, 'No se pudieron obtener los runs'); }
 });
 
 router.get('/agent-memory/:agentId', async (req, res) => {
@@ -21,10 +19,7 @@ router.get('/agent-memory/:agentId', async (req, res) => {
     const agentId = Number(req.params.agentId);
     const memory = await all('SELECT * FROM agent_memory WHERE agent_id = ? ORDER BY updated_at DESC', [agentId]);
     res.json({ ok: true, data: memory });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ ok: false, error: 'No se pudo obtener la memoria' });
-  }
+  } catch (e: any) { sendError(res, 500, e, 'No se pudo obtener la memoria'); }
 });
 
 router.get('/agent-prompts/:agentId', async (req, res) => {
@@ -32,10 +27,7 @@ router.get('/agent-prompts/:agentId', async (req, res) => {
     const agentId = Number(req.params.agentId);
     const prompts = await all('SELECT * FROM agent_prompts WHERE agent_id = ? ORDER BY created_at DESC', [agentId]);
     res.json({ ok: true, data: prompts });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ ok: false, error: 'No se pudieron obtener los prompts' });
-  }
+  } catch (e: any) { sendError(res, 500, e, 'No se pudieron obtener los prompts'); }
 });
 
 router.post('/agent-feedback', async (req, res) => {
@@ -50,40 +42,28 @@ router.post('/agent-feedback', async (req, res) => {
     );
     const feedback = await get('SELECT * FROM agent_feedback WHERE id = ?', [result.lastID]);
     res.status(201).json({ ok: true, data: feedback });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ ok: false, error: 'No se pudo guardar el feedback' });
-  }
+  } catch (e: any) { sendError(res, 500, e, 'No se pudo guardar el feedback'); }
 });
 
 router.get('/tools', async (_req, res) => {
   try {
     const tools = await all('SELECT * FROM tools ORDER BY name');
     res.json({ ok: true, data: tools });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ ok: false, error: 'No se pudieron obtener las herramientas' });
-  }
+  } catch (e: any) { sendError(res, 500, e, 'No se pudieron obtener las herramientas'); }
 });
 
 router.get('/progress', async (_req, res) => {
   try {
     const progress = await all('SELECT * FROM agent_progress ORDER BY updated_at DESC');
     res.json({ ok: true, data: progress });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ ok: false, error: 'No se pudo obtener el progreso' });
-  }
+  } catch (e: any) { sendError(res, 500, e, 'No se pudo obtener el progreso'); }
 });
 
 router.get('/achievements', async (_req, res) => {
   try {
     const achievements = await all('SELECT * FROM achievements ORDER BY created_at DESC');
     res.json({ ok: true, data: achievements });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ ok: false, error: 'No se pudieron obtener los logros' });
-  }
+  } catch (e: any) { sendError(res, 500, e, 'No se pudieron obtener los logros'); }
 });
 
 export default router;

@@ -1,11 +1,39 @@
 const BASE = '/api';
 
+declare global {
+  interface ImportMeta {
+    readonly env?: {
+      readonly VITE_ADMIN_TOKEN?: string;
+    };
+  }
+}
+
+const ADMIN_TOKEN = (typeof window !== 'undefined' ? import.meta.env?.VITE_ADMIN_TOKEN : undefined) || '';
+
+function adminHeaders(): Record<string, string> {
+  return ADMIN_TOKEN ? { 'x-admin-token': ADMIN_TOKEN } : {};
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T | null> {
   try {
-    const res = await fetch(BASE + path, init);
+    const res = await fetch(BASE + path, {
+      ...init,
+      headers: {
+        ...(init?.headers || {}),
+        ...(init?.method && ['POST', 'PUT', 'DELETE'].includes(init.method.toUpperCase()) ? adminHeaders() : {}),
+      },
+    });
+    if (!res.ok) {
+      let payload: Record<string, unknown> = {};
+      try { payload = await res.json(); } catch {}
+      const msg = typeof payload.error === 'string' ? payload.error : `HTTP ${res.status}`;
+      console.error(`[API] ${path} -> ${res.status}: ${msg}`);
+      return null;
+    }
     const json = await res.json();
     return json.ok ? (json.data as T) : null;
-  } catch {
+  } catch (err) {
+    console.error(`[API] ${path} -> error`, err);
     return null;
   }
 }

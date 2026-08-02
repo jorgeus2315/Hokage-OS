@@ -1,5 +1,6 @@
 import type { Agent, AgentRun, Building } from '../shared/types';
-import { BUILDINGS, ROLES } from '../shared/types';
+import { BUILDINGS } from '../shared/constants';
+import { ROLES } from '../shared/types';
 import { Panel, Led } from '../shared/ui';
 import { BuildingGlyph } from '../shared/icons';
 

@@ -64,7 +64,10 @@ export function BuildingView({
               AGENTE
             </div>
             <div className="hk-flex hk-gap-8">
-              <div className="hk-building-agent-avatar" style={{ background: 'var(--ember)', width: 34, height: 34, fontSize: 13 }}>
+              <div
+                className="hk-building-agent-avatar"
+                style={{ background: building.color, width: 34, height: 34, fontSize: 13, boxShadow: `0 0 14px ${building.color}66` }}
+              >
                 {agent.name[0]}
               </div>
               <div>
@@ -113,7 +116,7 @@ export function BuildingView({
 
       <div className="hk-interior-main">
         <div className="hk-building-head">
-          <div className="hk-building-head-glyph" style={{ color: 'var(--ember)' }}>
+          <div className="hk-building-head-glyph" style={{ color: building.color, filter: `drop-shadow(0 0 8px ${building.color}66)` }}>
             <BuildingGlyph glyph={building.glyph} />
           </div>
           <div>

@@ -1,8 +1,9 @@
 import bus from './eventBus.js';
-import { askAgent } from '../services/aiService.js';
+import { askAgent, writeAgentMemory } from '../services/aiService.js';
 import { listAgents } from '../services/agentService.js';
 import { createDecision } from '../services/decisionService.js';
 import { createMessage } from '../services/messageService.js';
+import { get, run, all } from '../db/init.js';
 
 // ═══════════════════════════════════════════════════════
 // AGENT RUNTIME — Motor de ejecucion autonoma de agentes
@@ -56,15 +57,47 @@ const AUTONOMOUS_TASKS: Record<string, { task: string; interval: number }> = {
   },
 };
 
+function nowIso(): string {
+  return new Date().toISOString();
+}
+
+async function ensureSchedule(agentRole: string, intervalMs: number): Promise<void> {
+  const row = await get<{ agent_role: string }>('SELECT agent_role FROM agent_schedules WHERE agent_role = ?', [agentRole]);
+  if (!row) {
+    const nextRun = new Date(Date.now() + intervalMs).toISOString();
+    await run(
+      'INSERT INTO agent_schedules (agent_role, interval_minutes, last_run_at, next_run_at) VALUES (?, ?, ?, ?)',
+      [agentRole, Math.round(intervalMs / 60_000), null, nextRun]
+    );
+  }
+}
+
+async function loadDueAgents(): Promise<Array<{ id: number; name: string; role: string; task: string; interval: number }>> {
+  const now = nowIso();
+  const rows = await all<{ agent_role: string }>('SELECT agent_role FROM agent_schedules WHERE next_run_at <= ?', [now]);
+  const agents = await listAgents();
+  const result: Array<{ id: number; name: string; role: string; task: string; interval: number }> = [];
+
+  for (const row of rows) {
+    const agent = agents.find((a) => a.role === row.agent_role);
+    const config = AUTONOMOUS_TASKS[row.agent_role];
+    if (!agent || !config) continue;
+    result.push({
+      id: agent.id,
+      name: agent.name,
+      role: agent.role,
+      task: config.task,
+      interval: config.interval,
+    });
+  }
+
+  return result;
+}
+
 class AgentRuntime {
   private running = false;
   private listenersReady = false;
-  private timers: Map<string, NodeJS.Timeout> = new Map();
-  // setTimeout del arranque inicial de cada agente, pendientes de disparar.
-  // Sin rastrearlos, un stop() antes de que disparen no los cancela y un
-  // start() posterior los deja correr igual, duplicando ejecuciones.
-  private pendingStarts: NodeJS.Timeout[] = [];
-  private lastRun: Map<string, Date> = new Map();
+  private pollTimer: NodeJS.Timeout | null = null;
 
   // Iniciar el runtime
   start(): void {
@@ -74,28 +107,27 @@ class AgentRuntime {
     }
     this.running = true;
     console.log('[RUNTIME] Iniciando ecosistema de agentes...');
+    console.time('[RUNTIME] setupEventListeners');
 
-    // Conectar agentes al event bus (una sola vez: start()/stop() no debe
-    // acumular listeners duplicados en el bus, o cada evento dispararia
-    // sus efectos —p. ej. mensajes— multiples veces)
     if (!this.listenersReady) {
       this.setupEventListeners();
       this.listenersReady = true;
     }
+    console.timeEnd('[RUNTIME] setupEventListeners');
 
-    // Programar tareas autonomas
-    this.scheduleAgentTasks();
-
-    console.log('[RUNTIME] Ecosistema activo. Agentes trabajando en segundo plano.');
+    // Diferir el primer tick para no bloquear el arranque HTTP
+    console.time('[RUNTIME] pollTick defer');
+    setTimeout(() => this.pollTick(), 2000);
+    console.timeEnd('[RUNTIME] pollTick defer');
   }
 
   // Detener el runtime
   stop(): void {
     this.running = false;
-    this.timers.forEach(timer => clearInterval(timer));
-    this.timers.clear();
-    this.pendingStarts.forEach(timer => clearTimeout(timer));
-    this.pendingStarts = [];
+    if (this.pollTimer) {
+      clearTimeout(this.pollTimer);
+      this.pollTimer = null;
+    }
     console.log('[RUNTIME] Ecosistema detenido.');
   }
 
@@ -108,15 +140,21 @@ class AgentRuntime {
     try {
       console.log(`[RUNTIME] Ejecutando ${task.agentName} :: ${task.taskType}`);
 
-      // Publicar inicio
       bus.publish({
         type: 'agent.task.start',
         from: task.agentName,
         payload: { taskType: task.taskType, agentId: task.agentId },
       });
 
-      // Llamar a la IA
-      const result = await askAgent(task.agentId, task.context || task.taskType);
+      // Inyectar instrucciones de marcadores estructurados
+      const taskPrompt = `${task.context || task.taskType}
+
+INSTRUCCIONES DE FORMATO:
+- Si necesitas que Jorge apruebe algo (publicar contenido, gastar dinero, cambiar configuración), añade: [DECISION: título en menos de 80 caracteres]
+- Si descubres un hecho relevante para recordar en el futuro, añade: [MEMORIA: clave_snake_case=valor en menos de 150 caracteres] (máximo 3 por respuesta)
+- Usa los marcadores solo cuando realmente sean necesarios.`;
+
+      const result = await askAgent(task.agentId, taskPrompt);
 
       if (!result.ok) {
         bus.publish({ type: 'agent.task.error', from: task.agentName, payload: { error: result.error } });
@@ -125,22 +163,26 @@ class AgentRuntime {
 
       const response = result.data?.response || '';
 
-      // Guardar mensaje en comms
       await createMessage({
         sender_id: task.agentId,
         receiver_id: null,
-        content: response.slice(0, 500), // Max 500 chars en comms
+        content: response.slice(0, 500),
         channel: 'general',
       });
 
-      // Detectar si el agente quiere proponer una decision
-      const wantsDecision = response.toLowerCase().includes('propongo') ||
-        response.toLowerCase().includes('recomiendo aprobar') ||
-        response.toLowerCase().includes('decision:') ||
-        response.toLowerCase().includes('propuesta:');
+      // Parsear y persistir hechos semánticos que el agente quiso recordar
+      const memoryMatches = [...response.matchAll(/\[MEMORIA:\s*([a-z_][a-z0-9_]*)\s*=\s*([^\]]{1,150})\]/gi)];
+      for (const match of memoryMatches.slice(0, 3)) {
+        const key = match[1].trim().toLowerCase();
+        const value = match[2].trim();
+        await writeAgentMemory(task.agentId, key, value);
+      }
 
-      if (wantsDecision) {
-        const title = this.extractDecisionTitle(response, task.agentName);
+      // Detección precisa de decisiones: solo si el agente usó el marcador estructurado
+      const decisionMatch = response.match(/\[DECISION:\s*([^\]]{5,100})\]/i);
+
+      if (decisionMatch) {
+        const title = decisionMatch[1].trim();
         await createDecision({
           agent_id: task.agentId,
           title,
@@ -157,15 +199,11 @@ class AgentRuntime {
         });
       }
 
-      // Publicar resultado
       bus.publish({
         type: 'agent.task.done',
         from: task.agentName,
         payload: { taskType: task.taskType, response: response.slice(0, 200) },
       });
-
-      // Actualizar last run
-      this.lastRun.set(task.agentRole, new Date());
 
       return { ok: true, response };
     } catch (error: any) {
@@ -174,12 +212,8 @@ class AgentRuntime {
     }
   }
 
-  // Programar tareas autonomas de cada agente
+  // Programar tareas autonomas basadas en agent_schedules
   private async scheduleAgentTasks(): Promise<void> {
-    // Esperar 5 segundos para que la BD este lista
-    await new Promise(r => setTimeout(r, 5000));
-    if (!this.running) return; // se detuvo durante la espera inicial
-
     try {
       const agents = await listAgents();
 
@@ -187,53 +221,66 @@ class AgentRuntime {
         const config = AUTONOMOUS_TASKS[agent.role];
         if (!config) continue;
 
-        // Primera ejecucion: esperar un tiempo aleatorio (no todos a la vez)
-        const initialDelay = Math.random() * 2 * 60 * 1000; // 0-2 minutos
-
-        const startTimeout = setTimeout(async () => {
-          if (!this.running) return;
-          await this.runAgent({
-            agentId: agent.id,
-            agentName: agent.name,
-            agentRole: agent.role,
-            taskType: 'autonomous',
-            context: config.task,
-          });
-
-          // Programar ejecuciones periodicas
-          const timer = setInterval(async () => {
-            if (!this.running) return;
-            await this.runAgent({
-              agentId: agent.id,
-              agentName: agent.name,
-              agentRole: agent.role,
-              taskType: 'autonomous',
-              context: config.task,
-            });
-          }, config.interval);
-
-          this.timers.set(agent.role, timer);
-        }, initialDelay);
-
-        this.pendingStarts.push(startTimeout);
-        console.log(`[RUNTIME] ${agent.name} programado cada ${config.interval / 60000} min`);
+        await ensureSchedule(agent.role, config.interval);
       }
+
+      console.log('[RUNTIME] Schedules sincronizadas para roles activos.');
     } catch (error) {
       console.error('[RUNTIME] Error programando tareas:', error);
     }
   }
 
+  // Tick global: ejecuta roles pendientes y reprograma su siguiente ejecucion
+  private async pollTick(): Promise<void> {
+    if (!this.running) return;
+    console.time('[RUNTIME] pollTick');
+
+    try {
+      console.time('[RUNTIME] loadDueAgents');
+      const due = await loadDueAgents();
+      console.timeEnd('[RUNTIME] loadDueAgents');
+      console.log(`[RUNTIME] Agents due: ${due.length}`);
+
+      for (const agent of due) {
+        const config = AUTONOMOUS_TASKS[agent.role];
+        if (!config) continue;
+
+        console.time(`[RUNTIME] runAgent ${agent.role}`);
+        await this.runAgent({
+          agentId: agent.id,
+          agentName: agent.name,
+          agentRole: agent.role,
+          taskType: 'autonomous',
+          context: agent.task,
+        });
+        console.timeEnd(`[RUNTIME] runAgent ${agent.role}`);
+
+        const nextRun = new Date(Date.now() + agent.interval).toISOString();
+        await run(
+          'UPDATE agent_schedules SET last_run_at = ?, next_run_at = ? WHERE agent_role = ?',
+          [nowIso(), nextRun, agent.role]
+        );
+      }
+    } catch (error) {
+      console.error('[RUNTIME] Error en pollTick:', error);
+    } finally {
+      console.timeEnd('[RUNTIME] pollTick');
+      if (this.running) {
+        this.pollTimer = setTimeout(() => this.pollTick(), 10_000);
+      }
+    }
+  }
+
   // Listeners del event bus para reacciones entre agentes
   private setupEventListeners(): void {
-    // Cuando Explorador detecta tendencia → notifica a Escritor
     bus.subscribe('trend.detected', async (event) => {
       console.log(`[BUS] Tendencia detectada por ${event.from}, notificando a Escritor...`);
       try {
         const agents = await listAgents();
-        const escritor = agents.find(a => a.role === 'contenido');
+        const escritor = agents.find((a) => a.role === 'contenido');
         if (escritor) {
           await createMessage({
-            sender_id: agents.find(a => a.role === 'investigador')?.id || 1,
+            sender_id: agents.find((a) => a.role === 'investigador')?.id || 1,
             receiver_id: escritor.id,
             content: `Nueva tendencia detectada: ${JSON.stringify(event.payload)}. Preparate para crear contenido.`,
             channel: 'internal',
@@ -242,12 +289,10 @@ class AgentRuntime {
       } catch {}
     });
 
-    // Cuando hay decision creada → Hokage evalua
     bus.subscribe('decision.created', async (event) => {
       console.log(`[BUS] Decision pendiente de ${event.from}, Hokage evaluando...`);
     });
 
-    // Cuando hay venta → Finanzas registra y Hokage celebra
     bus.subscribe('sale.made', async (event) => {
       console.log(`[BUS] Venta registrada: ${JSON.stringify(event.payload)}`);
       bus.publish({
@@ -257,29 +302,16 @@ class AgentRuntime {
       });
     });
 
-    // Log de todos los eventos
     bus.subscribe('*', (event) => {
       if (event.type === 'agent.task.start' || event.type === 'agent.task.done') return;
     });
-  }
-
-  // Extraer titulo de decision del texto del agente
-  private extractDecisionTitle(text: string, agentName: string): string {
-    const lines = text.split('\n');
-    for (const line of lines) {
-      if (line.toLowerCase().includes('propongo') || line.toLowerCase().includes('recomiendo')) {
-        return line.replace(/[*#]/g, '').trim().slice(0, 100);
-      }
-    }
-    return `${agentName}: Propuesta automatica`;
   }
 
   // Estado actual del runtime
   getStatus(): Record<string, unknown> {
     return {
       running: this.running,
-      activeTimers: this.timers.size,
-      lastRuns: Object.fromEntries(this.lastRun),
+      activeTimers: this.pollTimer ? 1 : 0,
       recentEvents: bus.getHistory(10),
     };
   }

@@ -1,6 +1,6 @@
 // Fuente de verdad en JS de las mismas custom properties definidas en styles.css.
 // Cualquier cambio de paleta debe reflejarse en ambos lugares.
-
+// BUILDINGS se importa desde shared/constants cuando se necesite el listado completo.
 export const colors = {
   void: '#0a0b0d',
   voidDeep: '#050506',

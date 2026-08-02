@@ -1,5 +1,5 @@
 import type { Agent, Decision, Building } from '../shared/types';
-import { BUILDINGS } from '../shared/types';
+import { BUILDINGS } from '../shared/constants';
 import { Panel, Led, Badge } from '../shared/ui';
 import { BuildingGlyph, IconCheck } from '../shared/icons';
 import { Markdown } from '../shared/markdown';
