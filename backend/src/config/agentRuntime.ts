@@ -28,11 +28,11 @@ export interface TaskResult {
 // Tareas autonomas por rol de agente
 const AUTONOMOUS_TASKS: Record<string, { task: string; interval: number }> = {
   investigador: {
-    task: 'Analiza las tendencias actuales del mercado de productos digitales y Etsy. Detecta 1-2 oportunidades concretas con ROI estimado. Si encuentras algo valioso, indica que quieres proponer una decision.',
+    task: 'Usa la herramienta google.trends para analizar tendencias actuales del mercado de productos digitales (ej: "minimalist wall art", "digital planner", "printable"). Elige 1-2 keywords con interés creciente. Para cada tendencia que valga la pena, añade: [TENDENCIA: keyword | descripcion breve en menos de 120 caracteres]. Si la oportunidad requiere accion de Jorge, añade tambien [DECISION: titulo].',
     interval: 30 * 60 * 1000,
   },
   contenido: {
-    task: 'Revisa si hay tendencias nuevas del Explorador o productos pendientes de descripcion. Si tienes trabajo, crealo. Si no, reporta que todo esta al dia.',
+    task: 'Revisa tu contexto de trabajo. Si recibes una tendencia del Explorador, crea una descripcion de producto SEO-optimizada (titulo, descripcion, 5 tags). Cuando el contenido este listo para publicar, añade: [DECISION: Publicar contenido SEO — keyword]. Si no hay trabajo, reporta estado.',
     interval: 20 * 60 * 1000,
   },
   finanzas: {
@@ -168,6 +168,7 @@ class AgentRuntime {
       const taskPrompt = `${task.context || task.taskType}
 
 INSTRUCCIONES DE FORMATO:
+- Si detectas una tendencia de mercado accionable, añade: [TENDENCIA: keyword | descripcion breve]
 - Si necesitas que Jorge apruebe algo (publicar contenido, gastar dinero, cambiar configuración), añade: [DECISION: título en menos de 80 caracteres]
 - Si descubres un hecho relevante para recordar en el futuro, añade: [MEMORIA: clave_snake_case=valor en menos de 150 caracteres] (máximo 3 por respuesta)
 - Usa los marcadores solo cuando realmente sean necesarios.`;
@@ -191,6 +192,19 @@ INSTRUCCIONES DE FORMATO:
       const memoryMatches = [...response.matchAll(/\[MEMORIA:\s*([a-z_][a-z0-9_]*)\s*=\s*([^\]]{1,150})\]/gi)];
       for (const match of memoryMatches.slice(0, 3)) {
         await writeAgentMemory(task.agentId, match[1].trim().toLowerCase(), match[2].trim());
+      }
+
+      // Tendencias detectadas por el Explorador → dispara pipeline Escritor
+      const tendenciaMatches = [...response.matchAll(/\[TENDENCIA:\s*([^|]{2,60})\|([^\]]{5,120})\]/gi)];
+      for (const match of tendenciaMatches.slice(0, 3)) {
+        const keyword = match[1].trim();
+        const description = match[2].trim();
+        bus.publish({
+          type: 'trend.detected',
+          from: task.agentName,
+          payload: { keyword, description, detectedAt: nowIso() },
+        });
+        console.log(`[PIPELINE] trend.detected → ${keyword}`);
       }
 
       const decisionMatch = response.match(/\[DECISION:\s*([^\]]{5,100})\]/i);
