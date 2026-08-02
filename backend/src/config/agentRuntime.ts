@@ -1,4 +1,4 @@
-import bus from './eventBus.js';
+import bus, { AgentEvent } from './eventBus.js';
 import { askAgent, writeAgentMemory } from '../services/aiService.js';
 import { listAgents } from '../services/agentService.js';
 import { createDecision } from '../services/decisionService.js';
@@ -6,7 +6,7 @@ import { createMessage } from '../services/messageService.js';
 import { get, run, all } from '../db/init.js';
 
 // ═══════════════════════════════════════════════════════
-// AGENT RUNTIME — Motor de ejecucion autonoma de agentes
+// AGENT RUNTIME — Motor de ejecucion autonoma (8 etapas)
 // ═══════════════════════════════════════════════════════
 
 export interface AgentTask {
@@ -25,35 +25,35 @@ export interface TaskResult {
   error?: string;
 }
 
-// Mapa de tareas autonomas por rol
+// Tareas autonomas por rol de agente
 const AUTONOMOUS_TASKS: Record<string, { task: string; interval: number }> = {
   investigador: {
     task: 'Analiza las tendencias actuales del mercado de productos digitales y Etsy. Detecta 1-2 oportunidades concretas con ROI estimado. Si encuentras algo valioso, indica que quieres proponer una decision.',
-    interval: 30 * 60 * 1000, // 30 minutos
+    interval: 30 * 60 * 1000,
   },
   contenido: {
     task: 'Revisa si hay tendencias nuevas del Explorador o productos pendientes de descripcion. Si tienes trabajo, crealo. Si no, reporta que todo esta al dia.',
-    interval: 20 * 60 * 1000, // 20 minutos
+    interval: 20 * 60 * 1000,
   },
   finanzas: {
     task: 'Genera un reporte breve del estado financiero actual. Incluye: ingresos del dia, gastos, margen y una recomendacion. Formato: INGRESOS | GASTOS | MARGEN | ALERTA.',
-    interval: 60 * 60 * 1000, // 1 hora
+    interval: 60 * 60 * 1000,
   },
   operaciones: {
     task: 'Verifica el estado de todos los sistemas. Reporta si hay errores o problemas. Formato: Sistema | Estado | Accion.',
-    interval: 15 * 60 * 1000, // 15 minutos
+    interval: 15 * 60 * 1000,
   },
   trafico: {
     task: 'Analiza oportunidades de visibilidad y SEO para los productos actuales. Propone 1-2 mejoras concretas.',
-    interval: 45 * 60 * 1000, // 45 minutos
+    interval: 45 * 60 * 1000,
   },
   soporte: {
     task: 'Revisa si hay dudas o incidencias de clientes pendientes. Propone mejoras basadas en el feedback reciente. Si no hay nada pendiente, reporta que todo esta al dia.',
-    interval: 40 * 60 * 1000, // 40 minutos
+    interval: 40 * 60 * 1000,
   },
   ceo: {
     task: 'Revisa el estado general del equipo y los negocios. Coordina al equipo y propone la siguiente accion estrategica prioritaria.',
-    interval: 60 * 60 * 1000, // 1 hora
+    interval: 60 * 60 * 1000,
   },
 };
 
@@ -61,45 +61,69 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
-async function ensureSchedule(agentRole: string, intervalMs: number): Promise<void> {
-  const row = await get<{ agent_role: string }>('SELECT agent_role FROM agent_schedules WHERE agent_role = ?', [agentRole]);
+// Garantizar schedule para un agente (PK = agent_id)
+async function ensureSchedule(agentId: number, intervalMs: number): Promise<void> {
+  const row = await get<{ agent_id: number }>('SELECT agent_id FROM agent_schedules WHERE agent_id = ?', [agentId]);
   if (!row) {
-    const nextRun = new Date(Date.now() + intervalMs).toISOString();
+    // Primer ciclo: retrasar mínimo 2 min para no saturar el arranque
+    const delay = Math.min(intervalMs, 2 * 60_000);
+    const nextRun = new Date(Date.now() + delay).toISOString();
     await run(
-      'INSERT INTO agent_schedules (agent_role, interval_minutes, last_run_at, next_run_at) VALUES (?, ?, ?, ?)',
-      [agentRole, Math.round(intervalMs / 60_000), null, nextRun]
+      'INSERT INTO agent_schedules (agent_id, interval_minutes, last_run_at, next_run_at) VALUES (?, ?, NULL, ?)',
+      [agentId, Math.round(intervalMs / 60_000), nextRun]
     );
   }
 }
 
+// Agentes con schedule vencido
 async function loadDueAgents(): Promise<Array<{ id: number; name: string; role: string; task: string; interval: number }>> {
   const now = nowIso();
-  const rows = await all<{ agent_role: string }>('SELECT agent_role FROM agent_schedules WHERE next_run_at <= ?', [now]);
-  const agents = await listAgents();
-  const result: Array<{ id: number; name: string; role: string; task: string; interval: number }> = [];
+  const rows = await all<{ agent_id: number; name: string; role: string; interval_minutes: number }>(
+    `SELECT s.agent_id, a.name, a.role, s.interval_minutes
+     FROM agent_schedules s
+     JOIN agents a ON a.id = s.agent_id
+     WHERE s.next_run_at <= ?`,
+    [now]
+  );
 
+  const result: Array<{ id: number; name: string; role: string; task: string; interval: number }> = [];
   for (const row of rows) {
-    const agent = agents.find((a) => a.role === row.agent_role);
-    const config = AUTONOMOUS_TASKS[row.agent_role];
-    if (!agent || !config) continue;
+    const config = AUTONOMOUS_TASKS[row.role];
+    if (!config) continue;
     result.push({
-      id: agent.id,
-      name: agent.name,
-      role: agent.role,
+      id: row.agent_id,
+      name: row.name,
+      role: row.role,
       task: config.task,
-      interval: config.interval,
+      interval: row.interval_minutes * 60_000,
     });
   }
-
   return result;
+}
+
+// Crear work_item en la cola
+async function createWorkItem(params: {
+  agentId: number;
+  businessId?: number;
+  type: 'autonomous_run' | 'event_triggered' | 'decision_execution';
+  priority?: number;
+  context?: string;
+}): Promise<number> {
+  const result = await run(
+    `INSERT INTO work_items (agent_id, business_id, type, priority, status, context)
+     VALUES (?, ?, ?, ?, 'pending', ?)`,
+    [params.agentId, params.businessId ?? null, params.type, params.priority ?? 6, params.context ?? null]
+  );
+  return result.lastID;
 }
 
 class AgentRuntime {
   private running = false;
   private listenersReady = false;
   private pollTimer: NodeJS.Timeout | null = null;
+  private busEventQueue: AgentEvent[] = [];
+  private activeAgents: Set<number> = new Set();
 
-  // Iniciar el runtime
   start(): void {
     if (this.running) {
       console.log('[RUNTIME] Ya esta corriendo');
@@ -107,21 +131,16 @@ class AgentRuntime {
     }
     this.running = true;
     console.log('[RUNTIME] Iniciando ecosistema de agentes...');
-    console.time('[RUNTIME] setupEventListeners');
 
     if (!this.listenersReady) {
       this.setupEventListeners();
       this.listenersReady = true;
     }
-    console.timeEnd('[RUNTIME] setupEventListeners');
 
-    // Diferir el primer tick para no bloquear el arranque HTTP
-    console.time('[RUNTIME] pollTick defer');
+    // Diferir primer tick para no bloquear el arranque HTTP
     setTimeout(() => this.pollTick(), 2000);
-    console.timeEnd('[RUNTIME] pollTick defer');
   }
 
-  // Detener el runtime
   stop(): void {
     this.running = false;
     if (this.pollTimer) {
@@ -135,7 +154,7 @@ class AgentRuntime {
     return this.running;
   }
 
-  // Ejecutar un agente manualmente con una tarea
+  // Ejecutar agente con un prompt (usado desde HTTP y desde el scheduler)
   async runAgent(task: AgentTask): Promise<TaskResult> {
     try {
       console.log(`[RUNTIME] Ejecutando ${task.agentName} :: ${task.taskType}`);
@@ -146,7 +165,6 @@ class AgentRuntime {
         payload: { taskType: task.taskType, agentId: task.agentId },
       });
 
-      // Inyectar instrucciones de marcadores estructurados
       const taskPrompt = `${task.context || task.taskType}
 
 INSTRUCCIONES DE FORMATO:
@@ -170,17 +188,12 @@ INSTRUCCIONES DE FORMATO:
         channel: 'general',
       });
 
-      // Parsear y persistir hechos semánticos que el agente quiso recordar
       const memoryMatches = [...response.matchAll(/\[MEMORIA:\s*([a-z_][a-z0-9_]*)\s*=\s*([^\]]{1,150})\]/gi)];
       for (const match of memoryMatches.slice(0, 3)) {
-        const key = match[1].trim().toLowerCase();
-        const value = match[2].trim();
-        await writeAgentMemory(task.agentId, key, value);
+        await writeAgentMemory(task.agentId, match[1].trim().toLowerCase(), match[2].trim());
       }
 
-      // Detección precisa de decisiones: solo si el agente usó el marcador estructurado
       const decisionMatch = response.match(/\[DECISION:\s*([^\]]{5,100})\]/i);
-
       if (decisionMatch) {
         const title = decisionMatch[1].trim();
         await createDecision({
@@ -191,12 +204,7 @@ INSTRUCCIONES DE FORMATO:
           risk_level: 'low',
           amount: null,
         });
-
-        bus.publish({
-          type: 'decision.created',
-          from: task.agentName,
-          payload: { title, agentId: task.agentId },
-        });
+        bus.publish({ type: 'decision.created', from: task.agentName, payload: { title, agentId: task.agentId } });
       }
 
       bus.publish({
@@ -212,111 +220,233 @@ INSTRUCCIONES DE FORMATO:
     }
   }
 
-  // Programar tareas autonomas basadas en agent_schedules
-  private async scheduleAgentTasks(): Promise<void> {
-    try {
-      const agents = await listAgents();
-
-      for (const agent of agents) {
-        const config = AUTONOMOUS_TASKS[agent.role];
-        if (!config) continue;
-
-        await ensureSchedule(agent.role, config.interval);
-      }
-
-      console.log('[RUNTIME] Schedules sincronizadas para roles activos.');
-    } catch (error) {
-      console.error('[RUNTIME] Error programando tareas:', error);
-    }
-  }
-
-  // Tick global: ejecuta roles pendientes y reprograma su siguiente ejecucion
+  // ══════════════════════════════════════════════
+  // TICK — 8 etapas fijas en orden determinista
+  // ══════════════════════════════════════════════
   private async pollTick(): Promise<void> {
     if (!this.running) return;
-    console.time('[RUNTIME] pollTick');
 
     try {
-      console.time('[RUNTIME] loadDueAgents');
-      const due = await loadDueAgents();
-      console.timeEnd('[RUNTIME] loadDueAgents');
-      console.log(`[RUNTIME] Agents due: ${due.length}`);
-
-      for (const agent of due) {
-        const config = AUTONOMOUS_TASKS[agent.role];
-        if (!config) continue;
-
-        console.time(`[RUNTIME] runAgent ${agent.role}`);
-        await this.runAgent({
-          agentId: agent.id,
-          agentName: agent.name,
-          agentRole: agent.role,
-          taskType: 'autonomous',
-          context: agent.task,
-        });
-        console.timeEnd(`[RUNTIME] runAgent ${agent.role}`);
-
-        const nextRun = new Date(Date.now() + agent.interval).toISOString();
-        await run(
-          'UPDATE agent_schedules SET last_run_at = ?, next_run_at = ? WHERE agent_role = ?',
-          [nowIso(), nextRun, agent.role]
-        );
-      }
+      await this.stage1_drainBusEvents();
+      await this.stage2_assignWork();
+      await this.stage3_executeAgents();   // incluye Etapa 5 (guardar resultado) inline
+      await this.stage4_checkTTLs();
+      // Etapa 6 (pipeline derivado) — Fase 2
+      await this.stage7_closeDecisionLoop();
+      await this.stage8_updateMetrics();
     } catch (error) {
       console.error('[RUNTIME] Error en pollTick:', error);
     } finally {
-      console.timeEnd('[RUNTIME] pollTick');
       if (this.running) {
         this.pollTimer = setTimeout(() => this.pollTick(), 10_000);
       }
     }
   }
 
-  // Listeners del event bus para reacciones entre agentes
-  private setupEventListeners(): void {
-    bus.subscribe('trend.detected', async (event) => {
-      console.log(`[BUS] Tendencia detectada por ${event.from}, notificando a Escritor...`);
-      try {
-        const agents = await listAgents();
+  // Etapa 1: vaciar cola de eventos del bus → crear work_items event_triggered
+  private async stage1_drainBusEvents(): Promise<void> {
+    const events = this.busEventQueue.splice(0);
+    if (events.length === 0) return;
+
+    const agents = await listAgents();
+
+    for (const event of events) {
+      if (event.type === 'trend.detected') {
         const escritor = agents.find((a) => a.role === 'contenido');
         if (escritor) {
+          await createWorkItem({
+            agentId: escritor.id,
+            type: 'event_triggered',
+            priority: 7,
+            context: `Nueva tendencia detectada: ${JSON.stringify(event.payload)}. Crea contenido optimizado para esta tendencia.`,
+          });
           await createMessage({
-            sender_id: agents.find((a) => a.role === 'investigador')?.id || 1,
+            sender_id: agents.find((a) => a.role === 'investigador')?.id ?? 1,
             receiver_id: escritor.id,
-            content: `Nueva tendencia detectada: ${JSON.stringify(event.payload)}. Preparate para crear contenido.`,
+            content: `Tendencia detectada: ${JSON.stringify(event.payload)}`,
             channel: 'internal',
           });
         }
-      } catch {}
-    });
-
-    bus.subscribe('decision.created', async (event) => {
-      console.log(`[BUS] Decision pendiente de ${event.from}, Hokage evaluando...`);
-    });
-
-    bus.subscribe('sale.made', async (event) => {
-      console.log(`[BUS] Venta registrada: ${JSON.stringify(event.payload)}`);
-      bus.publish({
-        type: 'agent.task.done',
-        from: 'Sistema',
-        payload: { message: `Venta registrada: ${event.payload.amount}` },
-      });
-    });
-
-    bus.subscribe('*', (event) => {
-      if (event.type === 'agent.task.start' || event.type === 'agent.task.done') return;
-    });
+      }
+    }
   }
 
-  // Estado actual del runtime
+  // Etapa 2: garantizar schedules + crear work_items para agentes vencidos + bloquear pending
+  private async stage2_assignWork(): Promise<void> {
+    const agents = await listAgents();
+
+    for (const agent of agents) {
+      const config = AUTONOMOUS_TASKS[agent.role];
+      if (config) await ensureSchedule(agent.id, config.interval);
+    }
+
+    const due = await loadDueAgents();
+    for (const agent of due) {
+      const existing = await get<{ count: number }>(
+        `SELECT COUNT(*) as count FROM work_items WHERE agent_id = ? AND type = 'autonomous_run' AND status IN ('pending', 'in_progress')`,
+        [agent.id]
+      );
+      if (!existing || existing.count === 0) {
+        await createWorkItem({ agentId: agent.id, type: 'autonomous_run', priority: 5, context: agent.task });
+      }
+      const nextRun = new Date(Date.now() + agent.interval).toISOString();
+      await run(
+        'UPDATE agent_schedules SET last_run_at = ?, next_run_at = ? WHERE agent_id = ?',
+        [nowIso(), nextRun, agent.id]
+      );
+    }
+
+    // Bloquear pending: uno por agente, prioridad mayor primero
+    const pending = await all<{ id: number; agent_id: number }>(
+      `SELECT w.id, w.agent_id FROM work_items w
+       WHERE w.status = 'pending'
+       AND NOT EXISTS (
+         SELECT 1 FROM work_items w2
+         WHERE w2.agent_id = w.agent_id AND w2.status = 'in_progress'
+       )
+       ORDER BY w.priority DESC, w.created_at ASC
+       LIMIT 5`
+    );
+
+    for (const item of pending) {
+      await run(
+        `UPDATE work_items SET status = 'in_progress', locked_at = ? WHERE id = ? AND status = 'pending'`,
+        [nowIso(), item.id]
+      );
+      this.activeAgents.add(item.agent_id);
+    }
+  }
+
+  // Etapa 3: ejecutar work_items in_progress (+ Etapa 5 inline: guardar resultado)
+  private async stage3_executeAgents(): Promise<void> {
+    const inProgress = await all<{ id: number; agent_id: number; type: string; context: string | null }>(
+      `SELECT w.id, w.agent_id, w.type, w.context
+       FROM work_items w
+       WHERE w.status = 'in_progress'
+       ORDER BY w.priority DESC, w.created_at ASC
+       LIMIT 3`
+    );
+
+    if (inProgress.length === 0) return;
+
+    const agents = await listAgents();
+
+    for (const item of inProgress) {
+      const agent = agents.find((a) => a.id === item.agent_id);
+      if (!agent) continue;
+
+      let taskContext = item.context ?? 'Reporta tu estado actual.';
+
+      if (item.type === 'decision_execution' && item.context) {
+        try {
+          const ctx = JSON.parse(item.context) as { decision_id?: number };
+          if (ctx.decision_id) {
+            const decision = await get<{ title: string; description: string }>(
+              'SELECT title, description FROM decisions WHERE id = ?',
+              [ctx.decision_id]
+            );
+            if (decision) {
+              taskContext = `Jorge ha aprobado la siguiente decision. Ejecuta la accion necesaria y reporta que hiciste.\n\nDecision aprobada: ${decision.title}\nContexto: ${decision.description ?? '(sin descripcion adicional)'}`;
+            }
+          }
+        } catch {}
+      }
+
+      const result = await this.runAgent({
+        agentId: agent.id,
+        agentName: agent.name,
+        agentRole: agent.role,
+        taskType: item.type,
+        context: taskContext,
+      });
+
+      // Etapa 5 inline: persistir resultado
+      await run(
+        `UPDATE work_items SET status = ?, result = ?, resolved_at = ?, locked_at = NULL WHERE id = ?`,
+        [result.ok ? 'done' : 'failed', (result.response ?? result.error ?? '').slice(0, 2000), nowIso(), item.id]
+      );
+      this.activeAgents.delete(item.agent_id);
+    }
+  }
+
+  // Etapa 4: TTL expirados → devolver a pending (o cancelar tras 3 reintentos)
+  private async stage4_checkTTLs(): Promise<void> {
+    await run(
+      `UPDATE work_items
+       SET status = 'pending', locked_at = NULL, retry_count = retry_count + 1
+       WHERE status = 'in_progress'
+       AND locked_at IS NOT NULL
+       AND datetime(locked_at, '+' || ttl_minutes || ' minutes') < datetime('now')
+       AND retry_count < 3`
+    );
+    await run(
+      `UPDATE work_items
+       SET status = 'cancelled', resolved_at = datetime('now')
+       WHERE status = 'in_progress'
+       AND locked_at IS NOT NULL
+       AND datetime(locked_at, '+' || ttl_minutes || ' minutes') < datetime('now')
+       AND retry_count >= 3`
+    );
+  }
+
+  // Etapa 7: decisiones aprobadas sin work_item de ejecucion → crear P9
+  private async stage7_closeDecisionLoop(): Promise<void> {
+    const orphaned = await all<{ id: number; agent_id: number }>(
+      `SELECT d.id, d.agent_id FROM decisions d
+       WHERE d.status = 'approved'
+       AND d.agent_id IS NOT NULL
+       AND NOT EXISTS (
+         SELECT 1 FROM work_items w
+         WHERE w.type = 'decision_execution'
+         AND json_extract(w.context, '$.decision_id') = d.id
+         AND w.status != 'cancelled'
+       )
+       LIMIT 5`
+    );
+
+    for (const decision of orphaned) {
+      await createWorkItem({
+        agentId: decision.agent_id,
+        type: 'decision_execution',
+        priority: 9,
+        context: JSON.stringify({ decision_id: decision.id }),
+      });
+      console.log(`[STAGE7] Decision ${decision.id} → work_item de ejecucion creado`);
+    }
+  }
+
+  // Etapa 8: metricas del ciclo
+  private async stage8_updateMetrics(): Promise<void> {
+    const counts = await get<{ pending: number; in_progress: number; done: number; failed: number }>(
+      `SELECT
+         SUM(CASE WHEN status='pending'     THEN 1 ELSE 0 END) as pending,
+         SUM(CASE WHEN status='in_progress' THEN 1 ELSE 0 END) as in_progress,
+         SUM(CASE WHEN status='done'        THEN 1 ELSE 0 END) as done,
+         SUM(CASE WHEN status='failed'      THEN 1 ELSE 0 END) as failed
+       FROM work_items`
+    );
+    if (counts && (counts.pending > 0 || counts.in_progress > 0)) {
+      console.log(`[STAGE8] queue — pending:${counts.pending} active:${counts.in_progress} done:${counts.done} failed:${counts.failed}`);
+    }
+  }
+
+  // Bus listeners: solo encolar, nunca procesar inline
+  private setupEventListeners(): void {
+    bus.subscribe('trend.detected',    (event) => this.busEventQueue.push(event));
+    bus.subscribe('decision.approved', (event) => this.busEventQueue.push(event));
+    bus.subscribe('decision.created',  (event) => this.busEventQueue.push(event));
+    bus.subscribe('sale.made',         (event) => this.busEventQueue.push(event));
+  }
+
   getStatus(): Record<string, unknown> {
     return {
       running: this.running,
-      activeTimers: this.pollTimer ? 1 : 0,
+      activeAgents: [...this.activeAgents],
+      queuedEvents: this.busEventQueue.length,
       recentEvents: bus.getHistory(10),
     };
   }
 }
 
-// Instancia global
 export const runtime = new AgentRuntime();
 export default runtime;

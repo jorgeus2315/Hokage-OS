@@ -12,11 +12,11 @@ export const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE | sqlite3.
   else console.log('[DB] Conexión establecida con SQLite');
 });
 
-export function run(sql: string, params: any[] = []): Promise<{ lastID: number }> {
+export function run(sql: string, params: any[] = []): Promise<{ lastID: number; changes: number }> {
   return new Promise((resolve, reject) => {
     db.run(sql, params, function (err) {
       if (err) reject(err);
-      else resolve({ lastID: (this as any).lastID });
+      else resolve({ lastID: (this as any).lastID, changes: (this as any).changes });
     });
   });
 }
@@ -55,6 +55,27 @@ async function runMigrations(): Promise<void> {
   if (!(await columnExists('decisions', 'reasoning'))) {
     await run(`ALTER TABLE decisions ADD COLUMN reasoning TEXT`);
   }
+
+  // Migrar agent_schedules: agent_role TEXT PK → agent_id INTEGER PK
+  const hasAgentRole = await columnExists('agent_schedules', 'agent_role');
+  if (hasAgentRole) {
+    await run(`CREATE TABLE IF NOT EXISTS agent_schedules_v2 (
+      agent_id       INTEGER PRIMARY KEY REFERENCES agents(id),
+      interval_minutes INTEGER NOT NULL,
+      last_run_at    TEXT,
+      next_run_at    TEXT NOT NULL
+    )`);
+    await run(`INSERT OR IGNORE INTO agent_schedules_v2 (agent_id, interval_minutes, last_run_at, next_run_at)
+      SELECT a.id, s.interval_minutes, s.last_run_at, s.next_run_at
+      FROM agent_schedules s
+      JOIN agents a ON a.role = s.agent_role`);
+    await run(`DROP TABLE agent_schedules`);
+    await run(`ALTER TABLE agent_schedules_v2 RENAME TO agent_schedules`);
+    console.log('[DB] Migración agent_schedules: agent_role → agent_id completada');
+  }
+
+  // UNIQUE index en agent_memory para evitar duplicados por clave
+  await run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_memory_unique ON agent_memory(agent_id, key)`);
 
   // Mantener sincronizado el modelo óptimo de cada agente con la fuente de verdad (agentModels.ts)
   const agents = await all<{ id: number; role: string; model: string | null }>('SELECT id, role, model FROM agents');
@@ -233,51 +254,6 @@ export async function initSchema(): Promise<void> {
     FOREIGN KEY (agent_id) REFERENCES agents(id)
   )`);
 
-  await run(`CREATE TABLE IF NOT EXISTS tools (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL UNIQUE,
-    category TEXT NOT NULL DEFAULT 'general',
-    config TEXT NOT NULL DEFAULT '{}',
-    enabled INTEGER NOT NULL DEFAULT 1,
-    api_key_ref TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-  )`);
-
-  await run(`CREATE TABLE IF NOT EXISTS agent_tools (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    agent_id INTEGER NOT NULL,
-    tool_id INTEGER NOT NULL,
-    permission_level TEXT NOT NULL DEFAULT 'read',
-    max_daily_calls INTEGER DEFAULT 0,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (agent_id) REFERENCES agents(id)
-  )`);
-
-  await run(`CREATE TABLE IF NOT EXISTS agent_progress (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    entity_type TEXT NOT NULL,
-    entity_id INTEGER NOT NULL,
-    xp INTEGER NOT NULL DEFAULT 0,
-    level INTEGER NOT NULL DEFAULT 1,
-    stats TEXT NOT NULL DEFAULT '{}',
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-  )`);
-
-  await run(`CREATE TABLE IF NOT EXISTS achievements (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    code TEXT NOT NULL UNIQUE,
-    title TEXT NOT NULL,
-    description TEXT NOT NULL DEFAULT '',
-    category TEXT NOT NULL DEFAULT 'general',
-    xp_reward INTEGER NOT NULL DEFAULT 0,
-    condition_type TEXT NOT NULL,
-    condition_value TEXT NOT NULL DEFAULT '{}',
-    icon TEXT,
-    unlocked_by INTEGER,
-    unlocked_at TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-  )`);
-
   await run(`CREATE TABLE IF NOT EXISTS events (
     id TEXT PRIMARY KEY,
     type TEXT NOT NULL,
@@ -289,11 +265,30 @@ export async function initSchema(): Promise<void> {
   )`);
 
   await run(`CREATE TABLE IF NOT EXISTS agent_schedules (
-    agent_role TEXT PRIMARY KEY,
+    agent_id INTEGER PRIMARY KEY REFERENCES agents(id),
     interval_minutes INTEGER NOT NULL,
     last_run_at TEXT,
     next_run_at TEXT NOT NULL
   )`);
+
+  await run(`CREATE TABLE IF NOT EXISTS work_items (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id         INTEGER NOT NULL REFERENCES agents(id),
+    business_id      INTEGER REFERENCES businesses(id),
+    type             TEXT NOT NULL,
+    priority         INTEGER NOT NULL DEFAULT 6,
+    status           TEXT NOT NULL DEFAULT 'pending',
+    context          TEXT,
+    result           TEXT,
+    locked_at        TEXT,
+    ttl_minutes      INTEGER DEFAULT 30,
+    retry_count      INTEGER DEFAULT 0,
+    created_at       TEXT DEFAULT (datetime('now')),
+    resolved_at      TEXT
+  )`);
+
+  await run(`CREATE INDEX IF NOT EXISTS idx_work_items_agent_status ON work_items(agent_id, status)`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_work_items_priority ON work_items(priority DESC, created_at ASC)`);
 
   await run(`CREATE TABLE IF NOT EXISTS departments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
