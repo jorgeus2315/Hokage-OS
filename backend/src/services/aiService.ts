@@ -47,13 +47,18 @@ async function withAiTimeout<T>(promise: Promise<T>): Promise<T> {
   }
 }
 
+// OpenRouter exige nombres de función que cumplan ^[a-zA-Z0-9_-]{1,128}$
+// Los tool IDs internos usan puntos (google.trends) → convertir a guión bajo
+const toFnName = (id: string) => id.replace(/\./g, '_');
+const fromFnName = (name: string) => name.replace(/_/g, '.');
+
 // Convierte el inputSchema de un tool al formato OpenAI/OpenRouter
 function toolToOpenRouterSchema(tool: ReturnType<typeof registry.get>) {
   if (!tool) return null;
   return {
     type: 'function' as const,
     function: {
-      name:        tool.id,
+      name:        toFnName(tool.id),
       description: tool.description,
       parameters:  tool.inputSchema,
     },
@@ -145,7 +150,8 @@ export async function askAgent(agentId: number, userMessage: string): Promise<As
         let toolResult: string;
         try {
           const args    = JSON.parse(call.function.arguments || '{}');
-          const outcome = await registry.execute(call.function.name, args, { agentId });
+          const toolId  = fromFnName(call.function.name);
+          const outcome = await registry.execute(toolId, args, { agentId });
           toolResult    = JSON.stringify(outcome.ok ? outcome.data : { error: outcome.error });
         } catch (err: any) {
           toolResult = JSON.stringify({ error: err.message });
