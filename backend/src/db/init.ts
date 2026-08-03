@@ -77,6 +77,27 @@ async function runMigrations(): Promise<void> {
   // UNIQUE index en agent_memory para evitar duplicados por clave
   await run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_memory_unique ON agent_memory(agent_id, key)`);
 
+  // Columnas nuevas en agents
+  if (!(await columnExists('agents', 'venture_id'))) {
+    await run(`ALTER TABLE agents ADD COLUMN venture_id INTEGER REFERENCES ventures(id)`);
+  }
+  if (!(await columnExists('agents', 'capabilities'))) {
+    await run(`ALTER TABLE agents ADD COLUMN capabilities TEXT DEFAULT '[]'`);
+  }
+
+  // Columnas nuevas en decisions
+  if (!(await columnExists('decisions', 'category'))) {
+    await run(`ALTER TABLE decisions ADD COLUMN category TEXT DEFAULT 'OPERATIONAL'`);
+  }
+  if (!(await columnExists('decisions', 'venture_id'))) {
+    await run(`ALTER TABLE decisions ADD COLUMN venture_id INTEGER REFERENCES ventures(id)`);
+  }
+
+  // Columna nueva en work_items
+  if (!(await columnExists('work_items', 'venture_id'))) {
+    await run(`ALTER TABLE work_items ADD COLUMN venture_id INTEGER REFERENCES ventures(id)`);
+  }
+
   // Mantener sincronizado el modelo óptimo de cada agente con la fuente de verdad (agentModels.ts)
   const agents = await all<{ id: number; role: string; model: string | null }>('SELECT id, role, model FROM agents');
   for (const agent of agents) {
@@ -85,6 +106,50 @@ async function runMigrations(): Promise<void> {
       await run('UPDATE agents SET model = ? WHERE id = ?', [correctModel, agent.id]);
     }
   }
+}
+
+async function seedDefaultVenture(): Promise<void> {
+  const count = await get<{ count: number }>('SELECT COUNT(*) as count FROM ventures');
+  if (count && count.count > 0) return;
+  await run(
+    `INSERT INTO ventures (name, type, status, goal, revenue_target_usd)
+     VALUES (?, ?, ?, ?, ?)`,
+    ['Minimal Designs', 'store', 'active', 'Generar 1000€/mes con productos digitales minimalistas en Etsy', 1000]
+  );
+  console.log('[DB] Venture inicial sembrado: Minimal Designs');
+}
+
+async function seedAutomations(): Promise<void> {
+  const count = await get<{ count: number }>('SELECT COUNT(*) as count FROM automations');
+  if (count && count.count > 0) return;
+
+  const defaults = [
+    {
+      name: 'Tendencia → Escritor',
+      trigger_event: 'trend.detected',
+      action_agent_role: 'contenido',
+      action_priority: 7,
+      action_context_template:
+        'Tendencia detectada por el Explorador — keyword: "{{keyword}}". {{description}}. Crea contenido SEO optimizado (titulo, descripcion, 5 tags). Cuando termines añade: [CONTENIDO: {{keyword}} | resumen breve] y [DECISION: Publicar contenido SEO — {{keyword}}]',
+    },
+    {
+      name: 'Contenido → Tráfico',
+      trigger_event: 'content.created',
+      action_agent_role: 'trafico',
+      action_priority: 6,
+      action_context_template:
+        'El Escritor ha creado contenido para la keyword "{{keyword}}". Resumen: {{summary}}. Analiza oportunidades SEO adicionales, hashtags y canales de distribucion para maximizar visibilidad. Propón 2-3 acciones concretas.',
+    },
+  ];
+
+  for (const a of defaults) {
+    await run(
+      `INSERT INTO automations (name, trigger_event, action_agent_role, action_priority, action_context_template)
+       VALUES (?, ?, ?, ?, ?)`,
+      [a.name, a.trigger_event, a.action_agent_role, a.action_priority, a.action_context_template]
+    );
+  }
+  console.log('[DB] Automations sembradas: Tendencia→Escritor, Contenido→Tráfico');
 }
 
 export function addEvent(
@@ -323,6 +388,79 @@ export async function initSchema(): Promise<void> {
     created_at  TEXT DEFAULT (datetime('now'))
   )`);
 
+  // ═══════════ VENTURES — contenedor genérico de actividad económica ═══════════
+  await run(`CREATE TABLE IF NOT EXISTS ventures (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    type TEXT NOT NULL DEFAULT 'store',
+    status TEXT NOT NULL DEFAULT 'idea',
+    goal TEXT,
+    budget_allocated_usd REAL DEFAULT 0,
+    budget_spent_usd REAL DEFAULT 0,
+    revenue_target_usd REAL DEFAULT 0,
+    metadata TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+
+  // ═══════════ ASSETS — cualquier activo de valor creado o poseído ═══════════
+  await run(`CREATE TABLE IF NOT EXISTS assets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    venture_id INTEGER REFERENCES ventures(id),
+    type TEXT NOT NULL DEFAULT 'content',
+    name TEXT NOT NULL,
+    description TEXT,
+    value_usd REAL,
+    status TEXT NOT NULL DEFAULT 'draft',
+    platform TEXT,
+    external_id TEXT,
+    metadata TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+
+  // ═══════════ PROJECTS — iniciativa con objetivo y plazo dentro de un Venture ═════
+  await run(`CREATE TABLE IF NOT EXISTS projects (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    venture_id INTEGER REFERENCES ventures(id),
+    name TEXT NOT NULL,
+    goal TEXT,
+    status TEXT NOT NULL DEFAULT 'planned',
+    deadline TEXT,
+    budget_usd REAL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+
+  // ═══════════ REVENUE_STREAMS — cómo genera dinero un Venture ══════════════════
+  await run(`CREATE TABLE IF NOT EXISTS revenue_streams (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    venture_id INTEGER REFERENCES ventures(id),
+    asset_id INTEGER REFERENCES assets(id),
+    type TEXT NOT NULL DEFAULT 'one_time',
+    platform TEXT NOT NULL DEFAULT 'etsy',
+    status TEXT NOT NULL DEFAULT 'active',
+    mrr_usd REAL DEFAULT 0,
+    total_earned_usd REAL DEFAULT 0,
+    last_synced_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+
+  // ═══════════ AUTOMATIONS — pipeline como dato, no como código ════════════════
+  await run(`CREATE TABLE IF NOT EXISTS automations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    venture_id INTEGER REFERENCES ventures(id),
+    name TEXT NOT NULL,
+    trigger_event TEXT NOT NULL,
+    trigger_conditions TEXT NOT NULL DEFAULT '{}',
+    action_type TEXT NOT NULL DEFAULT 'create_work_item',
+    action_agent_role TEXT,
+    action_priority INTEGER DEFAULT 6,
+    action_context_template TEXT,
+    requires_approval INTEGER NOT NULL DEFAULT 0,
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+
+  await run(`CREATE INDEX IF NOT EXISTS idx_automations_trigger ON automations(trigger_event, active)`);
+
   await run(`CREATE TABLE IF NOT EXISTS departments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     key TEXT NOT NULL UNIQUE,
@@ -343,6 +481,8 @@ export async function initSchema(): Promise<void> {
   if (!deptCount || deptCount.count === 0) await seedDepartments();
 
   await runMigrations();
+  await seedDefaultVenture();
+  await seedAutomations();
 }
 
 async function seedDepartments(): Promise<void> {

@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
-import type { Agent, Business, Decision, Achievement, AgentRun, CommMsg, WsEvent, Building } from '../shared/types';
+import type { Agent, Business, Decision, Achievement, AgentRun, CommMsg, WsEvent, Building, Venture } from '../shared/types';
 import { api, useWebSocket } from '../shared';
 
 export type AppData = {
   agents: Agent[];
   businesses: Business[];
+  ventures: Venture[];
   decisions: Decision[];
   achievements: Achievement[];
   runs: AgentRun[];
@@ -19,6 +20,7 @@ export type AppData = {
   reload: {
     loadAgents: () => Promise<void>;
     loadBusinesses: () => Promise<void>;
+    loadVentures: () => Promise<void>;
     loadDecisions: () => Promise<void>;
     loadAchievements: () => Promise<void>;
     loadRuns: () => Promise<void>;
@@ -32,6 +34,7 @@ export type AppData = {
 export function useAppData(): AppData {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [businesses, setBusinesses] = useState<Business[]>([]);
+  const [ventures, setVentures] = useState<Venture[]>([]);
   const [decisions, setDecisions] = useState<Decision[]>([]);
   const [achievements, setAchievements] = useState<Achievement[]>([]);
   const [runs, setRuns] = useState<AgentRun[]>([]);
@@ -49,6 +52,10 @@ export function useAppData(): AppData {
   const loadBusinesses = useCallback(async () => {
     const data = await api.businesses();
     if (data) setBusinesses(data);
+  }, []);
+  const loadVentures = useCallback(async () => {
+    const data = await api.ventures();
+    if (data) setVentures(data);
   }, []);
   const loadDecisions = useCallback(async () => {
     const data = await api.decisions();
@@ -121,6 +128,7 @@ export function useAppData(): AppData {
     loadDepartments();
     loadAgents();
     loadBusinesses();
+    loadVentures();
     loadDecisions();
     loadAchievements();
     loadRuns();
@@ -133,8 +141,8 @@ export function useAppData(): AppData {
   const pending = decisions.filter((d) => d.status === 'proposed' || d.status === 'pending');
 
   return {
-    agents, businesses, decisions, achievements, runs, messages, liveEvents,
+    agents, businesses, ventures, decisions, achievements, runs, messages, liveEvents,
     departments, xp, level, runtimeOn, pending, wsConnected,
-    reload: { loadAgents, loadBusinesses, loadDecisions, loadAchievements, loadRuns, loadMessages, loadProgress, loadDepartments, loadRuntimeStatus },
+    reload: { loadAgents, loadBusinesses, loadVentures, loadDecisions, loadAchievements, loadRuns, loadMessages, loadProgress, loadDepartments, loadRuntimeStatus },
   };
 }

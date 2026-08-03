@@ -4,6 +4,8 @@ export interface Agent {
   role: string;
   status: string;
   model: string | null;
+  venture_id: number | null;
+  capabilities: string;
   created_at: string;
 }
 
@@ -61,6 +63,8 @@ export interface Decision {
   amount: number | null;
   risk_level: string;
   status: string;
+  category: 'FINANCIAL' | 'LEGAL' | 'PUBLICATION' | 'STRATEGIC' | 'TECHNICAL' | 'OPERATIONAL';
+  venture_id: number | null;
   approved_by: string | null;
   approved_at: string | null;
   created_at: string;
@@ -182,4 +186,123 @@ export interface AuditLog {
   user_id: number | null;
   details: string;
   created_at: string;
+}
+
+// ═══════════ VENTURES ══════════════════════════════════════════════════════════
+export type VentureStatus = 'idea' | 'active' | 'scaling' | 'paused' | 'closed';
+export type VentureType = 'store' | 'saas' | 'content' | 'fund' | 'agency' | 'community' | 'other';
+
+export interface Venture {
+  id: number;
+  name: string;
+  type: VentureType;
+  status: VentureStatus;
+  goal: string | null;
+  budget_allocated_usd: number;
+  budget_spent_usd: number;
+  revenue_target_usd: number;
+  metadata: string;
+  created_at: string;
+}
+
+export interface VentureCreatePayload {
+  name: string;
+  type?: VentureType;
+  status?: VentureStatus;
+  goal?: string | null;
+  revenue_target_usd?: number;
+}
+
+// ═══════════ ASSETS ════════════════════════════════════════════════════════════
+export type AssetType = 'content' | 'code' | 'data' | 'audience' | 'brand' | 'ip' | 'credential' | 'tool';
+export type AssetStatus = 'draft' | 'active' | 'deprecated';
+
+export interface Asset {
+  id: number;
+  venture_id: number | null;
+  type: AssetType;
+  name: string;
+  description: string | null;
+  value_usd: number | null;
+  status: AssetStatus;
+  platform: string | null;
+  external_id: string | null;
+  metadata: string;
+  created_at: string;
+}
+
+export interface AssetCreatePayload {
+  venture_id?: number | null;
+  type: AssetType;
+  name: string;
+  description?: string | null;
+  value_usd?: number | null;
+  platform?: string | null;
+  external_id?: string | null;
+}
+
+// ═══════════ PROJECTS ══════════════════════════════════════════════════════════
+export type ProjectStatus = 'planned' | 'active' | 'completed' | 'cancelled';
+
+export interface Project {
+  id: number;
+  venture_id: number | null;
+  name: string;
+  goal: string | null;
+  status: ProjectStatus;
+  deadline: string | null;
+  budget_usd: number | null;
+  created_at: string;
+}
+
+export interface ProjectCreatePayload {
+  venture_id?: number | null;
+  name: string;
+  goal?: string | null;
+  deadline?: string | null;
+  budget_usd?: number | null;
+}
+
+// ═══════════ REVENUE_STREAMS ═══════════════════════════════════════════════════
+export type RevenueType = 'one_time' | 'subscription' | 'ads' | 'commission' | 'licensing' | 'consulting' | 'tips';
+
+export interface RevenueStream {
+  id: number;
+  venture_id: number | null;
+  asset_id: number | null;
+  type: RevenueType;
+  platform: string;
+  status: string;
+  mrr_usd: number;
+  total_earned_usd: number;
+  last_synced_at: string | null;
+  created_at: string;
+}
+
+// ═══════════ AUTOMATIONS — pipeline como datos ══════════════════════════════════
+export type DecisionCategory = 'FINANCIAL' | 'LEGAL' | 'PUBLICATION' | 'STRATEGIC' | 'TECHNICAL' | 'OPERATIONAL';
+
+export interface Automation {
+  id: number;
+  venture_id: number | null;
+  name: string;
+  trigger_event: string;
+  trigger_conditions: string;
+  action_type: string;
+  action_agent_role: string | null;
+  action_priority: number;
+  action_context_template: string | null;
+  requires_approval: number;
+  active: number;
+  created_at: string;
+}
+
+export interface AutomationCreatePayload {
+  venture_id?: number | null;
+  name: string;
+  trigger_event: string;
+  action_agent_role: string;
+  action_priority?: number;
+  action_context_template?: string | null;
+  requires_approval?: boolean;
 }

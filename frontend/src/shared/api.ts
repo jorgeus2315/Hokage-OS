@@ -84,4 +84,14 @@ export const api = {
   runtimeStatus: () => req<{ running: boolean }>('/runtime/status'),
   runtimeStart: () => req('/runtime/start', { method: 'POST' }),
   runtimeStop: () => req('/runtime/stop', { method: 'POST' }),
+
+  ventures: () => req<import('./types').Venture[]>('/ventures'),
+  createVenture: (payload: { name: string; type?: string; goal?: string; revenue_target_usd?: number }) =>
+    req('/ventures', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }),
+
+  automations: () => req<import('./types').Automation[]>('/automations'),
+  createAutomation: (payload: Record<string, unknown>) =>
+    req('/automations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }),
+  toggleAutomation: (id: number) =>
+    req(`/automations/${id}/toggle`, { method: 'PATCH' }),
 };

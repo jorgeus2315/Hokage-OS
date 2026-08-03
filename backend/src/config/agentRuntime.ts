@@ -61,6 +61,10 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
+function applyTemplate(template: string, payload: Record<string, unknown>): string {
+  return template.replace(/\{\{(\w+)\}\}/g, (_, key: string) => String(payload[key] ?? ''));
+}
+
 // Garantizar schedule para un agente (PK = agent_id)
 async function ensureSchedule(agentId: number, intervalMs: number): Promise<void> {
   const row = await get<{ agent_id: number }>('SELECT agent_id FROM agent_schedules WHERE agent_id = ?', [agentId]);
@@ -271,7 +275,7 @@ INSTRUCCIONES DE FORMATO:
     }
   }
 
-  // Etapa 1: vaciar cola de eventos del bus → crear work_items event_triggered
+  // Etapa 1: vaciar cola de eventos → buscar automations activas → crear work_items
   private async stage1_drainBusEvents(): Promise<void> {
     const events = this.busEventQueue.splice(0);
     if (events.length === 0) return;
@@ -279,44 +283,46 @@ INSTRUCCIONES DE FORMATO:
     const agents = await listAgents();
 
     for (const event of events) {
-      if (event.type === 'trend.detected') {
-        const escritor = agents.find((a) => a.role === 'contenido');
-        if (escritor) {
-          const payload = event.payload as { keyword?: string; description?: string };
-          await createWorkItem({
-            agentId: escritor.id,
-            type: 'event_triggered',
-            priority: 7,
-            context: `Tendencia detectada por el Explorador — keyword: "${payload.keyword}". ${payload.description ?? ''}. Crea contenido SEO optimizado (titulo, descripcion, 5 tags). Cuando termines añade: [CONTENIDO: ${payload.keyword} | resumen breve] y [DECISION: Publicar contenido SEO — ${payload.keyword}]`,
-          });
-          await createMessage({
-            sender_id: agents.find((a) => a.role === 'investigador')?.id ?? 1,
-            receiver_id: escritor.id,
-            content: `Tendencia detectada: "${payload.keyword}" — ${payload.description ?? ''}`,
-            channel: 'internal',
-          });
-        }
-      }
+      const automations = await all<{
+        id: number;
+        name: string;
+        action_agent_role: string | null;
+        action_priority: number;
+        action_context_template: string | null;
+      }>(
+        `SELECT id, name, action_agent_role, action_priority, action_context_template
+         FROM automations
+         WHERE trigger_event = ? AND active = 1`,
+        [event.type]
+      );
 
-      // Stage 6: contenido listo → Tráfico analiza SEO y visibilidad
-      if (event.type === 'content.created') {
-        const trafico = agents.find((a) => a.role === 'trafico');
-        if (trafico) {
-          const payload = event.payload as { keyword?: string; summary?: string };
-          await createWorkItem({
-            agentId: trafico.id,
-            type: 'event_triggered',
-            priority: 6,
-            context: `El Escritor ha creado contenido para la keyword "${payload.keyword}". Resumen: ${payload.summary ?? ''}. Analiza oportunidades SEO adicionales, hashtags y canales de distribución para maximizar visibilidad. Propón 2-3 acciones concretas.`,
-          });
+      for (const automation of automations) {
+        if (!automation.action_agent_role) continue;
+        const agent = agents.find((a) => a.role === automation.action_agent_role);
+        if (!agent) continue;
+
+        const payload = (event.payload ?? {}) as Record<string, unknown>;
+        const context = automation.action_context_template
+          ? applyTemplate(automation.action_context_template, payload)
+          : JSON.stringify(payload);
+
+        await createWorkItem({
+          agentId: agent.id,
+          type: 'event_triggered',
+          priority: automation.action_priority,
+          context,
+        });
+
+        const senderAgent = agents.find((a) => a.name === event.from);
+        if (senderAgent && senderAgent.id !== agent.id) {
           await createMessage({
-            sender_id: agents.find((a) => a.role === 'contenido')?.id ?? 1,
-            receiver_id: trafico.id,
-            content: `Contenido listo para "${payload.keyword}". Necesito análisis SEO y plan de distribución.`,
+            sender_id: senderAgent.id,
+            receiver_id: agent.id,
+            content: context.slice(0, 300),
             channel: 'internal',
           });
-          console.log(`[STAGE6] Pipeline derivado: contenido → tráfico`);
         }
+        console.log(`[AUTOMATION] "${automation.name}" → ${agent.name} (${event.type})`);
       }
     }
   }

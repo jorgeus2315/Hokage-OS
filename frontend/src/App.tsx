@@ -15,7 +15,7 @@ export default function App() {
   const [toast, setToast] = useState('');
 
   const {
-    agents, businesses, achievements, runs, messages, liveEvents,
+    agents, ventures, achievements, runs, messages, liveEvents,
     departments, xp, level, runtimeOn, pending, wsConnected, reload,
   } = useAppData();
 
@@ -88,7 +88,7 @@ export default function App() {
           xp={xp}
           xpNext={xpNext}
           agentsCount={agents.length}
-          businessCount={businesses.length}
+          businessCount={ventures.length}
           pendingCount={pending.length}
           messagesCount={messages.length}
           runtimeOn={runtimeOn}

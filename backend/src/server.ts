@@ -392,6 +392,94 @@ app.get('/api/events', requireAdmin, (_req, res) => {
   res.json({ ok: true, data: bus.getHistory(50) });
 });
 
+// ═══════════ VENTURES ═══════════
+app.get('/api/ventures', async (_req, res) => {
+  try {
+    const ventures = await all('SELECT * FROM ventures ORDER BY created_at DESC');
+    res.json({ ok: true, data: ventures });
+  } catch (e: any) { sendError(res, 500, e, 'Error listando ventures'); }
+});
+
+app.post('/api/ventures', requireAdmin, async (req, res) => {
+  try {
+    const { name, type = 'store', status = 'idea', goal = null, revenue_target_usd = 0 } = req.body;
+    if (!name) return res.status(400).json({ ok: false, error: 'Falta name' });
+    const result = await run(
+      `INSERT INTO ventures (name, type, status, goal, revenue_target_usd) VALUES (?, ?, ?, ?, ?)`,
+      [name, type, status, goal, revenue_target_usd]
+    );
+    const venture = await get('SELECT * FROM ventures WHERE id = ?', [result.lastID]);
+    res.status(201).json({ ok: true, data: venture });
+  } catch (e: any) { sendError(res, 400, e, 'Error creando venture'); }
+});
+
+app.patch('/api/ventures/:id', requireAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const allowed = ['name', 'type', 'status', 'goal', 'revenue_target_usd', 'budget_allocated_usd'];
+    const sets = allowed.filter((k) => req.body[k] !== undefined).map((k) => `${k} = ?`);
+    const vals = allowed.filter((k) => req.body[k] !== undefined).map((k) => req.body[k]);
+    if (sets.length === 0) return res.status(400).json({ ok: false, error: 'Sin campos a actualizar' });
+    await run(`UPDATE ventures SET ${sets.join(', ')} WHERE id = ?`, [...vals, id]);
+    const venture = await get('SELECT * FROM ventures WHERE id = ?', [id]);
+    res.json({ ok: true, data: venture });
+  } catch (e: any) { sendError(res, 400, e, 'Error actualizando venture'); }
+});
+
+// ═══════════ ASSETS ═══════════
+app.get('/api/assets', async (req, res) => {
+  try {
+    const { venture_id } = req.query;
+    const where = venture_id ? 'WHERE venture_id = ?' : '';
+    const params = venture_id ? [Number(venture_id)] : [];
+    const assets = await all(`SELECT * FROM assets ${where} ORDER BY created_at DESC`, params);
+    res.json({ ok: true, data: assets });
+  } catch (e: any) { sendError(res, 500, e, 'Error listando assets'); }
+});
+
+app.post('/api/assets', requireAdmin, async (req, res) => {
+  try {
+    const { venture_id = null, type, name, description = null, value_usd = null, platform = null, external_id = null } = req.body;
+    if (!type || !name) return res.status(400).json({ ok: false, error: 'Faltan type y name' });
+    const result = await run(
+      `INSERT INTO assets (venture_id, type, name, description, value_usd, platform, external_id) VALUES (?,?,?,?,?,?,?)`,
+      [venture_id, type, name, description, value_usd, platform, external_id]
+    );
+    const asset = await get('SELECT * FROM assets WHERE id = ?', [result.lastID]);
+    res.status(201).json({ ok: true, data: asset });
+  } catch (e: any) { sendError(res, 400, e, 'Error creando asset'); }
+});
+
+// ═══════════ AUTOMATIONS ═══════════
+app.get('/api/automations', async (_req, res) => {
+  try {
+    const automations = await all('SELECT * FROM automations ORDER BY created_at ASC');
+    res.json({ ok: true, data: automations });
+  } catch (e: any) { sendError(res, 500, e, 'Error listando automations'); }
+});
+
+app.post('/api/automations', requireAdmin, async (req, res) => {
+  try {
+    const { venture_id = null, name, trigger_event, action_agent_role, action_priority = 6, action_context_template = null, requires_approval = 0 } = req.body;
+    if (!name || !trigger_event || !action_agent_role) return res.status(400).json({ ok: false, error: 'Faltan name, trigger_event, action_agent_role' });
+    const result = await run(
+      `INSERT INTO automations (venture_id, name, trigger_event, action_agent_role, action_priority, action_context_template, requires_approval) VALUES (?,?,?,?,?,?,?)`,
+      [venture_id, name, trigger_event, action_agent_role, action_priority, action_context_template, requires_approval ? 1 : 0]
+    );
+    const automation = await get('SELECT * FROM automations WHERE id = ?', [result.lastID]);
+    res.status(201).json({ ok: true, data: automation });
+  } catch (e: any) { sendError(res, 400, e, 'Error creando automation'); }
+});
+
+app.patch('/api/automations/:id/toggle', requireAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    await run(`UPDATE automations SET active = CASE WHEN active = 1 THEN 0 ELSE 1 END WHERE id = ?`, [id]);
+    const automation = await get('SELECT * FROM automations WHERE id = ?', [id]);
+    res.json({ ok: true, data: automation });
+  } catch (e: any) { sendError(res, 400, e, 'Error toggling automation'); }
+});
+
 // ═══════════ PROGRESS / ACHIEVEMENTS ═══════════
 app.use('/api', progressRouter);
 
