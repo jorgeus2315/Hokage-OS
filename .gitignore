@@ -1,0 +1,6 @@
+.DS_Store
+.agents/
+.claude/
+skills-lock.json
+backend/data/*.db-shm
+backend/data/*.db-wal

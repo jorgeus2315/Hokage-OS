@@ -52,7 +52,15 @@ const AUTONOMOUS_TASKS: Record<string, { task: string; interval: number }> = {
     interval: 40 * 60 * 1000,
   },
   ceo: {
-    task: 'Revisa el estado general del equipo y los negocios. Coordina al equipo y propone la siguiente accion estrategica prioritaria.',
+    task: `Analiza el estado actual desde una perspectiva estratégica — no operacional.
+Evalúa tres cosas:
+1. ¿Están los agentes trabajando en lo que más mueve los objetivos de Jorge? Si no, identifica el desajuste.
+2. ¿Hay algún patrón en los rechazos, fallos o silencio reciente que señale un problema de fondo?
+3. ¿Existe alguna oportunidad que el equipo no esté persiguiendo activamente?
+
+Si detectas algo relevante, usa [DECISION: propuesta concreta en menos de 80 caracteres].
+Si todo está alineado con los objetivos, reporta el estado en una sola línea.
+No rellenes si no hay nada que decir.`,
     interval: 60 * 60 * 1000,
   },
 };
@@ -392,8 +400,8 @@ INSTRUCCIONES DE FORMATO:
 
   // Etapa 3: ejecutar work_items in_progress (+ Etapa 5 inline: guardar resultado)
   private async stage3_executeAgents(): Promise<void> {
-    const inProgress = await all<{ id: number; agent_id: number; type: string; context: string | null }>(
-      `SELECT w.id, w.agent_id, w.type, w.context
+    const inProgress = await all<{ id: number; agent_id: number; type: string; context: string | null; milestone_id: number | null }>(
+      `SELECT w.id, w.agent_id, w.type, w.context, w.milestone_id
        FROM work_items w
        WHERE w.status = 'in_progress'
        ORDER BY w.priority DESC, w.created_at ASC
@@ -439,6 +447,31 @@ INSTRUCCIONES DE FORMATO:
         [result.ok ? 'done' : 'failed', (result.response ?? result.error ?? '').slice(0, 2000), nowIso(), item.id]
       );
       this.activeAgents.delete(item.agent_id);
+
+      // Cerrar milestone si este work_item estaba vinculado a uno
+      if (item.milestone_id) {
+        await run(
+          `UPDATE obj_milestones SET status = ?, completed_at = ? WHERE id = ?`,
+          [result.ok ? 'done' : 'blocked', result.ok ? nowIso() : null, item.milestone_id]
+        );
+
+        // Comprobar si todos los milestones del plan están terminados
+        const milestone = await get<{ plan_id: number; objective_id: number }>(
+          'SELECT plan_id, objective_id FROM obj_milestones WHERE id = ?', [item.milestone_id]
+        );
+        if (milestone) {
+          const remaining = await get<{ count: number }>(
+            `SELECT COUNT(*) as count FROM obj_milestones WHERE plan_id = ? AND status NOT IN ('done','skipped')`,
+            [milestone.plan_id]
+          );
+          if (remaining && remaining.count === 0) {
+            await run(`UPDATE obj_plans SET status = 'completed' WHERE id = ?`, [milestone.plan_id]);
+            await run(`UPDATE objectives SET status = 'achieved' WHERE id = ?`, [milestone.objective_id]);
+            bus.publish({ type: 'objective.achieved', from: 'Hokage', payload: { objectiveId: milestone.objective_id } });
+            console.log(`[GOAL] Objetivo ${milestone.objective_id} COMPLETADO`);
+          }
+        }
+      }
     }
   }
 

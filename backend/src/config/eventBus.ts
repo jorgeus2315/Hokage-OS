@@ -17,7 +17,10 @@ export type AgentEventType =
   | 'agent.task.done'     // Agente termina tarea
   | 'agent.task.error'    // Agente falla
   | 'report.daily'        // Reporte diario de Finanzas
-  | 'system.error';       // Error critico del sistema
+  | 'system.error'        // Error critico del sistema
+  | 'objective.created'   // Jorge crea un nuevo objetivo
+  | 'objective.approved'  // Jorge aprueba el plan de un objetivo
+  | 'objective.achieved'; // Todos los milestones de un objetivo completados
 
 export interface AgentEvent {
   type: AgentEventType;

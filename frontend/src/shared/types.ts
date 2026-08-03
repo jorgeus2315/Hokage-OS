@@ -111,7 +111,49 @@ export interface WorkItem {
   resolved_at: string | null;
 }
 
-export type Screen = 'boot' | 'menu' | 'map' | 'building' | 'crew' | 'missions' | 'alerts' | 'comms' | 'ventures';
+export type Screen = 'boot' | 'menu' | 'map' | 'building' | 'crew' | 'missions' | 'alerts' | 'comms' | 'ventures' | 'objetivos';
+
+// ═══════════ GOAL SYSTEM ════════════════════════════════════════════════════
+export type ObjectiveStatus = 'planning' | 'active' | 'achieved' | 'paused' | 'abandoned';
+export type MilestoneStatus = 'pending' | 'in_progress' | 'done' | 'blocked' | 'skipped';
+export type PlanStatus = 'proposed' | 'approved' | 'active' | 'completed';
+
+export interface ObjMilestone {
+  id: number;
+  plan_id: number;
+  objective_id: number;
+  phase_index: number;
+  title: string;
+  description: string | null;
+  assigned_agent_role: string | null;
+  status: MilestoneStatus;
+  due_date: string | null;
+  completed_at: string | null;
+  created_at: string;
+}
+
+export interface ObjPlan {
+  id: number;
+  objective_id: number;
+  phases: string; // JSON
+  estimated_weeks: number | null;
+  confidence: number;
+  status: PlanStatus;
+  created_at: string;
+  milestones?: ObjMilestone[];
+}
+
+export interface Objective {
+  id: number;
+  title: string;
+  goal: string | null;
+  success_criteria: string | null;
+  deadline: string | null;
+  priority: number;
+  status: ObjectiveStatus;
+  created_at: string;
+  plan?: ObjPlan;
+}
 
 export type BuildingSection = 'chat' | 'feed' | 'stats' | 'pipeline' | 'alerts';
 

@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react';
 import type { ChatMsg, Building, Screen, BuildingSection } from './shared';
 import { api, TopBar } from './shared';
 import { useAppData } from './hooks/useAppData';
-import { BootView, MenuView, MapView, BuildingView, CommsView, MissionsView, AlertsView, CrewView, VenturesView } from './views';
+import { BootView, MenuView, MapView, BuildingView, CommsView, MissionsView, AlertsView, CrewView, VenturesView, ObjectivesView } from './views';
 import { Toast } from './modals';
 
 export default function App() {
@@ -16,7 +16,7 @@ export default function App() {
 
   const {
     agents, ventures, achievements, runs, messages, liveEvents,
-    departments, xp, level, runtimeOn, pending, wsConnected, reload,
+    departments, objectives, xp, level, runtimeOn, pending, wsConnected, reload,
   } = useAppData();
 
   const show = useCallback((m: string) => {
@@ -117,6 +117,7 @@ export default function App() {
     alerts: 'Alertas',
     comms: 'Ship Comms',
     ventures: 'Ventures',
+    objetivos: 'Objetivos',
   };
 
   const buildingAgent = activeBuilding ? agents.find((a) => a.role === activeBuilding.role) : undefined;
@@ -144,10 +145,12 @@ export default function App() {
             liveEvents={liveEvents}
             messagesCount={messages.length}
             connected={wsConnected}
+            objectivesCount={objectives.filter((o) => o.status === 'active' || o.plan?.status === 'proposed').length}
             onEnterBuilding={enterBuilding}
             onGoComms={() => setScreen('comms')}
             onGoAlerts={() => setScreen('alerts')}
             onGoCrew={() => setScreen('crew')}
+            onGoObjetivos={() => setScreen('objetivos')}
           />
         )}
 
@@ -170,6 +173,9 @@ export default function App() {
           />
         )}
 
+        {screen === 'objetivos' && (
+          <ObjectivesView objectives={objectives} onReload={reload.loadObjectives} />
+        )}
         {screen === 'ventures' && <VenturesView ventures={ventures} />}
         {screen === 'comms' && <CommsView agents={agents} messages={messages} liveEvents={liveEvents} />}
         {screen === 'missions' && <MissionsView level={level} xp={xp} xpNext={xpNext} achievements={achievements} />}

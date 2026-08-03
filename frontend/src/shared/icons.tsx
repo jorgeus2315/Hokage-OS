@@ -233,6 +233,16 @@ const GLYPHS: Record<string, (p: IconProps) => JSX.Element> = {
   workshop: IconWorkshop,
 };
 
+export function IconTarget({ className }: IconProps) {
+  return (
+    <svg {...base} className={className}>
+      <circle cx="12" cy="12" r="10" />
+      <circle cx="12" cy="12" r="6" />
+      <circle cx="12" cy="12" r="2" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
 export function BuildingGlyph({ glyph, className }: { glyph: string; className?: string }) {
   const Cmp = GLYPHS[glyph] || IconTower;
   return <Cmp className={className} />;

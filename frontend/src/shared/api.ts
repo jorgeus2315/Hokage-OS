@@ -20,7 +20,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T | null> {
       ...init,
       headers: {
         ...(init?.headers || {}),
-        ...(init?.method && ['POST', 'PUT', 'DELETE'].includes(init.method.toUpperCase()) ? adminHeaders() : {}),
+        ...(init?.method && ['POST', 'PUT', 'DELETE', 'PATCH'].includes(init.method.toUpperCase()) ? adminHeaders() : {}),
       },
     });
     if (!res.ok) {
@@ -106,4 +106,20 @@ export const api = {
     req('/automations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }),
   toggleAutomation: (id: number) =>
     req(`/automations/${id}/toggle`, { method: 'PATCH' }),
+
+  objectives: () => req<import('./types').Objective[]>('/objectives'),
+  createObjective: (title: string) =>
+    req<import('./types').Objective>('/objectives', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title }),
+    }),
+  approvePlan: (objectiveId: number) =>
+    req<import('./types').Objective>(`/objectives/${objectiveId}/plan/approve`, { method: 'PUT' }),
+  updateObjective: (id: number, payload: { status?: string }) =>
+    req<import('./types').Objective>(`/objectives/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
 };

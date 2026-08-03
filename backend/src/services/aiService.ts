@@ -194,6 +194,39 @@ export async function askAgent(agentId: number, userMessage: string): Promise<As
   }
 }
 
+// Llamada directa a la IA para obtener JSON estructurado sin el sistema prompt del agente.
+// Usar solo para tareas internas del sistema (no conversaciones con el usuario).
+export async function callAIJson<T = unknown>(systemPrompt: string, userMessage: string, model?: string): Promise<T | null> {
+  const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+  if (!OPENROUTER_API_KEY) return null;
+  const MODEL = model || 'anthropic/claude-haiku-4-5';
+  try {
+    const res = await withAiTimeout(
+      fetch(`${OPENROUTER_BASE}/chat/completions`, {
+        method: 'POST',
+        headers: openRouterHeaders(OPENROUTER_API_KEY),
+        body: JSON.stringify({
+          model: MODEL,
+          max_tokens: 2000,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userMessage },
+          ],
+        }),
+      })
+    );
+    if (!res.ok) return null;
+    const data = (await res.json()) as any;
+    const raw: string = data?.choices?.[0]?.message?.content || '';
+    const jsonStart = raw.indexOf('{');
+    const jsonEnd = raw.lastIndexOf('}');
+    if (jsonStart < 0 || jsonEnd <= jsonStart) return null;
+    return JSON.parse(raw.slice(jsonStart, jsonEnd + 1)) as T;
+  } catch {
+    return null;
+  }
+}
+
 // Escribe un hecho semántico en la memoria del agente.
 // Con el UNIQUE index en (agent_id, key) el INSERT REPLACE garantiza upsert sin duplicados.
 export async function writeAgentMemory(agentId: number, key: string, value: string): Promise<void> {

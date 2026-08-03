@@ -97,6 +97,9 @@ async function runMigrations(): Promise<void> {
   if (!(await columnExists('work_items', 'venture_id'))) {
     await run(`ALTER TABLE work_items ADD COLUMN venture_id INTEGER REFERENCES ventures(id)`);
   }
+  if (!(await columnExists('work_items', 'milestone_id'))) {
+    await run(`ALTER TABLE work_items ADD COLUMN milestone_id INTEGER REFERENCES obj_milestones(id)`);
+  }
 
   // Mantener sincronizado el modelo óptimo de cada agente con la fuente de verdad (agentModels.ts)
   const agents = await all<{ id: number; role: string; model: string | null }>('SELECT id, role, model FROM agents');
@@ -475,6 +478,42 @@ export async function initSchema(): Promise<void> {
     active INTEGER NOT NULL DEFAULT 1,
     sort_order INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+
+  // ═══════════ GOAL SYSTEM ═══════════════════════════════════════════════════
+  await run(`CREATE TABLE IF NOT EXISTS objectives (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    title            TEXT NOT NULL,
+    goal             TEXT,
+    success_criteria TEXT,
+    deadline         TEXT,
+    priority         INTEGER DEFAULT 5,
+    status           TEXT NOT NULL DEFAULT 'planning',
+    created_at       TEXT DEFAULT (datetime('now'))
+  )`);
+
+  await run(`CREATE TABLE IF NOT EXISTS obj_plans (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    objective_id    INTEGER NOT NULL REFERENCES objectives(id) ON DELETE CASCADE,
+    phases          TEXT NOT NULL DEFAULT '[]',
+    estimated_weeks INTEGER,
+    confidence      INTEGER DEFAULT 70,
+    status          TEXT NOT NULL DEFAULT 'proposed',
+    created_at      TEXT DEFAULT (datetime('now'))
+  )`);
+
+  await run(`CREATE TABLE IF NOT EXISTS obj_milestones (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    plan_id              INTEGER NOT NULL REFERENCES obj_plans(id) ON DELETE CASCADE,
+    objective_id         INTEGER NOT NULL REFERENCES objectives(id) ON DELETE CASCADE,
+    phase_index          INTEGER NOT NULL DEFAULT 0,
+    title                TEXT NOT NULL,
+    description          TEXT,
+    assigned_agent_role  TEXT,
+    status               TEXT NOT NULL DEFAULT 'pending',
+    due_date             TEXT,
+    completed_at         TEXT,
+    created_at           TEXT DEFAULT (datetime('now'))
   )`);
 
   const deptCount = await get<{ count: number }>('SELECT COUNT(*) as count FROM departments');

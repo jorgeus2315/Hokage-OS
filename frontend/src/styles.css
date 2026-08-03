@@ -226,6 +226,9 @@ svg { display: block; flex-shrink: 0; }
 .hk-btn--ghost-danger { color: var(--ember); border-color: var(--ember-dim); }
 .hk-btn--ghost-danger:hover { background: rgba(232, 67, 45, 0.1); border-color: var(--ember); }
 
+.hk-btn--ghost-signal { color: var(--signal); border-color: var(--signal); }
+.hk-btn--ghost-signal:hover { background: rgba(0, 204, 255, 0.08); }
+
 .hk-btn--sm { padding: 6px 11px; font-size: 10px; }
 .hk-btn--block { width: 100%; }
 

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { Agent, AgentRun, Decision, WsEvent, Building } from '../shared/types';
 import { BUILDINGS } from '../shared/constants';
 import { Led } from '../shared/ui';
-import { IconComms, IconAlert, IconCrew } from '../shared/icons';
+import { IconComms, IconAlert, IconCrew, IconTarget } from '../shared/icons';
 import { WorldCanvas } from '../world';
 import type { RippleEvent } from '../world/types';
 
@@ -21,10 +21,12 @@ export function MapView({
   liveEvents,
   messagesCount,
   connected,
+  objectivesCount,
   onEnterBuilding,
   onGoComms,
   onGoAlerts,
   onGoCrew,
+  onGoObjetivos,
 }: {
   departments?: Building[];
   agents: Agent[];
@@ -33,10 +35,12 @@ export function MapView({
   liveEvents: WsEvent[];
   messagesCount: number;
   connected: boolean;
+  objectivesCount: number;
   onEnterBuilding: (b: Building) => void;
   onGoComms: () => void;
   onGoAlerts: () => void;
   onGoCrew: () => void;
+  onGoObjetivos: () => void;
 }) {
   const allDepts = departmentsProp && departmentsProp.length > 0 ? departmentsProp : BUILDINGS;
   const HUB = allDepts.find((b) => b.is_hub || b.id === 'hokage') ?? allDepts[0];
@@ -156,6 +160,9 @@ export function MapView({
           </button>
           <button className="hk-btn hk-btn--block" onClick={onGoCrew}>
             <IconCrew /> Equipo
+          </button>
+          <button className={`hk-btn hk-btn--block${objectivesCount > 0 ? ' hk-btn--ghost-signal' : ''}`} onClick={onGoObjetivos}>
+            <IconTarget /> Objetivos {objectivesCount > 0 ? `(${objectivesCount})` : ''}
           </button>
         </div>
 

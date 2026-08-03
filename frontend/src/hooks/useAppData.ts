@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import type { Agent, Decision, Achievement, AgentRun, CommMsg, WsEvent, Building, Venture } from '../shared/types';
+import type { Agent, Decision, Achievement, AgentRun, CommMsg, WsEvent, Building, Venture, Objective } from '../shared/types';
 import { api, useWebSocket } from '../shared';
 
 export type AppData = {
@@ -11,6 +11,7 @@ export type AppData = {
   messages: CommMsg[];
   liveEvents: WsEvent[];
   departments: Building[];
+  objectives: Objective[];
   xp: number;
   level: number;
   runtimeOn: boolean;
@@ -26,6 +27,7 @@ export type AppData = {
     loadProgress: () => Promise<void>;
     loadDepartments: () => Promise<void>;
     loadRuntimeStatus: () => Promise<void>;
+    loadObjectives: () => Promise<void>;
   };
 };
 
@@ -41,6 +43,7 @@ export function useAppData(): AppData {
   const [xp, setXp] = useState(0);
   const [level, setLevel] = useState(1);
   const [runtimeOn, setRuntimeOn] = useState(false);
+  const [objectives, setObjectives] = useState<Objective[]>([]);
 
   const loadAgents = useCallback(async () => {
     const data = await api.agents();
@@ -81,6 +84,10 @@ export function useAppData(): AppData {
     const data = await api.runtimeStatus();
     if (data) setRuntimeOn(data.running);
   }, []);
+  const loadObjectives = useCallback(async () => {
+    const data = await api.objectives();
+    if (data) setObjectives(data);
+  }, []);
 
   const handleWsEvent = useCallback((envelope: { type: string; data?: unknown }) => {
     // Snapshot inicial: sustituye el estado REST con datos frescos del servidor
@@ -109,11 +116,12 @@ export function useAppData(): AppData {
       setLiveEvents((prev) => [inner, ...prev].slice(0, 50));
       if (inner.type === 'decision.created') loadDecisions();
       if (inner.type === 'agent.task.done' || inner.type === 'agent.task.start' || inner.type === 'agent.task.error') loadRuns();
+    if (inner.type === 'objective.achieved' || inner.type === 'objective.created' || inner.type === 'objective.approved') loadObjectives();
       return;
     }
     if (envelope.type === 'message.new') loadMessages();
     if (envelope.type === 'decision.new' || envelope.type === 'decision.approved' || envelope.type === 'decision.rejected') loadDecisions();
-  }, [loadDecisions, loadRuns, loadMessages]);
+  }, [loadDecisions, loadRuns, loadMessages, loadObjectives]);
 
   const wsConnected = useWebSocket(handleWsEvent);
 
@@ -127,6 +135,7 @@ export function useAppData(): AppData {
     loadMessages();
     loadProgress();
     loadRuntimeStatus();
+    loadObjectives();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -134,7 +143,7 @@ export function useAppData(): AppData {
 
   return {
     agents, ventures, decisions, achievements, runs, messages, liveEvents,
-    departments, xp, level, runtimeOn, pending, wsConnected,
-    reload: { loadAgents, loadVentures, loadDecisions, loadAchievements, loadRuns, loadMessages, loadProgress, loadDepartments, loadRuntimeStatus },
+    departments, objectives, xp, level, runtimeOn, pending, wsConnected,
+    reload: { loadAgents, loadVentures, loadDecisions, loadAchievements, loadRuns, loadMessages, loadProgress, loadDepartments, loadRuntimeStatus, loadObjectives },
   };
 }

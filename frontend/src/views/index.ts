@@ -7,3 +7,4 @@ export * from './MissionsView';
 export * from './AlertsView';
 export * from './CrewView';
 export * from './VenturesView';
+export * from './ObjectivesView';

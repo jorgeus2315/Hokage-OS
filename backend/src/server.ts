@@ -40,7 +40,7 @@ import { listAgents, createAgent } from './services/agentService.js';
 import { createBusiness, listBusinesses } from './services/businessService.js';
 import { approveDecision, rejectDecision, createDecision, listDecisions } from './services/decisionService.js';
 import { createMessage, listMessages } from './services/messageService.js';
-import { askAgent } from './services/aiService.js';
+import { askAgent, callAIJson } from './services/aiService.js';
 import progressRouter from './routes/progress.js';
 import { runtime } from './config/agentRuntime.js';
 import bus from './config/eventBus.js';
@@ -486,6 +486,163 @@ app.patch('/api/automations/:id/toggle', requireAdmin, async (req, res) => {
     const automation = await get('SELECT * FROM automations WHERE id = ?', [id]);
     res.json({ ok: true, data: automation });
   } catch (e: any) { sendError(res, 400, e, 'Error toggling automation'); }
+});
+
+// ═══════════ GOAL SYSTEM ═══════════
+app.get('/api/objectives', async (_req, res) => {
+  try {
+    const objectives = await all<{
+      id: number; title: string; goal: string | null; success_criteria: string | null;
+      deadline: string | null; priority: number; status: string; created_at: string;
+    }>('SELECT * FROM objectives ORDER BY priority DESC, created_at DESC');
+
+    const result = await Promise.all(objectives.map(async (obj) => {
+      const plan = await get<{ id: number; objective_id: number; phases: string; estimated_weeks: number | null; confidence: number; status: string; created_at: string }>(
+        'SELECT * FROM obj_plans WHERE objective_id = ? ORDER BY created_at DESC LIMIT 1', [obj.id]
+      );
+      if (!plan) return { ...obj, plan: null };
+
+      const milestones = await all<{ id: number; plan_id: number; objective_id: number; phase_index: number; title: string; description: string | null; assigned_agent_role: string | null; status: string; due_date: string | null; completed_at: string | null; created_at: string }>(
+        'SELECT * FROM obj_milestones WHERE plan_id = ? ORDER BY phase_index ASC, created_at ASC', [plan.id]
+      );
+      return { ...obj, plan: { ...plan, milestones } };
+    }));
+
+    res.json({ ok: true, data: result });
+  } catch (e: any) { sendError(res, 500, e, 'Error listando objetivos'); }
+});
+
+app.post('/api/objectives', requireAdmin, async (req, res) => {
+  try {
+    const { title } = req.body as { title?: string };
+    if (!title?.trim()) return res.status(400).json({ ok: false, error: 'Falta el título del objetivo' });
+
+    // 1. Crear el objetivo
+    const objResult = await run(
+      `INSERT INTO objectives (title, status) VALUES (?, 'planning')`,
+      [title.trim()]
+    );
+    const objectiveId = objResult.lastID;
+
+    // 2. Hokage descompone el objetivo en un plan estratégico (llamada JSON directa, sin prompt conversacional)
+    type PlanData = {
+      goal?: string; success_criteria?: string; estimated_weeks?: number; confidence?: number;
+      phases?: Array<{ title: string; description: string; milestones: Array<{ title: string; description: string; assigned_agent_role: string; estimated_days: number }> }>;
+    };
+
+    const systemPrompt = `Eres el planificador estratégico de HOKAGE OS. Recibes un objetivo de negocio y devuelves ÚNICAMENTE JSON válido sin texto adicional, sin bloques de código markdown, sin explicaciones.`;
+    const userMsg = `Objetivo: "${title.trim()}"
+
+Devuelve este JSON exacto (sin texto extra antes ni después):
+{
+  "goal": "una frase que estructura el objetivo con claridad",
+  "success_criteria": "criterio medible de éxito (número, fecha o porcentaje)",
+  "estimated_weeks": 8,
+  "confidence": 72,
+  "phases": [
+    {
+      "title": "Nombre de la fase",
+      "description": "Qué se consigue en esta fase",
+      "milestones": [
+        {
+          "title": "Nombre del milestone",
+          "description": "Qué hay que hacer concretamente",
+          "assigned_agent_role": "investigador",
+          "estimated_days": 7
+        }
+      ]
+    }
+  ]
+}
+
+Roles disponibles: investigador, contenido, trafico, finanzas, operaciones, soporte, ceo
+Reglas: 2-4 fases, 2-3 milestones por fase. confidence entre 0-100 refleja cuán predecible es el éxito.`;
+
+    const planData: PlanData = await callAIJson<PlanData>(systemPrompt, userMsg, 'anthropic/claude-haiku-4-5') ?? {};
+
+    // 3. Actualizar el objetivo con goal y success_criteria
+    await run(
+      `UPDATE objectives SET goal = ?, success_criteria = ? WHERE id = ?`,
+      [planData.goal ?? null, planData.success_criteria ?? null, objectiveId]
+    );
+
+    // 4. Crear el plan
+    const planResult = await run(
+      `INSERT INTO obj_plans (objective_id, phases, estimated_weeks, confidence, status) VALUES (?, ?, ?, ?, 'proposed')`,
+      [objectiveId, JSON.stringify(planData.phases ?? []), planData.estimated_weeks ?? null, planData.confidence ?? 70]
+    );
+    const planId = planResult.lastID;
+
+    // 5. Crear los milestones
+    const phases = planData.phases ?? [];
+    for (let phaseIdx = 0; phaseIdx < phases.length; phaseIdx++) {
+      const phase = phases[phaseIdx];
+      for (const m of (phase.milestones ?? [])) {
+        await run(
+          `INSERT INTO obj_milestones (plan_id, objective_id, phase_index, title, description, assigned_agent_role) VALUES (?, ?, ?, ?, ?, ?)`,
+          [planId, objectiveId, phaseIdx, m.title, m.description ?? null, m.assigned_agent_role ?? null]
+        );
+      }
+    }
+
+    // 6. Retornar objetivo completo con plan
+    const objective = await get('SELECT * FROM objectives WHERE id = ?', [objectiveId]);
+    const plan = await get('SELECT * FROM obj_plans WHERE id = ?', [planId]);
+    const milestones = await all('SELECT * FROM obj_milestones WHERE plan_id = ? ORDER BY phase_index ASC, created_at ASC', [planId]);
+
+    bus.publish({ type: 'objective.created', from: 'Jorge', payload: { objectiveId, title } });
+    res.status(201).json({ ok: true, data: { ...(objective as object), plan: { ...(plan as object), milestones } } });
+  } catch (e: any) { sendError(res, 500, e, 'Error creando objetivo'); }
+});
+
+app.put('/api/objectives/:id/plan/approve', requireAdmin, async (req, res) => {
+  try {
+    const objectiveId = Number(req.params.id);
+    const plan = await get<{ id: number }>('SELECT id FROM obj_plans WHERE objective_id = ? AND status = \'proposed\'', [objectiveId]);
+    if (!plan) return res.status(404).json({ ok: false, error: 'No hay plan propuesto para este objetivo' });
+
+    // Activar plan y objetivo
+    await run(`UPDATE obj_plans SET status = 'approved' WHERE id = ?`, [plan.id]);
+    await run(`UPDATE objectives SET status = 'active' WHERE id = ?`, [objectiveId]);
+
+    // Crear work_items para cada milestone
+    const milestones = await all<{ id: number; assigned_agent_role: string | null; title: string; description: string | null }>(
+      'SELECT id, assigned_agent_role, title, description FROM obj_milestones WHERE plan_id = ? ORDER BY phase_index ASC, created_at ASC',
+      [plan.id]
+    );
+    const agents = await listAgents();
+
+    for (const m of milestones) {
+      if (!m.assigned_agent_role) continue;
+      const agent = agents.find((a) => a.role === m.assigned_agent_role);
+      if (!agent) continue;
+
+      const context = `[OBJETIVO] ${m.title}${m.description ? ': ' + m.description : ''}. Ejecuta esta tarea de forma concreta y reporta el resultado.`;
+      const wiResult = await run(
+        `INSERT INTO work_items (agent_id, type, priority, status, context, milestone_id) VALUES (?, 'event_triggered', 8, 'pending', ?, ?)`,
+        [agent.id, context, m.id]
+      );
+      await run(`UPDATE obj_milestones SET status = 'in_progress' WHERE id = ?`, [m.id]);
+      console.log(`[GOAL] Milestone ${m.id} → work_item ${wiResult.lastID} para ${agent.name}`);
+    }
+
+    bus.publish({ type: 'objective.approved', from: 'Jorge', payload: { objectiveId } });
+    const updated = await get('SELECT * FROM objectives WHERE id = ?', [objectiveId]);
+    res.json({ ok: true, data: updated });
+  } catch (e: any) { sendError(res, 500, e, 'Error aprobando plan'); }
+});
+
+app.patch('/api/objectives/:id', requireAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const allowed = ['status', 'priority', 'deadline'];
+    const sets = allowed.filter((k) => req.body[k] !== undefined).map((k) => `${k} = ?`);
+    const vals = allowed.filter((k) => req.body[k] !== undefined).map((k) => req.body[k]);
+    if (sets.length === 0) return res.status(400).json({ ok: false, error: 'Sin campos a actualizar' });
+    await run(`UPDATE objectives SET ${sets.join(', ')} WHERE id = ?`, [...vals, id]);
+    const obj = await get('SELECT * FROM objectives WHERE id = ?', [id]);
+    res.json({ ok: true, data: obj });
+  } catch (e: any) { sendError(res, 400, e, 'Error actualizando objetivo'); }
 });
 
 // ═══════════ PROGRESS / ACHIEVEMENTS ═══════════
