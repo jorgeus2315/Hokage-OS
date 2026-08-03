@@ -3,6 +3,19 @@ import type { Venture, Automation } from '../shared/types';
 import { api } from '../shared/api';
 import { Panel, Led, Badge, Bar } from '../shared/ui';
 
+type Asset = { id: number; venture_id: number | null; type: string; name: string; status: string; platform: string | null; created_at: string };
+
+const ASSET_TYPE_COLOR: Record<string, string> = {
+  content:    'var(--signal)',
+  code:       'var(--good)',
+  data:       'var(--amber)',
+  audience:   'var(--ember)',
+  brand:      'var(--ember)',
+  ip:         'var(--amber)',
+  credential: 'var(--ink-faint)',
+  tool:       'var(--ink-faint)',
+};
+
 const STATUS_TONE: Record<string, 'good' | 'signal' | 'amber' | 'dim'> = {
   active:  'good',
   scaling: 'signal',
@@ -41,10 +54,12 @@ const ROLE_DISPLAY: Record<string, string> = {
 
 export function VenturesView({ ventures }: { ventures: Venture[] }) {
   const [automations, setAutomations] = useState<Automation[]>([]);
+  const [assets, setAssets] = useState<Asset[]>([]);
   const [toggling, setToggling] = useState<number | null>(null);
 
   useEffect(() => {
     api.automations().then((data) => { if (data) setAutomations(data); });
+    api.assets().then((data) => { if (data) setAssets(data); });
   }, []);
 
   async function handleToggle(id: number) {
@@ -133,9 +148,28 @@ export function VenturesView({ ventures }: { ventures: Venture[] }) {
                     </div>
                   )}
 
-                  <div style={{ fontSize: 10, color: 'var(--ink-faint)', fontFamily: 'IBM Plex Mono, monospace' }}>
+                  <div style={{ fontSize: 10, color: 'var(--ink-faint)', fontFamily: 'IBM Plex Mono, monospace', marginBottom: 8 }}>
                     ID-{String(v.id).padStart(3, '0')} · {new Date(v.created_at).toLocaleDateString('es-ES')}
                   </div>
+
+                  {/* Assets de este venture */}
+                  {assets.filter((a) => a.venture_id === v.id).length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                      {assets.filter((a) => a.venture_id === v.id).map((a) => (
+                        <span key={a.id} style={{
+                          fontSize: 9,
+                          fontFamily: 'IBM Plex Mono, monospace',
+                          padding: '2px 6px',
+                          border: `1px solid ${ASSET_TYPE_COLOR[a.type] ?? 'var(--border)'}44`,
+                          borderRadius: 3,
+                          color: ASSET_TYPE_COLOR[a.type] ?? 'var(--ink-faint)',
+                          background: `${ASSET_TYPE_COLOR[a.type] ?? 'transparent'}11`,
+                        }}>
+                          {a.type.toUpperCase()} · {a.name.slice(0, 18)}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </Panel>
             );

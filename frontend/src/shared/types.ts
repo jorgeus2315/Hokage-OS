@@ -17,6 +17,8 @@ export interface Business {
   current_revenue: number;
 }
 
+export type DecisionCategory = 'FINANCIAL' | 'LEGAL' | 'PUBLICATION' | 'STRATEGIC' | 'TECHNICAL' | 'OPERATIONAL';
+
 export interface Decision {
   id: number;
   agent_id: number | null;
@@ -26,6 +28,8 @@ export interface Decision {
   amount: number | null;
   risk_level: string;
   status: string;
+  category: DecisionCategory;
+  venture_id: number | null;
   created_at: string;
 }
 

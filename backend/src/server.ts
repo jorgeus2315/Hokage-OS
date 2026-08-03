@@ -392,6 +392,20 @@ app.get('/api/events', requireAdmin, (_req, res) => {
   res.json({ ok: true, data: bus.getHistory(50) });
 });
 
+// ═══════════ DECISIONES — limpieza masiva ═══════════
+app.post('/api/decisions/expire-old', requireAdmin, async (req, res) => {
+  try {
+    const olderThanHours = Number(req.body?.older_than_hours ?? 48);
+    const result = await run(
+      `UPDATE decisions SET status = 'expired'
+       WHERE status IN ('proposed', 'pending')
+       AND datetime(created_at, '+' || ? || ' hours') < datetime('now')`,
+      [olderThanHours]
+    );
+    res.json({ ok: true, data: { expired: result.changes } });
+  } catch (e: any) { sendError(res, 500, e, 'Error expirando decisiones'); }
+});
+
 // ═══════════ VENTURES ═══════════
 app.get('/api/ventures', async (_req, res) => {
   try {

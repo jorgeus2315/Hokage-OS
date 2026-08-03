@@ -53,6 +53,11 @@ export default function App() {
     reload.loadDecisions();
     show('Decisión rechazada');
   }
+  async function expireAll() {
+    const result = await api.expireOldDecisions(0);
+    reload.loadDecisions();
+    show(result ? `${result.expired} alertas limpiadas` : 'Error al limpiar');
+  }
   async function toggleRuntime() {
     if (runtimeOn) await api.runtimeStop();
     else await api.runtimeStart();
@@ -168,7 +173,7 @@ export default function App() {
         {screen === 'ventures' && <VenturesView ventures={ventures} />}
         {screen === 'comms' && <CommsView agents={agents} messages={messages} liveEvents={liveEvents} />}
         {screen === 'missions' && <MissionsView level={level} xp={xp} xpNext={xpNext} achievements={achievements} />}
-        {screen === 'alerts' && <AlertsView pending={pending} agents={agents} onApprove={approve} onReject={reject} />}
+        {screen === 'alerts' && <AlertsView pending={pending} agents={agents} onApprove={approve} onReject={reject} onExpireAll={expireAll} />}
         {screen === 'crew' && <CrewView agents={agents} runs={runs} onEnterBuilding={enterBuilding} />}
       </div>
       <Toast message={toast} />

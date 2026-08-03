@@ -4,6 +4,10 @@ import { IconCheck } from '../shared/icons';
 import { Markdown } from '../shared/markdown';
 
 const RISK_TONE = { low: 'good', medium: 'amber', high: 'ember' } as const;
+const CAT_TONE: Record<string, 'ember' | 'amber' | 'signal' | 'dim'> = {
+  FINANCIAL: 'ember', LEGAL: 'ember', PUBLICATION: 'signal',
+  STRATEGIC: 'amber', TECHNICAL: 'dim', OPERATIONAL: 'dim',
+};
 
 export function AlertsPanel({
   decisions,
@@ -32,6 +36,7 @@ export function AlertsPanel({
           <div className="hk-alert-head">
             <Led state={d.risk_level === 'high' ? 'alert' : 'signal'} />
             <span className="hk-alert-title">{d.title}</span>
+            {d.category && <Badge tone={CAT_TONE[d.category] ?? 'dim'}>{d.category}</Badge>}
             <Badge tone={RISK_TONE[d.risk_level as keyof typeof RISK_TONE] || 'dim'}>{d.risk_level}</Badge>
           </div>
           {d.description && (

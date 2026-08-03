@@ -28,7 +28,7 @@ export interface TaskResult {
 // Tareas autonomas por rol de agente
 const AUTONOMOUS_TASKS: Record<string, { task: string; interval: number }> = {
   investigador: {
-    task: 'Usa la herramienta google.trends para analizar tendencias actuales del mercado de productos digitales (ej: "minimalist wall art", "digital planner", "printable"). Elige 1-2 keywords con interés creciente. Para cada tendencia que valga la pena, añade: [TENDENCIA: keyword | descripcion breve en menos de 120 caracteres]. Si la oportunidad requiere accion de Jorge, añade tambien [DECISION: titulo].',
+    task: 'Analiza tendencias del mercado de productos digitales (ej: "minimalist wall art", "digital planner", "printable"). PRIORIDAD: usa google.trends. Si falla o devuelve error, usa web.browser para buscar "etsy trending digital products 2024" y extrae keywords manualmente. Elige 1-2 keywords con interés creciente. Para cada tendencia añade: [TENDENCIA: keyword | descripcion breve en menos de 120 caracteres].',
     interval: 30 * 60 * 1000,
   },
   contenido: {
@@ -488,8 +488,18 @@ INSTRUCCIONES DE FORMATO:
     }
   }
 
-  // Etapa 8: metricas del ciclo
+  // Etapa 8: metricas del ciclo + auto-expirar decisiones antiguas
   private async stage8_updateMetrics(): Promise<void> {
+    // Auto-expirar proposals sin revisar más de 48h (evita acumulación)
+    const expired = await run(
+      `UPDATE decisions SET status = 'expired'
+       WHERE status IN ('proposed', 'pending')
+       AND datetime(created_at, '+48 hours') < datetime('now')`
+    );
+    if (expired.changes > 0) {
+      console.log(`[STAGE8] ${expired.changes} decisiones antiguas expiradas automáticamente`);
+    }
+
     const counts = await get<{ pending: number; in_progress: number; done: number; failed: number }>(
       `SELECT
          SUM(CASE WHEN status='pending'     THEN 1 ELSE 0 END) as pending,

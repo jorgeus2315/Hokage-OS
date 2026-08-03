@@ -85,6 +85,18 @@ export const api = {
   runtimeStart: () => req('/runtime/start', { method: 'POST' }),
   runtimeStop: () => req('/runtime/stop', { method: 'POST' }),
 
+  expireOldDecisions: (olderThanHours = 0) =>
+    req<{ expired: number }>('/decisions/expire-old', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ older_than_hours: olderThanHours }),
+    }),
+
+  assets: (ventureId?: number) =>
+    req<Array<{ id: number; venture_id: number | null; type: string; name: string; status: string; platform: string | null; created_at: string }>>(
+      ventureId ? `/assets?venture_id=${ventureId}` : '/assets'
+    ),
+
   ventures: () => req<import('./types').Venture[]>('/ventures'),
   createVenture: (payload: { name: string; type?: string; goal?: string; revenue_target_usd?: number }) =>
     req('/ventures', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }),
