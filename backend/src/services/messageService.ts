@@ -2,7 +2,7 @@ import { run, get, all } from '../db/init.js';
 import type { Message, MessageCreatePayload } from '../types/index.js';
 
 const SELECT = 'SELECT id, sender_id, receiver_id, content, channel, created_at FROM messages';
-const MAX_MESSAGES = 500;
+const MAX_MESSAGES = 200;
 
 export async function listMessages(): Promise<Message[]> {
   return all<Message>(`${SELECT} ORDER BY id DESC LIMIT ${MAX_MESSAGES}`);

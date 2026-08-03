@@ -77,6 +77,14 @@ async function runMigrations(): Promise<void> {
   // UNIQUE index en agent_memory para evitar duplicados por clave
   await run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_memory_unique ON agent_memory(agent_id, key)`);
 
+  // Índices de rendimiento en tablas de alto crecimiento
+  await run(`CREATE INDEX IF NOT EXISTS idx_work_items_agent_status ON work_items(agent_id, status)`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_work_items_status ON work_items(status)`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_agent_runs_agent ON agent_runs(agent_id)`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at DESC)`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_decisions_status ON decisions(status)`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_obj_milestones_plan ON obj_milestones(plan_id)`);
+
   // Columnas nuevas en agents
   if (!(await columnExists('agents', 'venture_id'))) {
     await run(`ALTER TABLE agents ADD COLUMN venture_id INTEGER REFERENCES ventures(id)`);

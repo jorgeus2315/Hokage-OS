@@ -73,12 +73,14 @@ function MilestoneRow({ m }: { m: ObjMilestone }) {
 }
 
 function ObjectiveCard({
-  obj, approving, onApprove, onAbandon,
+  obj, approving, retrying, onApprove, onAbandon, onRetry,
 }: {
   obj: Objective;
   approving: number | null;
+  retrying: number | null;
   onApprove: (id: number) => void;
   onAbandon: (id: number) => void;
+  onRetry: (id: number) => void;
 }) {
   const [expanded, setExpanded] = useState(obj.plan?.status === 'proposed' || obj.status === 'active');
   const plan = obj.plan;
@@ -91,6 +93,8 @@ function ObjectiveCard({
   const statusInfo = STATUS_LABEL[obj.status] ?? STATUS_LABEL.planning;
   const isProposed = plan?.status === 'proposed';
   const isApproving = approving === obj.id;
+  const isRetrying = retrying === obj.id;
+  const isPlanningStuck = obj.status === 'planning' && !plan;
 
   const groupedByPhase: Record<number, ObjMilestone[]> = {};
   for (const m of milestones) {
@@ -195,7 +199,7 @@ function ObjectiveCard({
           {/* Sin plan todavía */}
           {!plan && (
             <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--ink-faint)', textAlign: 'center', padding: '8px 0' }}>
-              Hokage está analizando el objetivo...
+              {isRetrying ? 'Hokage regenerando el plan...' : 'Hokage está analizando el objetivo...'}
             </div>
           )}
 
@@ -211,6 +215,17 @@ function ObjectiveCard({
                   boxShadow: isApproving ? 'none' : '0 0 8px #ffcc0033',
                   opacity: isApproving ? 0.6 : 1, transition: 'all 0.15s' }}>
                 {isApproving ? 'ACTIVANDO...' : '[ APROBAR PLAN ]'}
+              </button>
+            )}
+            {isPlanningStuck && (
+              <button
+                onClick={() => onRetry(obj.id)}
+                disabled={isRetrying}
+                style={{ fontFamily: 'var(--font-mono)', fontSize: 11, letterSpacing: '0.1em',
+                  padding: '7px 14px', border: '1px solid var(--signal)', background: 'transparent',
+                  color: 'var(--signal)', cursor: isRetrying ? 'wait' : 'pointer', borderRadius: 2,
+                  opacity: isRetrying ? 0.6 : 1, transition: 'all 0.15s' }}>
+                {isRetrying ? 'ANALIZANDO...' : '[ REINTENTAR ANÁLISIS ]'}
               </button>
             )}
             {obj.status !== 'abandoned' && obj.status !== 'achieved' && (
@@ -239,6 +254,7 @@ export function ObjectivesView({
   const [input, setInput] = useState('');
   const [creating, setCreating] = useState(false);
   const [approving, setApproving] = useState<number | null>(null);
+  const [retrying, setRetrying] = useState<number | null>(null);
   const [focused, setFocused] = useState(false);
 
   async function handleCreate(e: React.FormEvent) {
@@ -260,6 +276,13 @@ export function ObjectivesView({
 
   async function handleAbandon(objectiveId: number) {
     await api.updateObjective(objectiveId, { status: 'abandoned' });
+    onReload();
+  }
+
+  async function handleRetry(objectiveId: number) {
+    setRetrying(objectiveId);
+    await api.retryObjective(objectiveId);
+    setRetrying(null);
     onReload();
   }
 
@@ -338,8 +361,10 @@ export function ObjectivesView({
               key={obj.id}
               obj={obj}
               approving={approving}
+              retrying={retrying}
               onApprove={handleApprove}
               onAbandon={handleAbandon}
+              onRetry={handleRetry}
             />
           ))}
         </div>

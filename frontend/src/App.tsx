@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import type { ChatMsg, Building, Screen, BuildingSection } from './shared';
 import { api, TopBar } from './shared';
 import { useAppData } from './hooks/useAppData';
@@ -18,6 +18,12 @@ export default function App() {
     agents, ventures, achievements, runs, messages, liveEvents,
     departments, objectives, xp, level, runtimeOn, pending, wsConnected, reload,
   } = useAppData();
+
+  const [clock, setClock] = useState(() => new Date().toLocaleTimeString('es-ES', { hour12: false }));
+  useEffect(() => {
+    const t = setInterval(() => setClock(new Date().toLocaleTimeString('es-ES', { hour12: false })), 1000);
+    return () => clearInterval(t);
+  }, []);
 
   const show = useCallback((m: string) => {
     setToast(m);
@@ -98,7 +104,7 @@ export default function App() {
           messagesCount={messages.length}
           runtimeOn={runtimeOn}
           connected={wsConnected}
-          clock={new Date().toLocaleTimeString('es-ES', { hour12: false })}
+          clock={clock}
           onToggleRuntime={toggleRuntime}
           onNavigate={setScreen}
         />
@@ -129,7 +135,7 @@ export default function App() {
         title={titleFor[screen]}
         screen={screen}
         connected={wsConnected}
-        clock={new Date().toLocaleTimeString('es-ES', { hour12: false })}
+        clock={clock}
         pendingCount={pending.length}
         onBack={() => setScreen('map')}
         onMenu={() => setScreen('menu')}

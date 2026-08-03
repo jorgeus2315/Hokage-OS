@@ -32,9 +32,8 @@ export function CommsView({
             SHIP COMMS · {agents.length} ONLINE
           </span>
         </div>
-        <Panel className="hk-comms-window" style={{ overflowY: 'auto' }}>
-          <div ref={scrollRef}>
-            {messages.length === 0 ? (
+        <div ref={scrollRef} className="hk-panel hk-comms-window" style={{ overflowY: 'auto' }}>
+          {messages.length === 0 ? (
               <div className="hk-comms-empty">Los agentes aún no han enviado mensajes. Activa el modo autónomo para verlos trabajar.</div>
             ) : (
               messages.map((m) => (
@@ -53,8 +52,7 @@ export function CommsView({
                 </div>
               ))
             )}
-          </div>
-        </Panel>
+        </div>
       </div>
 
       <div className="hk-comms-side">
@@ -65,8 +63,8 @@ export function CommsView({
           {liveEvents.length === 0 ? (
             <div style={{ fontSize: 12, color: 'var(--ink-faint)', textAlign: 'center', paddingTop: 40 }}>Sin eventos todavía.</div>
           ) : (
-            liveEvents.map((e, i) => (
-              <div key={i} style={{ marginBottom: 8, paddingBottom: 8, borderBottom: '1px solid var(--line)' }}>
+            liveEvents.map((e) => (
+              <div key={e._cid ?? `${e.type}-${e.timestamp}`} style={{ marginBottom: 8, paddingBottom: 8, borderBottom: '1px solid var(--line)' }}>
                 <div
                   style={{
                     fontSize: 10.5,

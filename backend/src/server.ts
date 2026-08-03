@@ -491,47 +491,58 @@ app.patch('/api/automations/:id/toggle', requireAdmin, async (req, res) => {
 // ═══════════ GOAL SYSTEM ═══════════
 app.get('/api/objectives', async (_req, res) => {
   try {
-    const objectives = await all<{
-      id: number; title: string; goal: string | null; success_criteria: string | null;
-      deadline: string | null; priority: number; status: string; created_at: string;
-    }>('SELECT * FROM objectives ORDER BY priority DESC, created_at DESC');
+    type ObjRow = { id: number; title: string; goal: string | null; success_criteria: string | null; deadline: string | null; priority: number; status: string; created_at: string };
+    type PlanRow = { id: number; objective_id: number; phases: string; estimated_weeks: number | null; confidence: number; status: string; created_at: string };
+    type MilestoneRow = { id: number; plan_id: number; objective_id: number; phase_index: number; title: string; description: string | null; assigned_agent_role: string | null; status: string; due_date: string | null; completed_at: string | null; created_at: string };
 
-    const result = await Promise.all(objectives.map(async (obj) => {
-      const plan = await get<{ id: number; objective_id: number; phases: string; estimated_weeks: number | null; confidence: number; status: string; created_at: string }>(
-        'SELECT * FROM obj_plans WHERE objective_id = ? ORDER BY created_at DESC LIMIT 1', [obj.id]
-      );
+    const objectives = await all<ObjRow>('SELECT * FROM objectives ORDER BY priority DESC, created_at DESC');
+    if (objectives.length === 0) return res.json({ ok: true, data: [] });
+
+    const objIds = objectives.map((o) => o.id);
+    const ph = (n: number) => Array(n).fill('?').join(',');
+
+    // 1 query para todos los planes (el más reciente por objetivo)
+    const allPlans = await all<PlanRow>(
+      `SELECT * FROM obj_plans WHERE objective_id IN (${ph(objIds.length)}) ORDER BY created_at DESC`,
+      objIds
+    );
+    const planByObj = new Map<number, PlanRow>();
+    for (const p of allPlans) {
+      if (!planByObj.has(p.objective_id)) planByObj.set(p.objective_id, p);
+    }
+
+    // 1 query para todos los milestones
+    const planIds = [...planByObj.values()].map((p) => p.id);
+    const allMilestones: MilestoneRow[] = planIds.length > 0
+      ? await all<MilestoneRow>(
+          `SELECT * FROM obj_milestones WHERE plan_id IN (${ph(planIds.length)}) ORDER BY phase_index ASC, created_at ASC`,
+          planIds
+        )
+      : [];
+    const milestonesByPlan = new Map<number, MilestoneRow[]>();
+    for (const m of allMilestones) {
+      if (!milestonesByPlan.has(m.plan_id)) milestonesByPlan.set(m.plan_id, []);
+      milestonesByPlan.get(m.plan_id)!.push(m);
+    }
+
+    const result = objectives.map((obj) => {
+      const plan = planByObj.get(obj.id);
       if (!plan) return { ...obj, plan: null };
-
-      const milestones = await all<{ id: number; plan_id: number; objective_id: number; phase_index: number; title: string; description: string | null; assigned_agent_role: string | null; status: string; due_date: string | null; completed_at: string | null; created_at: string }>(
-        'SELECT * FROM obj_milestones WHERE plan_id = ? ORDER BY phase_index ASC, created_at ASC', [plan.id]
-      );
-      return { ...obj, plan: { ...plan, milestones } };
-    }));
+      return { ...obj, plan: { ...plan, milestones: milestonesByPlan.get(plan.id) ?? [] } };
+    });
 
     res.json({ ok: true, data: result });
   } catch (e: any) { sendError(res, 500, e, 'Error listando objetivos'); }
 });
 
-app.post('/api/objectives', requireAdmin, async (req, res) => {
-  try {
-    const { title } = req.body as { title?: string };
-    if (!title?.trim()) return res.status(400).json({ ok: false, error: 'Falta el título del objetivo' });
-
-    // 1. Crear el objetivo
-    const objResult = await run(
-      `INSERT INTO objectives (title, status) VALUES (?, 'planning')`,
-      [title.trim()]
-    );
-    const objectiveId = objResult.lastID;
-
-    // 2. Hokage descompone el objetivo en un plan estratégico (llamada JSON directa, sin prompt conversacional)
-    type PlanData = {
-      goal?: string; success_criteria?: string; estimated_weeks?: number; confidence?: number;
-      phases?: Array<{ title: string; description: string; milestones: Array<{ title: string; description: string; assigned_agent_role: string; estimated_days: number }> }>;
-    };
-
-    const systemPrompt = `Eres el planificador estratégico de HOKAGE OS. Recibes un objetivo de negocio y devuelves ÚNICAMENTE JSON válido sin texto adicional, sin bloques de código markdown, sin explicaciones.`;
-    const userMsg = `Objetivo: "${title.trim()}"
+// Helper: genera y persiste el plan de un objetivo via IA
+type PlanData = {
+  goal?: string; success_criteria?: string; estimated_weeks?: number; confidence?: number;
+  phases?: Array<{ title: string; description: string; milestones: Array<{ title: string; description: string; assigned_agent_role: string; estimated_days: number }> }>;
+};
+async function generateObjectivePlan(objectiveId: number, title: string): Promise<{ planId: number }> {
+  const systemPrompt = `Eres el planificador estratégico de HOKAGE OS. Recibes un objetivo de negocio y devuelves ÚNICAMENTE JSON válido sin texto adicional, sin bloques de código markdown, sin explicaciones.`;
+  const userMsg = `Objetivo: "${title}"
 
 Devuelve este JSON exacto (sin texto extra antes ni después):
 {
@@ -558,41 +569,76 @@ Devuelve este JSON exacto (sin texto extra antes ni después):
 Roles disponibles: investigador, contenido, trafico, finanzas, operaciones, soporte, ceo
 Reglas: 2-4 fases, 2-3 milestones por fase. confidence entre 0-100 refleja cuán predecible es el éxito.`;
 
-    const planData: PlanData = await callAIJson<PlanData>(systemPrompt, userMsg, 'anthropic/claude-haiku-4-5') ?? {};
+  const planData: PlanData = await callAIJson<PlanData>(systemPrompt, userMsg, 'anthropic/claude-haiku-4-5') ?? {};
 
-    // 3. Actualizar el objetivo con goal y success_criteria
-    await run(
-      `UPDATE objectives SET goal = ?, success_criteria = ? WHERE id = ?`,
-      [planData.goal ?? null, planData.success_criteria ?? null, objectiveId]
-    );
+  await run(
+    `UPDATE objectives SET goal = ?, success_criteria = ? WHERE id = ?`,
+    [planData.goal ?? null, planData.success_criteria ?? null, objectiveId]
+  );
 
-    // 4. Crear el plan
-    const planResult = await run(
-      `INSERT INTO obj_plans (objective_id, phases, estimated_weeks, confidence, status) VALUES (?, ?, ?, ?, 'proposed')`,
-      [objectiveId, JSON.stringify(planData.phases ?? []), planData.estimated_weeks ?? null, planData.confidence ?? 70]
-    );
-    const planId = planResult.lastID;
+  const planResult = await run(
+    `INSERT INTO obj_plans (objective_id, phases, estimated_weeks, confidence, status) VALUES (?, ?, ?, ?, 'proposed')`,
+    [objectiveId, JSON.stringify(planData.phases ?? []), planData.estimated_weeks ?? null, planData.confidence ?? 70]
+  );
+  const planId = planResult.lastID;
 
-    // 5. Crear los milestones
-    const phases = planData.phases ?? [];
-    for (let phaseIdx = 0; phaseIdx < phases.length; phaseIdx++) {
-      const phase = phases[phaseIdx];
-      for (const m of (phase.milestones ?? [])) {
-        await run(
-          `INSERT INTO obj_milestones (plan_id, objective_id, phase_index, title, description, assigned_agent_role) VALUES (?, ?, ?, ?, ?, ?)`,
-          [planId, objectiveId, phaseIdx, m.title, m.description ?? null, m.assigned_agent_role ?? null]
-        );
-      }
+  for (let phaseIdx = 0; phaseIdx < (planData.phases ?? []).length; phaseIdx++) {
+    const phase = planData.phases![phaseIdx];
+    for (const m of (phase.milestones ?? [])) {
+      await run(
+        `INSERT INTO obj_milestones (plan_id, objective_id, phase_index, title, description, assigned_agent_role) VALUES (?, ?, ?, ?, ?, ?)`,
+        [planId, objectiveId, phaseIdx, m.title, m.description ?? null, m.assigned_agent_role ?? null]
+      );
     }
+  }
+  return { planId };
+}
 
-    // 6. Retornar objetivo completo con plan
+app.post('/api/objectives', requireAdmin, async (req, res) => {
+  try {
+    const { title } = req.body as { title?: string };
+    if (!title?.trim()) return res.status(400).json({ ok: false, error: 'Falta el título del objetivo' });
+
+    const objResult = await run(
+      `INSERT INTO objectives (title, status) VALUES (?, 'planning')`,
+      [title.trim()]
+    );
+    const objectiveId = objResult.lastID;
+
+    const { planId } = await generateObjectivePlan(objectiveId, title.trim());
+
     const objective = await get('SELECT * FROM objectives WHERE id = ?', [objectiveId]);
     const plan = await get('SELECT * FROM obj_plans WHERE id = ?', [planId]);
     const milestones = await all('SELECT * FROM obj_milestones WHERE plan_id = ? ORDER BY phase_index ASC, created_at ASC', [planId]);
 
-    bus.publish({ type: 'objective.created', from: 'Jorge', payload: { objectiveId, title } });
+    bus.publish({ type: 'objective.created', from: 'Jorge', payload: { objectiveId, title: title.trim() } });
     res.status(201).json({ ok: true, data: { ...(objective as object), plan: { ...(plan as object), milestones } } });
   } catch (e: any) { sendError(res, 500, e, 'Error creando objetivo'); }
+});
+
+// Reintentar generación de plan para objetivos atascados en 'planning'
+app.post('/api/objectives/:id/retry', requireAdmin, async (req, res) => {
+  try {
+    const objectiveId = Number(req.params.id);
+    const obj = await get<{ id: number; title: string; status: string }>('SELECT id, title, status FROM objectives WHERE id = ?', [objectiveId]);
+    if (!obj) return res.status(404).json({ ok: false, error: 'Objetivo no encontrado' });
+
+    // Limpiar planes anteriores fallidos
+    const oldPlan = await get<{ id: number }>('SELECT id FROM obj_plans WHERE objective_id = ?', [objectiveId]);
+    if (oldPlan) {
+      await run('DELETE FROM obj_milestones WHERE plan_id = ?', [oldPlan.id]);
+      await run('DELETE FROM obj_plans WHERE id = ?', [oldPlan.id]);
+    }
+    await run(`UPDATE objectives SET status = 'planning' WHERE id = ?`, [objectiveId]);
+
+    const { planId } = await generateObjectivePlan(objectiveId, obj.title);
+
+    const objective = await get('SELECT * FROM objectives WHERE id = ?', [objectiveId]);
+    const plan = await get('SELECT * FROM obj_plans WHERE id = ?', [planId]);
+    const milestones = await all('SELECT * FROM obj_milestones WHERE plan_id = ? ORDER BY phase_index ASC, created_at ASC', [planId]);
+
+    res.json({ ok: true, data: { ...(objective as object), plan: { ...(plan as object), milestones } } });
+  } catch (e: any) { sendError(res, 500, e, 'Error reintentando objetivo'); }
 });
 
 app.put('/api/objectives/:id/plan/approve', requireAdmin, async (req, res) => {

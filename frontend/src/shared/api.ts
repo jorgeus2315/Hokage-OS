@@ -122,4 +122,6 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     }),
+  retryObjective: (id: number) =>
+    req<import('./types').Objective>(`/objectives/${id}/retry`, { method: 'POST' }),
 };

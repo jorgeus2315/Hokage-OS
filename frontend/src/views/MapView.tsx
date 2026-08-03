@@ -237,8 +237,8 @@ export function MapView({
           {liveEvents.length === 0 ? (
             <div style={{ fontSize: 11.5, color: 'var(--ink-faint)' }}>Sin eventos todavía.</div>
           ) : (
-            liveEvents.slice(0, 8).map((e, i) => (
-              <div key={i} style={{ fontSize: 11, color: 'var(--ink-dim)', marginBottom: 7 }}>
+            liveEvents.slice(0, 8).map((e) => (
+              <div key={e._cid ?? `${e.type}-${e.from ?? ''}-${e.timestamp ?? ''}`} style={{ fontSize: 11, color: 'var(--ink-dim)', marginBottom: 7 }}>
                 <span
                   style={{
                     fontWeight: 600,

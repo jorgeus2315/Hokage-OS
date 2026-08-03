@@ -111,7 +111,7 @@ export async function askAgent(agentId: number, userMessage: string): Promise<As
     for (let turn = 0; turn <= MAX_TOOL_TURNS; turn++) {
       const body: Record<string, unknown> = {
         model:      MODEL,
-        max_tokens: 1200,
+        max_tokens: 2000,
         messages,
       };
       if (availableTools.length > 0) body.tools = availableTools;
