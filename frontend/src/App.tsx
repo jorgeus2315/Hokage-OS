@@ -124,7 +124,7 @@ export default function App() {
   const pendingForAgent = buildingAgent ? pending.filter((d) => d.agent_id === buildingAgent.id) : [];
 
   return (
-    <div className="hk-app">
+    <div className="hk-app" style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
       <TopBar
         title={titleFor[screen]}
         screen={screen}
@@ -135,7 +135,7 @@ export default function App() {
         onMenu={() => setScreen('menu')}
         onAlerts={() => setScreen('alerts')}
       />
-      <div className="hk-shell" style={{ maxWidth: screen === 'building' || screen === 'comms' ? 1180 : 760 }}>
+      <div className="hk-shell" style={{ maxWidth: screen === 'building' || screen === 'comms' ? 1180 : 760, flex: 1, minHeight: 0, overflowY: 'auto' }}>
         {screen === 'map' && (
           <MapView
             departments={departments}

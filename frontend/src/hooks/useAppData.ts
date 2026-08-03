@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Agent, Decision, Achievement, AgentRun, CommMsg, WsEvent, Building, Venture, Objective } from '../shared/types';
 import { api, useWebSocket } from '../shared';
 
@@ -27,7 +27,7 @@ export type AppData = {
     loadProgress: () => Promise<void>;
     loadDepartments: () => Promise<void>;
     loadRuntimeStatus: () => Promise<void>;
-    loadObjectives: () => Promise<void>;
+    loadObjectives: () => void;
   };
 };
 
@@ -84,9 +84,13 @@ export function useAppData(): AppData {
     const data = await api.runtimeStatus();
     if (data) setRuntimeOn(data.running);
   }, []);
-  const loadObjectives = useCallback(async () => {
-    const data = await api.objectives();
-    if (data) setObjectives(data);
+  const objectivesTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const loadObjectives = useCallback(() => {
+    if (objectivesTimer.current) clearTimeout(objectivesTimer.current);
+    objectivesTimer.current = setTimeout(async () => {
+      const data = await api.objectives();
+      if (data) setObjectives(data);
+    }, 800);
   }, []);
 
   const handleWsEvent = useCallback((envelope: { type: string; data?: unknown }) => {

@@ -284,7 +284,7 @@ export function ObjectivesView({
         )}
         <div style={{ flex: 1 }} />
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--ink-faint)' }}>
-          {active.length} activos
+          {active.length} activo{active.length !== 1 ? 's' : ''}
         </span>
       </div>
 
