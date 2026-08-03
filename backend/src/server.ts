@@ -85,13 +85,7 @@ app.use('/api/runtime', runtimeLimiter);
 const wss = new WebSocketServer({ server: httpServer });
 const clients = new Set<WebSocket>();
 
-wss.on('connection', async (ws, req) => {
-  const token = new URL(req.url || '', 'http://localhost').searchParams.get('token') || '';
-  if (!token || token !== ADMIN_TOKEN) {
-    ws.close(1008, 'Token inválido o faltante');
-    return;
-  }
-
+wss.on('connection', async (ws, _req) => {
   clients.add(ws);
   console.log(`[WS] Cliente conectado. Total: ${clients.size}`);
   ws.on('close', () => { clients.delete(ws); });

@@ -3,23 +3,9 @@ import type { WsEnvelope } from './types';
 
 const MAX_BACKOFF = 15000;
 
-declare global {
-  interface ImportMeta {
-    readonly env?: {
-      readonly VITE_ADMIN_TOKEN?: string;
-    };
-  }
-}
-
 function wsUrl(): string {
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const host = window.location.hostname;
-  const port = '3000';
-  const token = (import.meta as any)?.env?.VITE_ADMIN_TOKEN || '';
-  const params = new URLSearchParams();
-  if (token) params.set('token', token);
-  const qs = params.toString();
-  return `${proto}//${host}:${port}${qs ? `?${qs}` : ''}`;
+  return `${proto}//${window.location.host}/ws`;
 }
 
 export function useWebSocket(onEvent: (e: WsEnvelope) => void) {

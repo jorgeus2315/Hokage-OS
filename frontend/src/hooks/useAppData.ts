@@ -1,10 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
-import type { Agent, Business, Decision, Achievement, AgentRun, CommMsg, WsEvent, Building, Venture } from '../shared/types';
+import type { Agent, Decision, Achievement, AgentRun, CommMsg, WsEvent, Building, Venture } from '../shared/types';
 import { api, useWebSocket } from '../shared';
 
 export type AppData = {
   agents: Agent[];
-  businesses: Business[];
   ventures: Venture[];
   decisions: Decision[];
   achievements: Achievement[];
@@ -19,7 +18,6 @@ export type AppData = {
   wsConnected: boolean;
   reload: {
     loadAgents: () => Promise<void>;
-    loadBusinesses: () => Promise<void>;
     loadVentures: () => Promise<void>;
     loadDecisions: () => Promise<void>;
     loadAchievements: () => Promise<void>;
@@ -33,7 +31,6 @@ export type AppData = {
 
 export function useAppData(): AppData {
   const [agents, setAgents] = useState<Agent[]>([]);
-  const [businesses, setBusinesses] = useState<Business[]>([]);
   const [ventures, setVentures] = useState<Venture[]>([]);
   const [decisions, setDecisions] = useState<Decision[]>([]);
   const [achievements, setAchievements] = useState<Achievement[]>([]);
@@ -48,10 +45,6 @@ export function useAppData(): AppData {
   const loadAgents = useCallback(async () => {
     const data = await api.agents();
     if (data) setAgents(data);
-  }, []);
-  const loadBusinesses = useCallback(async () => {
-    const data = await api.businesses();
-    if (data) setBusinesses(data);
   }, []);
   const loadVentures = useCallback(async () => {
     const data = await api.ventures();
@@ -127,7 +120,6 @@ export function useAppData(): AppData {
   useEffect(() => {
     loadDepartments();
     loadAgents();
-    loadBusinesses();
     loadVentures();
     loadDecisions();
     loadAchievements();
@@ -141,8 +133,8 @@ export function useAppData(): AppData {
   const pending = decisions.filter((d) => d.status === 'proposed' || d.status === 'pending');
 
   return {
-    agents, businesses, ventures, decisions, achievements, runs, messages, liveEvents,
+    agents, ventures, decisions, achievements, runs, messages, liveEvents,
     departments, xp, level, runtimeOn, pending, wsConnected,
-    reload: { loadAgents, loadBusinesses, loadVentures, loadDecisions, loadAchievements, loadRuns, loadMessages, loadProgress, loadDepartments, loadRuntimeStatus },
+    reload: { loadAgents, loadVentures, loadDecisions, loadAchievements, loadRuns, loadMessages, loadProgress, loadDepartments, loadRuntimeStatus },
   };
 }
