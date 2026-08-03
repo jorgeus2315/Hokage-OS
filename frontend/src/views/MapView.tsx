@@ -4,6 +4,7 @@ import { BUILDINGS } from '../shared/constants';
 import { Led } from '../shared/ui';
 import { IconComms, IconAlert, IconCrew } from '../shared/icons';
 import { WorldCanvas } from '../world';
+import type { RippleEvent } from '../world/types';
 
 const WORLD_CENTER = { x: 1000, y: 1000 };
 const ROOM_RADIUS = 400;
@@ -98,6 +99,17 @@ export function MapView({
     return () => timers.forEach(clearInterval);
   }, [agents]);
 
+  // Convertir liveEvents en ripples para el canvas
+  const rippleEvents: RippleEvent[] = liveEvents.slice(0, 30).map((e) => {
+    const agent = agents.find((a) => a.name === e.from);
+    const room = agent ? ROOMS.find((b) => b.role === agent.role) : undefined;
+    return {
+      id: e._cid ?? `${e.type}-${e.from ?? ''}-${e.timestamp ?? ''}`,
+      type: e.type ?? '',
+      roomId: room?.id,
+    };
+  }).filter((e): e is RippleEvent & { roomId: string } => !!e.roomId);
+
   return (
     <div className="hk-map-layout">
       <div className="hk-map-rail">
@@ -154,6 +166,7 @@ export function MapView({
 
       <div className="hk-map-center">
         <WorldCanvas
+          events={rippleEvents}
           hub={{ label: 'HOKAGE', sublabel: 'CENTRO DE MANDO', x: HUB.pos_x ?? WORLD_CENTER.x, y: HUB.pos_y ?? WORLD_CENTER.y, onClick: () => onEnterBuilding(HUB) }}
           rooms={ROOMS.map((b) => {
             const agent = agents.find((a) => a.role === b.role);

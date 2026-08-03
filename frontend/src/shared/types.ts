@@ -57,6 +57,7 @@ export interface WsEvent {
   to?: string;
   payload?: Record<string, unknown>;
   timestamp?: string;
+  _cid?: string; // ID único cliente, asignado al recibir el evento
 }
 
 // Sobre crudo que envía el WebSocket del backend: { type, data, timestamp }.

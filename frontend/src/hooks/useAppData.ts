@@ -105,7 +105,7 @@ export function useAppData(): AppData {
     }
 
     if (envelope.type === 'agent.event' && envelope.data && typeof envelope.data === 'object') {
-      const inner = envelope.data as WsEvent;
+      const inner: WsEvent = { ...(envelope.data as WsEvent), _cid: `${Date.now()}-${Math.random().toString(36).slice(2)}` };
       setLiveEvents((prev) => [inner, ...prev].slice(0, 50));
       if (inner.type === 'decision.created') loadDecisions();
       if (inner.type === 'agent.task.done' || inner.type === 'agent.task.start' || inner.type === 'agent.task.error') loadRuns();

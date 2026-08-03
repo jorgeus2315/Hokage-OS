@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import * as PIXI from 'pixi.js';
 import { WorldEngine } from './WorldEngine';
-import type { HubDescriptor, RoomDescriptor, TokenDescriptor } from './types';
+import type { HubDescriptor, RoomDescriptor, TokenDescriptor, RippleEvent } from './types';
 
 const COLOR = {
   void: 0x0a0b0d,
@@ -233,18 +233,22 @@ function buildToken(): PIXI.Container {
 
 type WithSlots<T> = PIXI.Container & T;
 
+type Ripple = { x: number; y: number; startMs: number; color: number };
+
 export function WorldCanvas({
   hub,
   rooms,
   tokens,
+  events = [],
 }: {
   hub: HubDescriptor;
   rooms: RoomDescriptor[];
   tokens: TokenDescriptor[];
+  events?: RippleEvent[];
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
-  const propsRef = useRef({ hub, rooms, tokens });
-  propsRef.current = { hub, rooms, tokens };
+  const propsRef = useRef({ hub, rooms, tokens, events });
+  propsRef.current = { hub, rooms, tokens, events };
 
   useEffect(() => {
     const host = hostRef.current;
@@ -254,6 +258,8 @@ export function WorldCanvas({
     const engine = new WorldEngine();
     const roomGfx = new Map<string, { container: PIXI.Container; alertDot: PIXI.Graphics; pulseRing: PIXI.Graphics; activeDot: PIXI.Graphics; color: number }>();
     const tokenGfx = new Map<string, PIXI.Container>();
+    const seenEventIds = new Set<string>();
+    const ripples: Ripple[] = [];
 
     const PAN_THRESHOLD = 4;
     let panState: 'idle' | 'pending' | 'panning' = 'idle';
@@ -321,10 +327,12 @@ export function WorldCanvas({
 
       const gridGfx = buildGrid(1000, 1000);
       const trailGfx = new PIXI.Graphics();   // rastros de movimiento de agentes
+      const scanGfx = new PIXI.Graphics();    // scan line diagonal de ambiente
+      const rippleGfx = new PIXI.Graphics();  // ondas de eventos en vivo
       const orbit = new PIXI.Graphics();
       const spokes = new PIXI.Graphics();
       const hubContainer = buildHub() as WithSlots<{ __label: PIXI.Text; __sublabel: PIXI.Text; __glow: PIXI.Graphics }>;
-      world.addChild(gridGfx, trailGfx, orbit, spokes, hubContainer);
+      world.addChild(gridGfx, trailGfx, scanGfx, rippleGfx, orbit, spokes, hubContainer);
       worldRef = world;
 
       function fitScene() {
@@ -553,6 +561,54 @@ export function WorldCanvas({
             gfx.__ring.alpha = 0;
             gfx.__ringOuter.alpha = 0;
             gfx.__diamond.rotation = 0;
+          }
+        }
+
+        // Scan line diagonal de ambiente — barre el mundo cada 10s
+        const SCAN_PERIOD = 10;
+        const scanPhase = (t % SCAN_PERIOD) / SCAN_PERIOD;
+        const scanBase = hub.x - 700;
+        const scanEnd = hub.x + 700;
+        const scanX = scanBase + scanPhase * (scanEnd - scanBase + 600) - 100;
+        scanGfx.clear()
+          .moveTo(scanX - 200, hub.y - 700)
+          .lineTo(scanX + 200, hub.y + 700)
+          .stroke({ width: 2, color: COLOR.signal, alpha: 0.03 })
+          .moveTo(scanX - 100, hub.y - 700)
+          .lineTo(scanX + 100, hub.y + 700)
+          .stroke({ width: 1, color: COLOR.signal, alpha: 0.055 });
+
+        // Detectar eventos nuevos → crear ripples
+        const { events } = propsRef.current;
+        for (const ev of events) {
+          if (!seenEventIds.has(ev.id)) {
+            seenEventIds.add(ev.id);
+            const room = rooms.find((r) => r.id === ev.roomId);
+            if (room) {
+              const rippleColor = ev.type.includes('error') ? COLOR.ember
+                : ev.type.includes('done') ? COLOR.signal
+                : COLOR.amber;
+              ripples.push({ x: room.x, y: room.y, startMs: performance.now(), color: rippleColor });
+            }
+          }
+        }
+
+        // Dibujar ripples — forma cutPoly que replica el edificio
+        const now = performance.now();
+        rippleGfx.clear();
+        for (let i = ripples.length - 1; i >= 0; i--) {
+          const r = ripples[i];
+          const age = (now - r.startMs) / 1800;
+          if (age >= 1) { ripples.splice(i, 1); continue; }
+          const RW = 114, RH = 70, RCUT = 11;
+          for (let ring = 0; ring < 2; ring++) {
+            const ringAge = Math.min(1, age + ring * 0.3);
+            if (ringAge >= 1) continue;
+            const scale = 1 + ringAge * 2.8;
+            const alpha = (1 - ringAge) * (ring === 0 ? 0.55 : 0.25);
+            const pts = cutPoly(RW * scale, RH * scale, RCUT * scale);
+            const shifted = pts.map((v, idx) => v + (idx % 2 === 0 ? r.x : r.y));
+            rippleGfx.poly(shifted).stroke({ width: ring === 0 ? 1.5 : 0.8, color: r.color, alpha });
           }
         }
 

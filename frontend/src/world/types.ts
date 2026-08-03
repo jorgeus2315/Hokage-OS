@@ -42,3 +42,9 @@ export interface TokenDescriptor {
   action?: string;      // texto de la acción actual
   onClick?: () => void;
 }
+
+export interface RippleEvent {
+  id: string;         // id único para deduplicar
+  type: string;       // agent.task.done, decision.created, etc.
+  roomId?: string;    // id del edificio donde emitir el ripple
+}
