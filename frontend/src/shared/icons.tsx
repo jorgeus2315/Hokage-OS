@@ -129,6 +129,15 @@ export function IconCrew({ className }: IconProps) {
   );
 }
 
+export function IconVenture({ className }: IconProps) {
+  return (
+    <svg {...base} className={className}>
+      <polygon points="12,2 22,7 22,17 12,22 2,17 2,7" />
+      <path d="M12 2v20M2 7l10 5 10-5" />
+    </svg>
+  );
+}
+
 // ── Secciones de edificio ──
 
 export function IconChat({ className }: IconProps) {

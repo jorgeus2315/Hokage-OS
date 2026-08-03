@@ -106,7 +106,7 @@ export interface WorkItem {
   resolved_at: string | null;
 }
 
-export type Screen = 'boot' | 'menu' | 'map' | 'building' | 'crew' | 'missions' | 'alerts' | 'comms';
+export type Screen = 'boot' | 'menu' | 'map' | 'building' | 'crew' | 'missions' | 'alerts' | 'comms' | 'ventures';
 
 export type BuildingSection = 'chat' | 'feed' | 'stats' | 'pipeline' | 'alerts';
 

@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react';
 import type { ChatMsg, Building, Screen, BuildingSection } from './shared';
 import { api, TopBar } from './shared';
 import { useAppData } from './hooks/useAppData';
-import { BootView, MenuView, MapView, BuildingView, CommsView, MissionsView, AlertsView, CrewView } from './views';
+import { BootView, MenuView, MapView, BuildingView, CommsView, MissionsView, AlertsView, CrewView, VenturesView } from './views';
 import { Toast } from './modals';
 
 export default function App() {
@@ -111,6 +111,7 @@ export default function App() {
     missions: 'Misiones',
     alerts: 'Alertas',
     comms: 'Ship Comms',
+    ventures: 'Ventures',
   };
 
   const buildingAgent = activeBuilding ? agents.find((a) => a.role === activeBuilding.role) : undefined;
@@ -164,6 +165,7 @@ export default function App() {
           />
         )}
 
+        {screen === 'ventures' && <VenturesView ventures={ventures} />}
         {screen === 'comms' && <CommsView agents={agents} messages={messages} liveEvents={liveEvents} />}
         {screen === 'missions' && <MissionsView level={level} xp={xp} xpNext={xpNext} achievements={achievements} />}
         {screen === 'alerts' && <AlertsView pending={pending} agents={agents} onApprove={approve} onReject={reject} />}

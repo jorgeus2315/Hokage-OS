@@ -6,3 +6,4 @@ export * from './CommsView';
 export * from './MissionsView';
 export * from './AlertsView';
 export * from './CrewView';
+export * from './VenturesView';
