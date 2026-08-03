@@ -1,0 +1,382 @@
+import { useState, useCallback, useEffect } from 'react';
+import type { Building, BuildingSection, ChatMsg, Screen } from '../shared/types';
+import { api } from '../shared/api';
+import { Led } from '../shared/ui';
+import { GameHUD } from '../shared/GameHUD';
+import { Toast } from '../modals';
+import { useAppData } from '../hooks/useAppData';
+import { useWorldState } from '../hooks/useWorldState';
+import { WorldCanvas } from '../world/WorldCanvas';
+import { BuildingView } from './BuildingView';
+import { CommsView } from './CommsView';
+import { CrewView } from './CrewView';
+import { MissionsView } from './MissionsView';
+import { AlertsView } from './AlertsView';
+import { VenturesView } from './VenturesView';
+import { ObjectivesView } from './ObjectivesView';
+import { MenuView } from './MenuView';
+
+const RECENT_MS = 5 * 60 * 1000;
+
+const SCREEN_TITLE: Partial<Record<Screen, string>> = {
+  crew: 'Ship Crew',
+  missions: 'Misiones',
+  alerts: 'Alertas',
+  comms: 'Ship Comms',
+  ventures: 'Ventures',
+  objetivos: 'Objetivos',
+};
+
+export function GameLayout() {
+  const [screen, setScreen] = useState<Screen>('map');
+  const [showMenu, setShowMenu] = useState(false);
+  const [activeBuilding, setActiveBuilding] = useState<Building | null>(null);
+  const [section, setSection] = useState<BuildingSection>('chat');
+  const [chatByAgent, setChatByAgent] = useState<Record<number, ChatMsg[]>>({});
+  const [chatInput, setChatInput] = useState('');
+  const [chatLoading, setChatLoading] = useState(false);
+  const [toast, setToast] = useState('');
+  const [clock, setClock] = useState(() =>
+    new Date().toLocaleTimeString('es-ES', { hour12: false }),
+  );
+
+  const {
+    agents, ventures, achievements, runs, messages, liveEvents,
+    departments, objectives, xp, level, runtimeOn, pending, wsConnected, reload,
+  } = useAppData();
+
+  useEffect(() => {
+    const t = setInterval(
+      () => setClock(new Date().toLocaleTimeString('es-ES', { hour12: false })),
+      1000,
+    );
+    return () => clearInterval(t);
+  }, []);
+
+  const show = useCallback((m: string) => {
+    setToast(m);
+    setTimeout(() => setToast(''), 3000);
+  }, []);
+
+  function enterBuilding(b: Building) {
+    setActiveBuilding(b);
+    setSection('chat');
+    setScreen('building');
+  }
+
+  const { hub, rooms, tokens, rippleEvents, allDepts } = useWorldState({
+    departments,
+    agents,
+    runs,
+    pending,
+    liveEvents,
+    onEnterBuilding: enterBuilding,
+  });
+
+  async function sendChat() {
+    if (!chatInput.trim() || !activeBuilding || chatLoading) return;
+    const agent = agents.find((a) => a.role === activeBuilding.role);
+    if (!agent) return;
+    const msg = chatInput.trim();
+    setChatInput('');
+    const time = new Date().toLocaleTimeString('es-ES');
+    setChatByAgent((p) => ({ ...p, [agent.id]: [...(p[agent.id] || []), { role: 'user', text: msg, time }] }));
+    setChatLoading(true);
+    const result = await api.ask(agent.id, msg);
+    const text = result?.response || 'Error de conexión. Verifica que el backend esté activo.';
+    setChatByAgent((p) => ({
+      ...p,
+      [agent.id]: [
+        ...(p[agent.id] || []),
+        { role: 'agent', text, time: new Date().toLocaleTimeString('es-ES'), agentName: agent.name },
+      ],
+    }));
+    setChatLoading(false);
+    reload.loadMessages();
+  }
+
+  async function approve(id: number) {
+    await api.approve(id);
+    reload.loadDecisions();
+    show('Decisión aprobada');
+  }
+
+  async function reject(id: number) {
+    await api.reject(id);
+    reload.loadDecisions();
+    show('Decisión rechazada');
+  }
+
+  async function expireAll() {
+    const result = await api.expireOldDecisions(0);
+    reload.loadDecisions();
+    show(result ? `${result.expired} alertas limpiadas` : 'Error al limpiar');
+  }
+
+  async function toggleRuntime() {
+    if (runtimeOn) await api.runtimeStop();
+    else await api.runtimeStart();
+    show(runtimeOn ? 'Runtime detenido' : 'Runtime iniciado');
+    reload.loadRuntimeStatus();
+  }
+
+  async function runNow() {
+    const agent = activeBuilding && agents.find((a) => a.role === activeBuilding.role);
+    if (!agent) return;
+    await api.runNow(agent.id);
+    show(`${agent.name} ejecutando…`);
+    setTimeout(() => { reload.loadMessages(); reload.loadRuns(); }, 3000);
+  }
+
+  const isWorking = (agentId: number) => {
+    const last = runs.find((r) => r.agent_id === agentId);
+    return !!last && Date.now() - new Date(last.started_at).getTime() < RECENT_MS;
+  };
+
+  const buildingAgent = activeBuilding ? agents.find((a) => a.role === activeBuilding.role) : undefined;
+  const pendingForAgent = buildingAgent ? pending.filter((d) => d.agent_id === buildingAgent.id) : [];
+  const xpNext = level * 1000;
+
+  const showBuildingPanel = screen === 'building' && !!activeBuilding;
+  const showOverlay = screen !== 'map' && screen !== 'building';
+  const overlayTitle = screen in SCREEN_TITLE ? SCREEN_TITLE[screen] : '';
+
+  return (
+    <div className="hk-game">
+      <GameHUD
+        agents={agents}
+        pending={pending}
+        messages={messages}
+        objectives={objectives}
+        runtimeOn={runtimeOn}
+        connected={wsConnected}
+        clock={clock}
+        level={level}
+        xp={xp}
+        xpNext={xpNext}
+        onToggleRuntime={toggleRuntime}
+        onMenu={() => setShowMenu(true)}
+        onAlerts={() => { setShowMenu(false); setScreen('alerts'); }}
+        onComms={() => { setShowMenu(false); setScreen('comms'); }}
+        onCrew={() => { setShowMenu(false); setScreen('crew'); }}
+        onObjectives={() => { setShowMenu(false); setScreen('objetivos'); }}
+      />
+
+      <div className="hk-game-scene">
+        {/* Canvas siempre visible como fondo */}
+        <WorldCanvas hub={hub} rooms={rooms} tokens={tokens} events={rippleEvents} />
+
+        {/* Rail izquierdo: agentes */}
+        <div className="hk-game-overlay hk-game-overlay--left">
+          <div className="hk-game-glass" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', maxHeight: '100%' }}>
+            <div className="hk-game-rail-title">
+              <Led state={wsConnected ? 'on' : 'idle'} />
+              CREW · {agents.length}
+            </div>
+            <div style={{ overflowY: 'auto', flex: 1 }}>
+              {agents.map((a) => {
+                const building = allDepts.find((b) => b.role === a.role);
+                const last = runs.find((r) => r.agent_id === a.id);
+                const working = isWorking(a.id);
+                return (
+                  <div
+                    key={a.id}
+                    className="hk-game-agent-row"
+                    onClick={() => building && enterBuilding(building)}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if ((e.key === 'Enter' || e.key === ' ') && building) {
+                        e.preventDefault();
+                        enterBuilding(building);
+                      }
+                    }}
+                  >
+                    <Led state={working ? 'alert' : 'on'} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div className="hk-game-agent-name">{a.name}</div>
+                      <div className="hk-game-agent-action">{last?.action || 'En espera'}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* Feed de eventos: abajo-izquierda */}
+        <div className="hk-game-overlay hk-game-overlay--bottom-left">
+          <div className="hk-game-glass">
+            <div className="hk-game-feed-title">EVENTOS EN VIVO</div>
+            {liveEvents.length === 0 ? (
+              <div style={{ padding: '7px 10px', fontSize: 10, color: 'var(--ink-faint)', fontFamily: 'var(--font-mono)' }}>
+                Sin eventos todavía.
+              </div>
+            ) : (
+              liveEvents.slice(0, 6).map((e) => (
+                <div key={e._cid ?? `${e.type}-${e.timestamp}`} className="hk-game-event">
+                  <div
+                    className="hk-game-event-type"
+                    style={{
+                      color: e.type?.includes('error')
+                        ? 'var(--ember)'
+                        : e.type?.includes('done')
+                          ? 'var(--good)'
+                          : 'var(--signal)',
+                    }}
+                  >
+                    {e.type}
+                  </div>
+                  {e.from && <div className="hk-game-event-from">{e.from}</div>}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* Acciones rápidas: abajo-derecha */}
+        <div className="hk-game-overlay hk-game-overlay--bottom-right">
+          <button
+            className={`hk-game-action-btn${pending.length > 0 ? ' hk-game-action-btn--alert' : ''}`}
+            onClick={() => setScreen('alerts')}
+          >
+            ⚠ Alertas{pending.length > 0 ? ` (${pending.length})` : ''}
+          </button>
+          <button className="hk-game-action-btn" onClick={() => setScreen('comms')}>
+            ◈ Comms
+          </button>
+          <button
+            className={`hk-game-action-btn${objectives.filter((o) => o.status === 'active').length > 0 ? ' hk-game-action-btn--signal' : ''}`}
+            onClick={() => setScreen('objetivos')}
+          >
+            ◎ Objetivos
+          </button>
+          <button className="hk-game-action-btn" onClick={() => setScreen('ventures')}>
+            ⬡ Ventures
+          </button>
+        </div>
+
+        {/* Panel derecho: sala seleccionada */}
+        {showBuildingPanel && (
+          <div className="hk-game-overlay hk-game-overlay--right">
+            <div className="hk-game-right-panel">
+              <div className="hk-game-panel-header">
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span
+                    style={{
+                      display: 'inline-block',
+                      width: 8,
+                      height: 8,
+                      borderRadius: '50%',
+                      background: activeBuilding.color,
+                      boxShadow: `0 0 8px ${activeBuilding.color}`,
+                    }}
+                  />
+                  <span className="hk-game-panel-title">{activeBuilding.name}</span>
+                </div>
+                <button
+                  className="hk-game-panel-close"
+                  onClick={() => setScreen('map')}
+                  aria-label="Cerrar panel"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="hk-game-panel-body">
+                <BuildingView
+                  building={activeBuilding}
+                  agent={buildingAgent}
+                  section={section}
+                  onChangeSection={setSection}
+                  chatMsgs={buildingAgent ? chatByAgent[buildingAgent.id] || [] : []}
+                  chatInput={chatInput}
+                  chatLoading={chatLoading}
+                  onChangeChatInput={setChatInput}
+                  onSendChat={sendChat}
+                  liveEvents={liveEvents}
+                  pendingForAgent={pendingForAgent}
+                  onApprove={approve}
+                  onReject={reject}
+                  onRunNow={runNow}
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Overlay de pantalla secundaria */}
+        {showOverlay && (
+          <div className="hk-game-screen-overlay">
+            <div className="hk-game-screen-header">
+              <span className="hk-game-screen-title">{overlayTitle}</span>
+              <button
+                className="hk-game-panel-close"
+                onClick={() => setScreen('map')}
+                aria-label="Volver al mapa"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="hk-game-screen-body">
+              {screen === 'objetivos' && (
+                <ObjectivesView objectives={objectives} onReload={reload.loadObjectives} />
+              )}
+              {screen === 'ventures' && <VenturesView ventures={ventures} />}
+              {screen === 'comms' && (
+                <CommsView agents={agents} messages={messages} liveEvents={liveEvents} />
+              )}
+              {screen === 'missions' && (
+                <MissionsView level={level} xp={xp} xpNext={xpNext} achievements={achievements} />
+              )}
+              {screen === 'alerts' && (
+                <AlertsView
+                  pending={pending}
+                  agents={agents}
+                  onApprove={approve}
+                  onReject={reject}
+                  onExpireAll={expireAll}
+                />
+              )}
+              {screen === 'crew' && (
+                <CrewView agents={agents} runs={runs} onEnterBuilding={enterBuilding} />
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Menú principal como overlay */}
+        {showMenu && (
+          <div className="hk-game-menu-overlay">
+            <MenuView
+              level={level}
+              xp={xp}
+              xpNext={xpNext}
+              agentsCount={agents.length}
+              businessCount={ventures.length}
+              pendingCount={pending.length}
+              messagesCount={messages.length}
+              runtimeOn={runtimeOn}
+              connected={wsConnected}
+              clock={clock}
+              onToggleRuntime={toggleRuntime}
+              onNavigate={(s) => {
+                setShowMenu(false);
+                if (s === 'menu') return;
+                setScreen(s);
+              }}
+            />
+            <button
+              className="hk-game-menu-close"
+              onClick={() => setShowMenu(false)}
+              aria-label="Cerrar menú"
+            >
+              ✕ CERRAR
+            </button>
+          </div>
+        )}
+      </div>
+
+      <Toast message={toast} />
+    </div>
+  );
+}

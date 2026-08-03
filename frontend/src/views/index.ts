@@ -8,3 +8,4 @@ export * from './AlertsView';
 export * from './CrewView';
 export * from './VenturesView';
 export * from './ObjectivesView';
+export * from './GameLayout';
