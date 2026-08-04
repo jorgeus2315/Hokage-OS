@@ -36,7 +36,7 @@ const AUTONOMOUS_TASKS: Record<string, { task: string; interval: number }> = {
     interval: 30 * 60 * 1000,
   },
   contenido: {
-    task: 'Revisa tu contexto de trabajo. Si recibes una tendencia del Explorador, crea una descripcion de producto SEO-optimizada (titulo, descripcion, 5 tags). Cuando termines, llama a la tool content.create con el keyword y un resumen de 1 linea — no escribas el contenido como texto libre. Después añade: [DECISION: Publicar contenido SEO — keyword]. Si no hay trabajo nuevo, reporta estado brevemente.',
+    task: 'Revisa tu contexto de trabajo. Si recibes una tendencia del Explorador, crea una descripcion de producto SEO-optimizada (titulo, descripcion, 5 tags). Cuando termines, llama a la tool content.create con el keyword y un resumen de 1 linea. Después llama a la tool decision.create con title="Publicar contenido SEO — keyword" — no escribas ninguna de las dos cosas como texto libre. Si no hay trabajo nuevo, reporta estado brevemente.',
     interval: 20 * 60 * 1000,
   },
   finanzas: {
@@ -62,7 +62,7 @@ Evalúa tres cosas:
 2. ¿Hay algún patrón en los rechazos, fallos o silencio reciente que señale un problema de fondo?
 3. ¿Existe alguna oportunidad que el equipo no esté persiguiendo activamente?
 
-Si detectas algo relevante, usa [DECISION: propuesta concreta en menos de 80 caracteres].
+Si detectas algo relevante, llama a la tool decision.create con una propuesta concreta en menos de 80 caracteres — no lo escribas como texto libre.
 Si todo está alineado con los objetivos, reporta el estado en una sola línea.
 No rellenes si no hay nada que decir.`,
     interval: 60 * 60 * 1000,
@@ -194,7 +194,9 @@ class AgentRuntime {
       if (!roleTools.includes('content.create')) {
         formatLines.push('- Si acabas de crear contenido listo para distribuir, añade: [CONTENIDO: keyword | resumen de 1 linea]');
       }
-      formatLines.push('- Si necesitas que Jorge apruebe algo (publicar contenido, gastar dinero, cambiar configuración), añade: [DECISION: título en menos de 80 caracteres]');
+      if (!roleTools.includes('decision.create')) {
+        formatLines.push('- Si necesitas que Jorge apruebe algo (publicar contenido, gastar dinero, cambiar configuración), añade: [DECISION: título en menos de 80 caracteres]');
+      }
       if (!roleTools.includes('memory.write')) {
         formatLines.push('- Si descubres un hecho relevante para recordar en el futuro, añade: [MEMORIA: clave_snake_case=valor en menos de 150 caracteres] (máximo 3 por respuesta)');
       }
@@ -207,6 +209,9 @@ class AgentRuntime {
       }
       if (roleTools.includes('memory.write')) {
         formatLines.push('- Para recordar un hecho relevante, llama SIEMPRE a la tool memory.write — nunca uses [MEMORIA: ...].');
+      }
+      if (roleTools.includes('decision.create')) {
+        formatLines.push('- Para pedir aprobación de Jorge, llama SIEMPRE a la tool decision.create — nunca uses [DECISION: ...]. Rellena siempre "description" con el porqué, no la dejes vacía.');
       }
 
       const taskPrompt = `${task.context || task.taskType}

@@ -123,3 +123,20 @@ export interface MemoryWriteOutput {
   key: string;
   saved: boolean;
 }
+
+// Fase 4 de la migración marcadores → Tool Calling (HOKAGE_CORE_SPECIFICATION_v1.md §2).
+// Última fase — mayor superficie y más visible para Jorge (alimenta Alertas directo).
+// Mismo alcance de roles que memory.write: solo tool-capable, operaciones/soporte permanecen
+// en [DECISION: ...] por diseño.
+export interface DecisionCreateInput {
+  title: string;
+  description: string;
+  amount?: number;
+  risk_level?: 'low' | 'medium' | 'high';
+}
+
+export interface DecisionCreateOutput {
+  decisionId: number;
+  title: string;
+  status: string;
+}

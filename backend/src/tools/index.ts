@@ -1,9 +1,10 @@
 import type { Tool, ToolContext, ToolResult, ToolStatus, ToolPermission } from './base.js';
-import type { EtsyListingInput, EtsyListingOutput, ShopifyListingInput, ShopifyListingOutput, PrintifyProductInput, PrintifyProductOutput, GoogleTrendsInput, GoogleTrendsOutput, WebBrowserInput, WebBrowserOutput, SystemExecInput, SystemExecOutput, TrendReportInput, TrendReportOutput, ContentCreateInput, ContentCreateOutput, MemoryWriteInput, MemoryWriteOutput } from './types.js';
+import type { EtsyListingInput, EtsyListingOutput, ShopifyListingInput, ShopifyListingOutput, PrintifyProductInput, PrintifyProductOutput, GoogleTrendsInput, GoogleTrendsOutput, WebBrowserInput, WebBrowserOutput, SystemExecInput, SystemExecOutput, TrendReportInput, TrendReportOutput, ContentCreateInput, ContentCreateOutput, MemoryWriteInput, MemoryWriteOutput, DecisionCreateInput, DecisionCreateOutput } from './types.js';
 import { requestExec } from '../services/hermesService.js';
 import { createMarket } from '../services/marketService.js';
 import { createContent } from '../services/contentService.js';
 import { writeAgentMemory } from '../services/agentMemoryService.js';
+import { createDecision } from '../services/decisionService.js';
 import { get } from '../db/init.js';
 import bus from '../config/eventBus.js';
 
@@ -506,6 +507,63 @@ export const MemoryWriteTool: Tool<MemoryWriteInput, MemoryWriteOutput> = {
     } catch (err: any) {
       console.error(`[TOOL:memory.write] error:`, err.message);
       return result<MemoryWriteOutput>(false, { error: `MemoryWrite: ${err.message}` });
+    }
+  },
+};
+
+// Fase 4 (última) de la migración marcadores → Tool Calling (HOKAGE_CORE_SPECIFICATION_v1.md §2).
+// Sustituye el parseo regex de [DECISION: título] en agentRuntime.ts — el marcador de mayor
+// superficie y el más visible para Jorge (alimenta Alertas directo). decisionService.createDecision()
+// ya trae su propia deduplicación (mismo agente + mismo título + 'proposed') — se hereda gratis,
+// no se reimplementa aquí.
+export const DecisionCreateTool: Tool<DecisionCreateInput, DecisionCreateOutput> = {
+  id: 'decision.create',
+  name: 'Decision Create',
+  description: 'Crea una Decision pendiente de aprobación de Jorge (publicar algo, gastar dinero, cambiar configuración). Úsala en vez de escribir texto libre.',
+  category: 'pipeline',
+  status: 'ready',
+  permissions: permission('agent'),
+  requiredApproval: false, // la Decision creada SÍ requiere aprobación de Jorge — eso lo aplica decisionService, no esta tool
+  inputSchema: stubInputSchema(
+    {
+      title:       { type: 'string', description: 'Título de la decisión, menos de 100 caracteres', maxLength: 100 },
+      description: { type: 'string', description: 'Por qué hace falta esta decisión y qué contexto necesita Jorge para decidir — obligatorio, no lo dejes vacío' },
+      amount:      { type: 'number', description: 'Importe en USD si implica gasto (opcional)' },
+      risk_level:  { type: 'string', description: 'Nivel de riesgo', enum: ['low', 'medium', 'high'] },
+    },
+    ['title', 'description']
+  ),
+  outputSchema: stubOutputSchema({
+    decisionId: { type: 'integer' },
+    title:      { type: 'string' },
+    status:     { type: 'string' },
+  }),
+  async estimateCost(_input) { return 0; },
+  async execute(input, ctx) {
+    try {
+      const agent = ctx.agentId ? await get<{ name: string }>('SELECT name FROM agents WHERE id = ?', [ctx.agentId]) : null;
+      const agentName = agent?.name || 'agente';
+
+      const decision = await createDecision({
+        agent_id: ctx.agentId ?? null,
+        title: input.title,
+        description: input.description,
+        reasoning: `Generado automaticamente por ${agentName} durante tarea autonoma`,
+        risk_level: input.risk_level || 'low',
+        amount: input.amount ?? null,
+      });
+
+      bus.publish({
+        type: 'decision.created',
+        from: agentName,
+        payload: { title: decision.title, agentId: ctx.agentId ?? null },
+      });
+      console.log(`[TOOL:decision.create] ${agentName} → decision.created :: ${decision.title} (id=${decision.id})`);
+
+      return result<DecisionCreateOutput>(true, { data: { decisionId: decision.id, title: decision.title, status: decision.status }, cost: 0 });
+    } catch (err: any) {
+      console.error(`[TOOL:decision.create] error:`, err.message);
+      return result<DecisionCreateOutput>(false, { error: `DecisionCreate: ${err.message}` });
     }
   },
 };
