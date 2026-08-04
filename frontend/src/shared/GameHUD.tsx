@@ -1,4 +1,4 @@
-import type { Agent, Decision, CommMsg, Objective } from './types';
+import type { Agent, Decision, CommMsg, Objective, MetricsSummary } from './types';
 import { IconConfig } from './icons';
 
 export function GameHUD({
@@ -6,6 +6,7 @@ export function GameHUD({
   pending,
   messages,
   objectives,
+  metrics,
   runtimeOn,
   connected,
   clock,
@@ -24,6 +25,7 @@ export function GameHUD({
   pending: Decision[];
   messages: CommMsg[];
   objectives: Objective[];
+  metrics: MetricsSummary;
   runtimeOn: boolean;
   connected: boolean;
   clock: string;
@@ -41,6 +43,7 @@ export function GameHUD({
   const activeObjectives = objectives.filter(
     (o) => o.status === 'active' || o.plan?.status === 'proposed',
   ).length;
+  const isUrgent = metrics.urgent_decisions > 0;
 
   const xpPct = Math.min(100, xpNext > 0 ? (xp / xpNext) * 100 : 0);
 
@@ -70,8 +73,9 @@ export function GameHUD({
         </div>
 
         <button
-          className={`hk-game-stat hk-game-stat-btn${pending.length > 0 ? ' hk-game-stat--alert' : ''}`}
+          className={`hk-game-stat hk-game-stat-btn${pending.length > 0 ? ' hk-game-stat--alert' : ''}${isUrgent ? ' hk-game-stat--urgent' : ''}`}
           onClick={onAlerts}
+          title={isUrgent ? `${metrics.urgent_decisions} decisión(es) urgente(s) — riesgo alto, importe o más de 24h esperando` : undefined}
         >
           <span style={{
             fontSize: 10, lineHeight: 1,
@@ -83,13 +87,21 @@ export function GameHUD({
           </div>
         </button>
 
-        <button className="hk-game-stat hk-game-stat-btn" onClick={onComms}>
+        <button className="hk-game-stat hk-game-stat-btn" onClick={onComms} title={`${metrics.messages_today} mensajes hoy`}>
           <span style={{ fontSize: 10, lineHeight: 1, color: 'var(--signal)' }}>◈</span>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
             <span className="hk-game-stat-label">COMMS</span>
             <span className="hk-game-stat-value">{messages.length}</span>
           </div>
         </button>
+
+        <div className="hk-game-stat" title="Coste de IA acumulado hoy">
+          <span style={{ fontSize: 10, lineHeight: 1, color: 'var(--good)' }}>$</span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+            <span className="hk-game-stat-label">COSTE HOY</span>
+            <span className="hk-game-stat-value">${metrics.ai_cost_today_usd.toFixed(2)}</span>
+          </div>
+        </div>
 
         <button
           className={`hk-game-stat hk-game-stat-btn${activeObjectives > 0 ? ' hk-game-stat--signal' : ''}`}

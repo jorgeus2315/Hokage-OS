@@ -151,6 +151,41 @@ app.get('/api/health', (_req, res) => res.json({
   websocket: clients.size,
 }));
 
+// ═══════════ MÉTRICAS ═══════════
+app.get('/api/metrics/summary', async (_req, res) => {
+  try {
+    // Edad calculada con julianday() (SQLite, UTC nativo) en vez de `new Date()` en JS —
+    // Node interpreta los timestamps de SQLite como hora local, desfasando la antigüedad
+    // por el offset de la zona horaria del proceso.
+    const [costRow, msgRow, pendingRow, urgentRow] = await Promise.all([
+      get<{ cost: number }>(
+        `SELECT COALESCE(SUM(llm_cost_usd + tool_cost_usd), 0) as cost FROM agent_costs WHERE date(created_at) = date('now')`
+      ),
+      get<{ count: number }>(
+        `SELECT COUNT(*) as count FROM messages WHERE date(created_at) = date('now')`
+      ),
+      get<{ count: number }>(
+        `SELECT COUNT(*) as count FROM decisions WHERE status IN ('proposed', 'pending')`
+      ),
+      get<{ count: number }>(
+        `SELECT COUNT(*) as count FROM decisions
+         WHERE status IN ('proposed', 'pending')
+         AND (risk_level = 'high' OR (amount IS NOT NULL AND amount > 0) OR (julianday('now') - julianday(created_at)) * 24 > 24)`
+      ),
+    ]);
+
+    res.json({
+      ok: true,
+      data: {
+        ai_cost_today_usd: Number((costRow?.cost ?? 0).toFixed(4)),
+        messages_today: msgRow?.count ?? 0,
+        pending_decisions: pendingRow?.count ?? 0,
+        urgent_decisions: urgentRow?.count ?? 0,
+      },
+    });
+  } catch (e: any) { sendError(res, 500, e, 'Error calculando métricas'); }
+});
+
 // ═══════════ AGENTES ═══════════
 app.get('/api/agents', async (_req, res) => {
   try {

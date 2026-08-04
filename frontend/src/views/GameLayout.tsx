@@ -44,7 +44,7 @@ export function GameLayout() {
 
   const {
     agents, ventures, achievements, runs, messages, liveEvents,
-    departments, objectives, xp, level, runtimeOn, pending, wsConnected, reload,
+    departments, objectives, metrics, xp, level, runtimeOn, pending, wsConnected, reload,
   } = useAppData();
 
   useEffect(() => {
@@ -152,6 +152,7 @@ export function GameLayout() {
         pending={pending}
         messages={messages}
         objectives={objectives}
+        metrics={metrics}
         runtimeOn={runtimeOn}
         connected={wsConnected}
         clock={clock}

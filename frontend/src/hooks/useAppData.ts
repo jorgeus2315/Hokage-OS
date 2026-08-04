@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import type { Agent, Decision, Achievement, AgentRun, CommMsg, WsEvent, Building, Venture, Objective } from '../shared/types';
+import type { Agent, Decision, Achievement, AgentRun, CommMsg, WsEvent, Building, Venture, Objective, MetricsSummary } from '../shared/types';
 import { api, useWebSocket } from '../shared';
+
+const EMPTY_METRICS: MetricsSummary = { ai_cost_today_usd: 0, messages_today: 0, pending_decisions: 0, urgent_decisions: 0 };
 
 export type AppData = {
   agents: Agent[];
@@ -12,6 +14,7 @@ export type AppData = {
   liveEvents: WsEvent[];
   departments: Building[];
   objectives: Objective[];
+  metrics: MetricsSummary;
   xp: number;
   level: number;
   runtimeOn: boolean;
@@ -28,6 +31,7 @@ export type AppData = {
     loadDepartments: () => Promise<void>;
     loadRuntimeStatus: () => Promise<void>;
     loadObjectives: () => void;
+    loadMetrics: () => Promise<void>;
   };
 };
 
@@ -44,6 +48,7 @@ export function useAppData(): AppData {
   const [level, setLevel] = useState(1);
   const [runtimeOn, setRuntimeOn] = useState(false);
   const [objectives, setObjectives] = useState<Objective[]>([]);
+  const [metrics, setMetrics] = useState<MetricsSummary>(EMPTY_METRICS);
 
   const loadAgents = useCallback(async () => {
     const data = await api.agents();
@@ -84,6 +89,10 @@ export function useAppData(): AppData {
     const data = await api.runtimeStatus();
     if (data) setRuntimeOn(data.running);
   }, []);
+  const loadMetrics = useCallback(async () => {
+    const data = await api.metricsSummary();
+    if (data) setMetrics(data);
+  }, []);
   const objectivesTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadObjectives = useCallback(() => {
     if (objectivesTimer.current) clearTimeout(objectivesTimer.current);
@@ -118,14 +127,14 @@ export function useAppData(): AppData {
     if (envelope.type === 'agent.event' && envelope.data && typeof envelope.data === 'object') {
       const inner: WsEvent = { ...(envelope.data as WsEvent), _cid: `${Date.now()}-${Math.random().toString(36).slice(2)}` };
       setLiveEvents((prev) => [inner, ...prev].slice(0, 50));
-      if (inner.type === 'decision.created') loadDecisions();
+      if (inner.type === 'decision.created') { loadDecisions(); loadMetrics(); }
       if (inner.type === 'agent.task.done' || inner.type === 'agent.task.start' || inner.type === 'agent.task.error') loadRuns();
     if (inner.type === 'objective.achieved' || inner.type === 'objective.created' || inner.type === 'objective.approved') loadObjectives();
       return;
     }
-    if (envelope.type === 'message.new') loadMessages();
-    if (envelope.type === 'decision.new' || envelope.type === 'decision.approved' || envelope.type === 'decision.rejected') loadDecisions();
-  }, [loadDecisions, loadRuns, loadMessages, loadObjectives]);
+    if (envelope.type === 'message.new') { loadMessages(); loadMetrics(); }
+    if (envelope.type === 'decision.new' || envelope.type === 'decision.approved' || envelope.type === 'decision.rejected') { loadDecisions(); loadMetrics(); }
+  }, [loadDecisions, loadRuns, loadMessages, loadObjectives, loadMetrics]);
 
   const wsConnected = useWebSocket(handleWsEvent);
 
@@ -140,6 +149,9 @@ export function useAppData(): AppData {
     loadProgress();
     loadRuntimeStatus();
     loadObjectives();
+    loadMetrics();
+    const t = setInterval(loadMetrics, 60_000);
+    return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -147,7 +159,7 @@ export function useAppData(): AppData {
 
   return {
     agents, ventures, decisions, achievements, runs, messages, liveEvents,
-    departments, objectives, xp, level, runtimeOn, pending, wsConnected,
-    reload: { loadAgents, loadVentures, loadDecisions, loadAchievements, loadRuns, loadMessages, loadProgress, loadDepartments, loadRuntimeStatus, loadObjectives },
+    departments, objectives, metrics, xp, level, runtimeOn, pending, wsConnected,
+    reload: { loadAgents, loadVentures, loadDecisions, loadAchievements, loadRuns, loadMessages, loadProgress, loadDepartments, loadRuntimeStatus, loadObjectives, loadMetrics },
   };
 }

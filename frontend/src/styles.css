@@ -1181,6 +1181,12 @@ svg { display: block; flex-shrink: 0; }
 .hk-game-stat--alert .hk-game-stat-value { color: var(--ember); }
 .hk-game-stat--signal .hk-game-stat-value { color: var(--signal); }
 
+.hk-game-stat--urgent .hk-game-stat-value { animation: hk-urgent-pulse 1.4s ease-in-out infinite; }
+@keyframes hk-urgent-pulse {
+  0%, 100% { color: var(--ember); text-shadow: 0 0 4px var(--ember); }
+  50% { color: #fff; text-shadow: 0 0 10px var(--ember); }
+}
+
 .hk-game-config-icon {
   width: 16px;
   height: 16px;

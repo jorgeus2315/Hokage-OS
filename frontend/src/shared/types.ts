@@ -157,6 +157,13 @@ export interface Objective {
 
 export type BuildingSection = 'chat' | 'feed' | 'stats' | 'pipeline' | 'outputs' | 'terminal' | 'alerts' | 'config';
 
+export interface MetricsSummary {
+  ai_cost_today_usd: number;
+  messages_today: number;
+  pending_decisions: number;
+  urgent_decisions: number;
+}
+
 // ═══════════ HERMES ══════════════════════════════════════════════════════════
 export interface ExecRun {
   id: number;
