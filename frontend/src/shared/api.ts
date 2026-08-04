@@ -76,6 +76,8 @@ export const api = {
   workItems: (agentId: number) => req<import('./types').WorkItem[]>(`/agents/${agentId}/work-items`),
   agentOutputs: (agentId: number) =>
     req<{ content: import('./types').ContentItem[]; market: import('./types').MarketItem[] }>(`/agents/${agentId}/outputs`),
+
+  hermesRuns: () => req<import('./types').ExecRun[]>('/hermes/runs'),
   agentStats: (agentId: number) => req<{
     total_runs: number; successful_runs: number; failed_runs: number;
     success_rate: number | null; total_tokens: number; total_cost_usd: number;

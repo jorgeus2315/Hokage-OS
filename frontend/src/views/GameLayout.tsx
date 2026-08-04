@@ -62,7 +62,7 @@ export function GameLayout() {
 
   function enterBuilding(b: Building) {
     setActiveBuilding(b);
-    setSection('chat');
+    setSection(b.role === 'hermes' ? 'terminal' : 'chat');
     setScreen('building');
   }
 

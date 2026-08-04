@@ -7,10 +7,11 @@ import { LiveFeedPanel } from '../panels/LiveFeedPanel';
 import { StatsPanel } from '../panels/StatsPanel';
 import { PipelinePanel } from '../panels/PipelinePanel';
 import { OutputsPanel } from '../panels/OutputsPanel';
+import { TerminalPanel } from '../panels/TerminalPanel';
 import { AlertsPanel } from '../panels/AlertsPanel';
 import { AgentConfigPanel } from '../panels/AgentConfigPanel';
 
-const SECTIONS: Array<{ id: BuildingSection; label: string }> = [
+const BASE_SECTIONS: Array<{ id: BuildingSection; label: string }> = [
   { id: 'chat', label: 'Chat' },
   { id: 'outputs', label: 'Outputs' },
   { id: 'feed', label: 'Live Feed' },
@@ -19,6 +20,8 @@ const SECTIONS: Array<{ id: BuildingSection; label: string }> = [
   { id: 'alerts', label: 'Alertas' },
   { id: 'config', label: 'Configurar' },
 ];
+
+const TERMINAL_TAB: { id: BuildingSection; label: string } = { id: 'terminal', label: 'Terminal' };
 
 export function BuildingView({
   building,
@@ -54,6 +57,10 @@ export function BuildingView({
   onAgentUpdated?: () => void;
 }) {
   const agentEvents = liveEvents.filter((e) => e.from === agent?.name);
+  const isHermes = agent?.role === 'hermes';
+  const SECTIONS = isHermes
+    ? [BASE_SECTIONS[0], TERMINAL_TAB, ...BASE_SECTIONS.slice(1)]
+    : BASE_SECTIONS;
 
   return (
     <div className="hk-interior">
@@ -138,6 +145,7 @@ export function BuildingView({
             />
           )}
           {section === 'outputs' && <OutputsPanel agentId={agent?.id} />}
+          {section === 'terminal' && <TerminalPanel />}
           {section === 'feed' && <LiveFeedPanel events={agentEvents} />}
           {section === 'stats' && <StatsPanel agentId={agent?.id} />}
           {section === 'pipeline' && <PipelinePanel agentId={agent?.id} />}

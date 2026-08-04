@@ -155,7 +155,22 @@ export interface Objective {
   plan?: ObjPlan;
 }
 
-export type BuildingSection = 'chat' | 'feed' | 'stats' | 'pipeline' | 'outputs' | 'alerts' | 'config';
+export type BuildingSection = 'chat' | 'feed' | 'stats' | 'pipeline' | 'outputs' | 'terminal' | 'alerts' | 'config';
+
+// ═══════════ HERMES ══════════════════════════════════════════════════════════
+export interface ExecRun {
+  id: number;
+  decision_id: number | null;
+  requested_by_agent_id: number | null;
+  command: string;
+  cwd: string | null;
+  status: 'pending' | 'approved' | 'rejected' | 'done' | 'failed';
+  exit_code: number | null;
+  stdout: string | null;
+  stderr: string | null;
+  created_at: string;
+  executed_at: string | null;
+}
 
 // ═══════════ OUTPUTS REALES ══════════════════════════════════════════════════
 export interface ContentItem {

@@ -79,6 +79,16 @@ export function IconWorkshop({ className }: IconProps) {
   );
 }
 
+export function IconTerminal({ className }: IconProps) {
+  return (
+    <svg {...base} className={className}>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="m7 9 4 3-4 3" />
+      <path d="M13 15h4" />
+    </svg>
+  );
+}
+
 // ── Navegación ──
 
 export function IconMap({ className }: IconProps) {
@@ -241,6 +251,7 @@ const GLYPHS: Record<string, (p: IconProps) => JSX.Element> = {
   shop: IconShop,
   bank: IconBank,
   workshop: IconWorkshop,
+  terminal: IconTerminal,
 };
 
 export function IconTarget({ className }: IconProps) {
@@ -273,6 +284,7 @@ const SECTION_ICONS: Record<string, (p: IconProps) => JSX.Element> = {
   stats: IconStats,
   pipeline: IconPipeline,
   outputs: IconOutput,
+  terminal: IconTerminal,
   alerts: IconAlert,
   config: IconConfig,
 };
