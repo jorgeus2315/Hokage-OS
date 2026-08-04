@@ -43,6 +43,7 @@ import { createMessage, listMessages } from './services/messageService.js';
 import { askAgent, callAIJson } from './services/aiService.js';
 import { listContent } from './services/contentService.js';
 import { listMarket } from './services/marketService.js';
+import { markObjectiveAchieved } from './services/objectiveService.js';
 import progressRouter from './routes/progress.js';
 import { runtime } from './config/agentRuntime.js';
 import bus from './config/eventBus.js';
@@ -229,7 +230,10 @@ app.post('/api/decisions', requireAdmin, async (req, res) => {
 app.put('/api/decisions/:id/approve', requireAdmin, async (req, res) => {
   try {
     const id = Number(req.params.id);
-    await approveDecision(id, 'Jorge');
+    const decision = await approveDecision(id, 'Jorge');
+    if (decision.entity_type === 'objective' && decision.entity_id != null) {
+      await markObjectiveAchieved(decision.entity_id);
+    }
     bus.publish({ type: 'decision.approved', from: 'Jorge', payload: { decisionId: id } });
     broadcast('decision.approved', { id });
     res.json({ ok: true });

@@ -13,11 +13,12 @@ const ROLE_COLOR: Record<string, string> = {
 };
 
 const STATUS_LABEL: Record<string, { text: string; color: string }> = {
-  planning:  { text: 'PLANIFICANDO', color: '#555' },
-  active:    { text: 'ACTIVO',       color: 'var(--signal)' },
-  achieved:  { text: 'COMPLETADO',   color: 'var(--good)' },
-  paused:    { text: 'PAUSADO',      color: 'var(--amber)' },
-  abandoned: { text: 'ABANDONADO',   color: '#555' },
+  planning:       { text: 'PLANIFICANDO',       color: '#555' },
+  active:         { text: 'ACTIVO',             color: 'var(--signal)' },
+  pending_review: { text: 'PENDIENTE DE CONFIRMAR', color: 'var(--amber)' },
+  achieved:       { text: 'COMPLETADO',         color: 'var(--good)' },
+  paused:         { text: 'PAUSADO',            color: 'var(--amber)' },
+  abandoned:      { text: 'ABANDONADO',         color: '#555' },
 };
 
 const MILESTONE_DOT: Record<string, { color: string; glow: boolean }> = {

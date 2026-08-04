@@ -114,7 +114,7 @@ export interface WorkItem {
 export type Screen = 'boot' | 'menu' | 'map' | 'building' | 'crew' | 'missions' | 'alerts' | 'comms' | 'ventures' | 'objetivos' | 'config';
 
 // ═══════════ GOAL SYSTEM ════════════════════════════════════════════════════
-export type ObjectiveStatus = 'planning' | 'active' | 'achieved' | 'paused' | 'abandoned';
+export type ObjectiveStatus = 'planning' | 'active' | 'pending_review' | 'achieved' | 'paused' | 'abandoned';
 export type MilestoneStatus = 'pending' | 'in_progress' | 'done' | 'blocked' | 'skipped';
 export type PlanStatus = 'proposed' | 'approved' | 'active' | 'completed';
 

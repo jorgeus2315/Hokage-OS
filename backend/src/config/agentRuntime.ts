@@ -5,6 +5,7 @@ import { createDecision } from '../services/decisionService.js';
 import { createMessage } from '../services/messageService.js';
 import { createContent } from '../services/contentService.js';
 import { createMarket } from '../services/marketService.js';
+import { closeMilestoneOnResult } from '../services/objectiveService.js';
 import { get, run, all } from '../db/init.js';
 
 // ═══════════════════════════════════════════════════════
@@ -464,27 +465,7 @@ INSTRUCCIONES DE FORMATO:
 
       // Cerrar milestone si este work_item estaba vinculado a uno
       if (item.milestone_id) {
-        await run(
-          `UPDATE obj_milestones SET status = ?, completed_at = ? WHERE id = ?`,
-          [result.ok ? 'done' : 'blocked', result.ok ? nowIso() : null, item.milestone_id]
-        );
-
-        // Comprobar si todos los milestones del plan están terminados
-        const milestone = await get<{ plan_id: number; objective_id: number }>(
-          'SELECT plan_id, objective_id FROM obj_milestones WHERE id = ?', [item.milestone_id]
-        );
-        if (milestone) {
-          const remaining = await get<{ count: number }>(
-            `SELECT COUNT(*) as count FROM obj_milestones WHERE plan_id = ? AND status NOT IN ('done','skipped')`,
-            [milestone.plan_id]
-          );
-          if (remaining && remaining.count === 0) {
-            await run(`UPDATE obj_plans SET status = 'completed' WHERE id = ?`, [milestone.plan_id]);
-            await run(`UPDATE objectives SET status = 'achieved' WHERE id = ?`, [milestone.objective_id]);
-            bus.publish({ type: 'objective.achieved', from: 'Hokage', payload: { objectiveId: milestone.objective_id } });
-            console.log(`[GOAL] Objetivo ${milestone.objective_id} COMPLETADO`);
-          }
-        }
+        await closeMilestoneOnResult(item.milestone_id, result.ok);
       }
     }
   }
