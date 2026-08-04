@@ -15,43 +15,6 @@ export interface AgentCreatePayload {
   model?: string;
 }
 
-export interface Business {
-  id: number;
-  name: string;
-  channel: string;
-  category: string | null;
-  status: string;
-  target_revenue: number;
-  current_revenue: number;
-  created_at: string;
-}
-
-export interface BusinessCreatePayload {
-  name: string;
-  channel?: string;
-  category?: string | null;
-  target_revenue?: number | null;
-}
-
-export interface Product {
-  id: number;
-  business_id: number;
-  title: string;
-  price: number;
-  stock: number;
-  status: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface ProductCreatePayload {
-  business_id: number;
-  title: string;
-  price: number;
-  stock?: number;
-  status?: string;
-}
-
 export interface Decision {
   id: number;
   agent_id: number | null;
@@ -135,24 +98,6 @@ export interface MarketCreatePayload {
   source?: string;
   score?: number | null;
   payload?: string;
-}
-
-export interface FinanceItem {
-  id: number;
-  business_id: number | null;
-  direction: string;
-  amount: number;
-  currency: string;
-  source: string | null;
-  created_at: string;
-}
-
-export interface FinanceCreatePayload {
-  business_id?: number | null;
-  direction?: string;
-  amount: number;
-  currency?: string;
-  source?: string | null;
 }
 
 export interface Department {

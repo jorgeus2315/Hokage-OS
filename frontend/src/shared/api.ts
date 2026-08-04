@@ -40,7 +40,6 @@ async function req<T>(path: string, init?: RequestInit): Promise<T | null> {
 
 export const api = {
   agents: () => req<import('./types').Agent[]>('/agents'),
-  businesses: () => req<import('./types').Business[]>('/businesses'),
   decisions: () => req<import('./types').Decision[]>('/decisions'),
   agentRuns: (agentId?: number) => req<import('./types').AgentRun[]>(agentId ? `/agent-runs?agent_id=${agentId}` : '/agent-runs'),
   messages: () => req<import('./types').CommMsg[]>('/messages'),

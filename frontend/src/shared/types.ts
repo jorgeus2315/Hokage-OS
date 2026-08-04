@@ -7,16 +7,6 @@ export interface Agent {
   created_at: string;
 }
 
-export interface Business {
-  id: number;
-  name: string;
-  channel: string;
-  category: string | null;
-  status: string;
-  target_revenue: number;
-  current_revenue: number;
-}
-
 export type DecisionCategory = 'FINANCIAL' | 'LEGAL' | 'PUBLICATION' | 'STRATEGIC' | 'TECHNICAL' | 'OPERATIONAL';
 
 export interface Decision {

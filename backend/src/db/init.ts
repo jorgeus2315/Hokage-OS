@@ -168,29 +168,6 @@ async function seedAutomations(): Promise<void> {
   console.log('[DB] Automations sembradas: Tendencia→Escritor, Contenido→Tráfico');
 }
 
-export function addEvent(
-  type: string,
-  source: string,
-  payload: Record<string, any>,
-  entityId?: number,
-  correlationId?: string
-): Promise<{ lastID: number }> {
-  const id = `evt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  const timestamp = new Date().toISOString();
-  return run(
-    `INSERT INTO events (id, type, source, entity_id, payload, timestamp, correlation_id) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [
-      id,
-      type,
-      source,
-      entityId ?? null,
-      JSON.stringify(payload),
-      timestamp,
-      correlationId ?? null,
-    ]
-  );
-}
-
 export async function initSchema(): Promise<void> {
   await run(`PRAGMA journal_mode = WAL;`);
   await run(`PRAGMA foreign_keys = ON;`);

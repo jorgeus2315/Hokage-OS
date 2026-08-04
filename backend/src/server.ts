@@ -37,7 +37,6 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { run, get, all, initSchema } from './db/init.js';
 import type { Department, DepartmentUpdatePayload } from './types/index.js';
 import { listAgents, createAgent } from './services/agentService.js';
-import { createBusiness, listBusinesses } from './services/businessService.js';
 import { approveDecision, rejectDecision, createDecision, listDecisions } from './services/decisionService.js';
 import { createMessage, listMessages } from './services/messageService.js';
 import { askAgent, callAIJson } from './services/aiService.js';
@@ -45,7 +44,6 @@ import { listContent } from './services/contentService.js';
 import { listMarket } from './services/marketService.js';
 import { listExecRuns } from './services/hermesService.js';
 import { resolveDecisionApproval, resolveDecisionRejection } from './services/decisionResolvers.js';
-import progressRouter from './routes/progress.js';
 import { runtime } from './config/agentRuntime.js';
 import bus from './config/eventBus.js';
 
@@ -232,19 +230,14 @@ app.post('/api/agents/:id/run', async (req, res) => {
   } catch (e: any) { sendError(res, 500, e, 'Error ejecutando agente'); }
 });
 
-// ═══════════ NEGOCIOS ═══════════
-app.get('/api/businesses', async (_req, res) => {
+app.get('/api/agent-runs', async (req, res) => {
   try {
-    const businesses = await listBusinesses();
-    res.json({ ok: true, data: businesses });
-  } catch (e: any) { sendError(res, 500, e, 'Error listando negocios'); }
-});
-
-app.post('/api/businesses', requireAdmin, async (req, res) => {
-  try {
-    const business = await createBusiness(req.body);
-    res.status(201).json({ ok: true, data: business });
-  } catch (e: any) { sendError(res, 400, e, 'Error creando negocio'); }
+    const agentId = req.query.agent_id ? Number(req.query.agent_id) : undefined;
+    const runs = agentId
+      ? await all('SELECT * FROM agent_runs WHERE agent_id = ? ORDER BY started_at DESC', [agentId])
+      : await all('SELECT * FROM agent_runs ORDER BY started_at DESC');
+    res.json({ ok: true, data: runs });
+  } catch (e: any) { sendError(res, 500, e, 'Error listando agent_runs'); }
 });
 
 // ═══════════ DECISIONES ═══════════
@@ -850,9 +843,6 @@ app.put('/api/config/master-prompt', requireAdmin, async (req, res) => {
     res.json({ ok: true });
   } catch (e: any) { sendError(res, 500, e, 'Error actualizando master prompt'); }
 });
-
-// ═══════════ PROGRESS / ACHIEVEMENTS ═══════════
-app.use('/api', progressRouter);
 
 // ═══════════ ARRANQUE ═══════════
 // ═══════════ ARRANQUE ═══════════
