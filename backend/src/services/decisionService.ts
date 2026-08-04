@@ -23,6 +23,16 @@ export async function getDecision(id: number): Promise<Decision | undefined> {
 }
 
 export async function createDecision(payload: DecisionCreatePayload): Promise<Decision> {
+  // Deduplicación: si el mismo agente ya tiene una decisión idéntica propuesta
+  // y sin revisar, no crear otra — evita que una tarea recurrente sature Alertas.
+  if (payload.agent_id != null) {
+    const duplicate = await get<Decision>(
+      `${SELECT} WHERE agent_id = ? AND status = 'proposed' AND lower(trim(title)) = lower(trim(?)) LIMIT 1`,
+      [payload.agent_id, payload.title]
+    );
+    if (duplicate) return duplicate;
+  }
+
   const category = inferCategory(payload.title, payload.amount);
   const result = await run(
     'INSERT INTO decisions (agent_id, entity_type, entity_id, title, description, reasoning, amount, risk_level, status, category) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
