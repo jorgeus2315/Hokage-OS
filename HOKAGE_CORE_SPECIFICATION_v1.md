@@ -714,7 +714,7 @@ Una integración nueva declara su `Capability` + `SecretDefinition` junto a su `
 
 ## 12. Configuración inicial: Wizard, Founder Profile, System Profile
 
-🆕 **DECISIÓN NUEVA** — ninguno de estos tres conceptos existía antes de este documento. Se definen aquí por primera vez, y su definición es la pieza que faltaba para poder diseñar el Wizard en una sesión futura.
+Ninguno de estos tres conceptos existía antes de este documento. §12.2 (Founder Profile) ya tiene arquitectura completa (🔒 v2, ver abajo); §12.1 y §12.3 quedan en 🆕, definidos pero sin el mismo nivel de detalle todavía — candidatos de una fase de diseño posterior.
 
 ### 12.1 System Profile
 
@@ -724,9 +724,39 @@ No es una tabla nueva — es una **vista de solo lectura sobre datos que ya exis
 
 ### 12.2 Founder Profile
 
-Datos estructurados sobre Jorge que Hokage (el agente CEO) usa para personalizar su razonamiento estratégico — objetivos personales, tolerancia al riesgo, estilo de comunicación preferido, lecciones de negocios anteriores. Es la contraparte "humana" del Memory System (§6): mientras `memory_entries` guarda hechos sobre *negocios*, el Founder Profile guarda hechos sobre *el fundador*.
+🔒 **CONGELADO — v2, arquitectura completa lista para implementar.** Elegido como segundo sistema de la fase de diseño (ver §16, metodología diseñar→revisar→congelar). La v1 de esta sección (un párrafo) quedaba corta del mismo rigor que ya tiene Memory System v3 (§6) — se completa aquí: schema, mecanismo de escritura, alcance de lectura, y una corrección de scope real encontrada al diseñarlo en detalle.
 
-**v1: una tabla simple `founder_profile` (key-value, igual patrón que `agent_memory`, sin necesidad de nada más sofisticado)**, poblada la primera vez que el Wizard de primer arranque hace sus preguntas ("¿cuál es tu objetivo económico?", "¿cuánto riesgo estás dispuesto a asumir?"), y ampliable después desde una conversación normal con Hokage — no hace falta un formulario dedicado más allá del arranque inicial.
+**Qué es:** datos estructurados y **estables** sobre Jorge que Hokage (el agente `ceo`) usa para personalizar su razonamiento estratégico — tolerancia al riesgo, estilo de comunicación preferido, objetivo económico actual. Es la contraparte "humana" del Memory System (§6): mientras `memory_entries` guarda hechos sobre *negocios*, el Founder Profile guarda rasgos sobre *el fundador*.
+
+**Corrección de scope, encontrada al diseñar (no estaba en la v1):** "lecciones de negocios anteriores" — mencionado en la v1 como parte del Founder Profile — **no vive aquí**. Un rasgo estable ("mi tolerancia al riesgo es media") y una lección puntual ("en 2023 el negocio X fracasó porque Y") son cosas de naturaleza distinta: la primera tiene *un* valor vigente que se sobrescribe, la segunda es narrativa que se acumula sin límite. Eso último ya tiene un mecanismo — es exactamente lo que `memory_entries` (§6) ya modela con `category='learning'`, `venture_id=NULL` (memoria de instalación, no de un negocio concreto), `source_agent_id=NULL` (lo escribió Jorge, no un agente). Inventar un segundo almacén para el mismo tipo de hecho habría repetido el error que ya se corrigió una vez en Memory System v3 (dos semánticas de escritura mezcladas en un solo sitio). Founder Profile se queda estrictamente para **rasgos con un único valor vigente**, no para historia.
+
+**Schema:**
+
+```sql
+CREATE TABLE founder_profile (
+  key         TEXT PRIMARY KEY,
+  value       TEXT NOT NULL,
+  updated_at  TEXT DEFAULT (datetime('now'))
+);
+```
+
+Mismo patrón que `agent_memory` (clave-valor, upsert), pero sin `agent_id` — no hace falta, hay un único fundador (consistente con el modelo single-owner ya congelado en §11.1). **Vocabulario de claves sugerido, no cerrado por un enum** (permite añadir rasgos nuevos sin migración): `risk_tolerance`, `communication_style`, `economic_goal`, `founder_name`. Igual que `memory.remember` (§6), la clave se valida por formato (snake_case) en la tool, no por una lista fija — añadir un rasgo nuevo es escribir una clave nueva, no tocar código.
+
+**Escritura — tool nueva, no una reutilización de otra:** `founder.remember({key, value})`. Mismo principio ya aplicado dos veces en esta fase de diseño (§2, §6): una tool, un propósito. No reutiliza `memory.remember` (semántica de log, no de rasgo estable) ni `memory.write` (memoria privada por agente, no del fundador). Upsert por `key` (`ON CONFLICT(key) DO UPDATE`), mismo patrón exacto que `writeAgentMemory()`.
+
+- **Disponible solo al rol `ceo`** — es el único rol cuyo prompt lee este perfil (ver Lectura, abajo); dar la tool a un rol que nunca la consulta crea una escritura huérfana. Si en el futuro otro rol tiene una necesidad concreta de leer/escribir esto, se reabre esta decisión con esa necesidad real delante — no antes.
+- Cumple la regla permanente fijada al cerrar la migración de §2: toda escritura estructurada nueva nace en Tool Calling, nunca en un marcador ni en un mecanismo alternativo.
+
+**Lectura:** en `aiService.ts::askAgent()`, un bloque `[PERFIL DEL FUNDADOR]` — **solo cuando `agentRow?.role === 'ceo'`**, no en los otros 7 roles (coste de tokens innecesario para agentes cuyo prompt nunca lo usa, mismo criterio de disciplina de §10). Formato igual que `[LO QUE SÉ]`: `SELECT key, value FROM founder_profile ORDER BY key` (tabla pequeña por naturaleza — un puñado de rasgos, nunca miles de filas — no hace falta `LIMIT` ni orden por recencia).
+
+**Tres caminos de escritura, uno solo de verdad (el resto llaman al mismo):**
+1. **Conversación normal con Hokage** — la tool `founder.remember`, disponible desde ya, sin depender de nada más.
+2. **API directa** — `GET /api/founder-profile` / `PUT /api/founder-profile/:key` (`requireAdmin`), para un futuro panel de ajustes donde Jorge edite sus rasgos a mano sin pasar por una conversación. Llama al mismo servicio (`setFounderProfile()`) que usa la tool — nunca hay dos implementaciones del upsert.
+3. **Fresh Install Wizard** (§12.3, no diseñado todavía en detalle) — cuando exista, sus preguntas de arranque llaman al mismo `setFounderProfile()`. **Founder Profile no depende del Wizard para ser útil** — el camino 1 ya funciona el día que se implemente esta sección, con o sin Wizard. Se corrige así la v1, que ataba la primera población al Wizard sin necesidad real de esa dependencia.
+
+### Consecuencias a 2-3 años
+
+Rasgos estables sobre Jorge se acumulan desde la primera conversación, no desde que exista un Wizard — igual que Memory System v3 evita "memoria vacía que empezó tarde" para negocios, esto evita lo mismo para el fundador. Si algún día Founder Profile necesita historizar cambios (saber que la tolerancia al riesgo de Jorge cambió de 'media' a 'baja' en una fecha concreta, no solo el valor actual), eso es una razón real para versionar la tabla — no se construye ahora sin esa necesidad concreta delante.
 
 ### 12.3 Setup Wizard — alcance definitivo
 
@@ -852,11 +882,15 @@ Ver §8.4 — es composición de lo anterior (canal + Tool + Automations por def
 
 ### Congelado sin más discusión (🔒)
 
-Arquitectura en capas del Core · Runtime/Scheduler/Event Bus (contrastado contra investigación previa del proyecto — R1-R4 ya implementadas) · Contrato de Tool como sistema de plugins · Diseño de plugins visuales del mapa · Modelo de economía (agent_costs/agent_budgets/ventures) · VPS y despliegue · **Modelo multi-venture, implementado y verificado** (§3) · **Sistema de permisos single-owner sin hardcode** (§11.1, implementado) · **Arquitectura de gestión de secretos v2** (§11.2 — `SecretProvider`, capacidades, scope por venture) · **Hermes y Claude como los dos motores del ecosistema v2** (§9 — Hermes personifica el Runtime y coordina permanentemente; Claude como consulta profunda estructurada vía Decision, no API automática) · **Registro de paneles especializados por sala** (§13 — reabierto tras contrastar contra VISION.md completo) · **Migración de marcadores de texto a Tool Calling, implementada** (§2 — MEMORIA/TENDENCIA/CONTENIDO/DECISION son Tools reales) · **Memory System v3, arquitectura completa lista para implementar** (§6 — elegido como siguiente sistema tras comparar contra Founder Profile/Secret Management/Hermes v2; dos tools distintas para dos semánticas de escritura, `venture_id` estructural como prerrequisito cerrado, puntos de enganche verificados contra código real).
+Arquitectura en capas del Core · Runtime/Scheduler/Event Bus (contrastado contra investigación previa del proyecto — R1-R4 ya implementadas) · Contrato de Tool como sistema de plugins · Diseño de plugins visuales del mapa · Modelo de economía (agent_costs/agent_budgets/ventures) · VPS y despliegue · **Modelo multi-venture, implementado y verificado** (§3) · **Sistema de permisos single-owner sin hardcode** (§11.1, implementado) · **Arquitectura de gestión de secretos v2** (§11.2 — `SecretProvider`, capacidades, scope por venture) · **Hermes y Claude como los dos motores del ecosistema v2** (§9 — Hermes personifica el Runtime y coordina permanentemente; Claude como consulta profunda estructurada vía Decision, no API automática) · **Registro de paneles especializados por sala** (§13 — reabierto tras contrastar contra VISION.md completo) · **Migración de marcadores de texto a Tool Calling, implementada** (§2 — MEMORIA/TENDENCIA/CONTENIDO/DECISION son Tools reales) · **Memory System v3, arquitectura completa lista para implementar** (§6 — elegido como siguiente sistema tras comparar contra Founder Profile/Secret Management/Hermes v2; dos tools distintas para dos semánticas de escritura, `venture_id` estructural como prerrequisito cerrado, puntos de enganche verificados contra código real) · **Founder Profile v2, arquitectura completa lista para implementar** (§12.2 — segundo sistema de la fase de diseño; tool `founder.remember` dedicada, lectura acotada al rol `ceo`, "lecciones de negocios anteriores" redirigidas a `memory_entries` en vez de duplicar almacenamiento).
+
+### Metodología de la fase de diseño (fijada por Jorge, gobierna el resto de esta ronda y las siguientes)
+
+Tras cerrar la migración de §2, Jorge fijó un modo de trabajo explícito para lo que queda del roadmap: **diseñar completamente un sistema → revisarlo críticamente → congelarlo → pasar al siguiente**, manteniendo siempre distinción clara entre "sistema diseñado" y "sistema implementado" — sin escribir código durante esta fase. Sistemas objetivo antes de cerrarla: Memory System (✅), Founder Profile (✅), Secret Management (✅, ya congelado en una ronda anterior), Hermes v2 (✅, ya congelado), Plugin System, Wizard. **Cuando los 5-6 estén diseñados, la fase termina** — a partir de ahí el modo de trabajo por defecto es solo construir, reabriendo un diseño únicamente ante un problema arquitectónico crítico real, no por mejora incremental. Razón explícita de Jorge: evitar el bucle de "mejoramos otra vez el diseño" que nunca termina en producto.
 
 ### Decidido aquí por primera vez (🆕)
 
-Definición de Business Module · Postura sobre MCP (no adoptar en v1) · Founder Profile y System Profile · Alcance definitivo del Setup Wizard (Fresh Install + New Venture) · Arquitectura completa de Secret Management reforzada con los 3 principios de crecimiento pedidos.
+Definición de Business Module · Postura sobre MCP (no adoptar en v1) · System Profile (§12.1) · Alcance definitivo del Setup Wizard (§12.3, definido pero sin el mismo nivel de detalle que Memory System/Founder Profile todavía — candidato de esta fase de diseño).
 
 ### Pausa estratégica de esta ronda — qué cambió y por qué
 
