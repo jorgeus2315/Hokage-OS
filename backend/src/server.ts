@@ -43,8 +43,8 @@ import { createMessage, listMessages } from './services/messageService.js';
 import { askAgent, callAIJson } from './services/aiService.js';
 import { listContent } from './services/contentService.js';
 import { listMarket } from './services/marketService.js';
-import { markObjectiveAchieved } from './services/objectiveService.js';
-import { runApprovedExec, rejectExec, listExecRuns } from './services/hermesService.js';
+import { listExecRuns } from './services/hermesService.js';
+import { resolveDecisionApproval, resolveDecisionRejection } from './services/decisionResolvers.js';
 import progressRouter from './routes/progress.js';
 import { runtime } from './config/agentRuntime.js';
 import bus from './config/eventBus.js';
@@ -267,12 +267,7 @@ app.put('/api/decisions/:id/approve', requireAdmin, async (req, res) => {
   try {
     const id = Number(req.params.id);
     const decision = await approveDecision(id, 'Jorge');
-    if (decision.entity_type === 'objective' && decision.entity_id != null) {
-      await markObjectiveAchieved(decision.entity_id);
-    }
-    if (decision.entity_type === 'system_exec' && decision.entity_id != null) {
-      runApprovedExec(decision.entity_id).catch((err) => console.error('[HERMES] Error ejecutando comando:', err.message));
-    }
+    await resolveDecisionApproval(decision);
     bus.publish({ type: 'decision.approved', from: 'Jorge', payload: { decisionId: id } });
     broadcast('decision.approved', { id });
     res.json({ ok: true });
@@ -283,9 +278,7 @@ app.put('/api/decisions/:id/reject', requireAdmin, async (req, res) => {
   try {
     const id = Number(req.params.id);
     const decision = await rejectDecision(id, 'Jorge');
-    if (decision.entity_type === 'system_exec' && decision.entity_id != null) {
-      await rejectExec(decision.entity_id);
-    }
+    await resolveDecisionRejection(decision);
     bus.publish({ type: 'decision.rejected', from: 'Jorge', payload: { decisionId: id } });
     broadcast('decision.rejected', { id });
     res.json({ ok: true });

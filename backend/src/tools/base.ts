@@ -27,6 +27,10 @@ export interface Tool<I = unknown, O = unknown> {
   description: string;
   category: string;
   status: ToolStatus;
+  // permissions/requiredApproval son metadata informativa — no hay ninguna capa
+  // de plataforma que los haga cumplir (registry.execute() los ignora). Si un
+  // tool necesita una garantía real de aprobación, debe implementarla dentro de
+  // su propio execute() — ver SystemExecTool como referencia.
   permissions: ToolPermission;
   requiredApproval: boolean;
   inputSchema: {
