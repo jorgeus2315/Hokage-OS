@@ -110,6 +110,22 @@ Un único `AgentRuntime` (`config/agentRuntime.ts`) con un tick de **poll cada 1
 
 **Consecuencia a 2-3 años:** un poll de 10s con hasta 5 asignaciones y 3 ejecuciones por tick tiene techo natural alrededor de un par de docenas de agentes activos simultáneos antes de que la latencia de cola se note. Ese es el límite conocido y aceptado para v1 — no se over-diseña un scheduler distribuido que hoy no hace falta.
 
+### Contraste contra investigación previa del proyecto (nuevo en esta ronda)
+
+`docs/research/world-engine/prison-architect.md` y `rimworld.md` son investigación real, ya existente en el repo, nunca cruzada contra esta sección hasta ahora — un fallo de la v1 de este documento, no una omisión consciente. Contrastadas contra el código real:
+
+| Recomendación investigada | Estado |
+|---|---|
+| R1 — evento genera work item directamente | ✅ Ya implementado (`stage1_drainBusEvents`) |
+| R2 — locking In-Progress con TTL | ✅ Ya implementado (`locked_at`/`ttl_minutes`) |
+| R3 — prioridades explícitas en cola | ✅ Ya implementado (`work_items.priority`) |
+| R4 — dos umbrales de salud del agente | ✅ Ya implementado (`agent_budgets` 80%/100%) |
+| R5 — verificar que el agente tiene las tools antes de asignar | ❌ No implementado — gap real, pequeño, no bloqueante |
+| R6 — aging de work items (starvation) | Correctamente diferido — "cuando la cola tenga volumen real" |
+| R7 — overlays de datos activables en el mapa | ❌ No implementado — ver §13, ahora sí incorporado al documento |
+
+R1-R4 confirman que el Runtime ya sigue, sin que se supiera explícitamente hasta hoy, patrones investigados con rigor. R5 y R7 quedan anotadas como deuda de diseño conocida, no crítica.
+
 ### Sistema de eventos (Event Bus)
 
 **Contrato inquebrantable, ya eliminado el único punto que lo violaba (`addEvent()`, código muerto borrado esta sesión):** el bus (`HokageBus extends EventEmitter`) es **estrictamente en memoria**, con un `history[]` de las últimas 100 entradas. Nunca escribe a SQL. Si el proceso reinicia, el historial de eventos se pierde — eso es aceptado por diseño (la verdad de fondo vive en las tablas de dominio: `decisions`, `work_items`, `messages`, no en el log de eventos).
@@ -177,7 +193,7 @@ Si se congela A y se implementan los 3 puntos de arriba: el Wizard de "nuevo neg
 
 ### Qué es un agente hoy (verificado)
 
-Una fila en `agents` (id, name, role, status, model, venture_id — sin usar, capabilities — sin usar) + una fila activa en `agent_prompts` +, opcionalmente, una fila en `agent_schedules` si su rol está en `AUTONOMOUS_TASKS`. 8 agentes reales hoy: ceo, investigador, contenido, trafico, finanzas, operaciones, soporte, hermes (pausado).
+Una fila en `agents` (id, name, role, status, model, venture_id — sin usar, capabilities — sin usar) + una fila activa en `agent_prompts` +, opcionalmente, una fila en `agent_schedules` si su rol está en `AUTONOMOUS_TASKS`. 8 agentes reales hoy: ceo, investigador, contenido, trafico, finanzas, operaciones, soporte, hermes (pausado en BD todavía — §9.1 especifica su reactivación como coordinador permanente, pendiente de implementar).
 
 ### La decisión que ya está tomada, y su coste
 
@@ -211,33 +227,48 @@ El Goal System (`objectives` → `obj_plans` → `obj_milestones` → `work_item
 
 ## 6. Knowledge System y Memoria
 
-🆕 **DECISIÓN NUEVA** — no existía ningún concepto de "Knowledge System" antes de este documento. Solo existe `agent_memory`: pares clave-valor por agente (máx sin límite duro hoy, aunque `ARCHITECTURE.md` menciona 50 como límite deseado — no implementado), con `UNIQUE(agent_id, key)`.
+🆕 **DECISIÓN NUEVA — v2, revierte "no construir en v1".** La v1 de esta sección diferían construir la memoria compartida hasta tener un segundo venture con qué comparar. Jorge cuestionó esto directamente y dio una definición concreta y más rica que mi boceto original: *"No memoria de chat. Memoria empresarial. Debe recordar: decisiones, errores, intentos, investigaciones, resultados, aprendizajes, contexto."* Eso ya existe como necesidad real desde el primer venture — la razón para diferirlo (esperar un segundo venture) ya no aplica. Se revierte aquí formalmente.
 
-### Por qué importa
+### Por qué importa (sin cambios respecto a v1)
 
-`CLAUDE.md` pone como ejemplo explícito de lo que SÍ es prioritario: "memoria semántica que permite a Hokage recordar por qué fracasó algo hace 6 meses." Eso no existe hoy — `agent_memory` es memoria *privada* de cada agente, sin capacidad de búsqueda semántica ni de compartirse entre agentes.
+`CLAUDE.md`: "memoria semántica que permite a Hokage recordar por qué fracasó algo hace 6 meses." `agent_memory` (lo único que existe hoy) es privada por agente — no sirve para esto.
 
-### Alternativas
+### Idea central: captura automática, no solo agentes que se acuerdan de escribir
 
-**A. Mantener memoria puramente por-agente, clave-valor** (lo que hay hoy)
-- Ventajas: ya funciona, cero infraestructura nueva, coste cero.
-- Inconvenientes: el Explorador no puede beneficiarse de algo que el Tesorero aprendió. No hay noción de "por qué fracasó X" — solo hechos sueltos, sin razonamiento ni búsqueda por similitud.
+Pedirle a un agente que "recuerde escribir en la memoria" es frágil — se olvida. La mayoría de las 7 categorías que pide Jorge ya son un efecto colateral de datos que el sistema **ya genera**: una decisión rechazada ya tiene `reasoning`; un objetivo abandonado ya es un resultado; un `work_item` cancelado tras 3 reintentos ya es un error. La memoria empresarial se construye enganchando esos momentos, no inventando un flujo nuevo de "agente escribe recuerdo".
 
-**B. Base de conocimiento compartida con embeddings (vector store)**
-- Ventajas: búsqueda semántica real, memoria compartida entre todos los agentes y ventures, exactamente lo que describe la filosofía.
-- Inconvenientes: infraestructura nueva completa (embeddings, un vector store — SQLite no lo hace nativamente sin una extensión), coste de generar embeddings en cada escritura, y sobre-ingeniería clara para 8 agentes y 1 venture.
+### Diseño (schema, no implementado todavía — solo especificado en esta ronda)
 
-**C. Híbrido — `agent_memory` se queda como contexto de trabajo privado por agente; se añade una tabla nueva `knowledge_entries` (venture-scoped, no agent-scoped) para hechos que cualquier agente debería poder consultar, con búsqueda por palabra clave (SQLite FTS5) en vez de embeddings**
-- Ventajas: resuelve el caso real ("por qué fracasó algo hace 6 meses" es un hecho del *negocio*, no de un agente concreto) sin la complejidad de un vector store. FTS5 es SQLite nativo, cero dependencias nuevas.
-- Inconvenientes: búsqueda por palabra clave es más torpe que semántica — "fracasó" no encuentra "no funcionó" a menos que ambos términos estén indexados.
+```sql
+CREATE TABLE memory_entries (
+  id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+  venture_id           INTEGER REFERENCES ventures(id),  -- NULL = memoria de instalación
+  category             TEXT NOT NULL,  -- decision|error|attempt|research|result|learning|context
+  title                TEXT NOT NULL,
+  content              TEXT NOT NULL,
+  source_agent_id      INTEGER REFERENCES agents(id),    -- NULL si lo escribió el sistema o Jorge
+  related_entity_type  TEXT,   -- 'decision' | 'objective' | 'work_item' | 'claude_consultation'
+  related_entity_id    INTEGER,
+  created_at           TEXT DEFAULT (datetime('now'))
+);
+CREATE VIRTUAL TABLE memory_entries_fts USING fts5(title, content, content=memory_entries);
+```
 
-### Decisión para Hokage OS
+Búsqueda por palabra clave (FTS5, nativo de SQLite, cero dependencias nuevas) — se descarta explícitamente un vector store por las mismas razones que la v1 ya daba: sobre-ingeniería para el volumen real de hoy. Esa parte de la decisión original **no cambia**, solo cambia el "cuándo empezar".
 
-**Elegido: C, y solo cuando exista un segundo venture o una segunda fuente real de "fracasos" que registrar.** Hoy, con un venture y sin integración de ventas real, no hay todavía hechos de negocio que valga la pena centralizar — construir `knowledge_entries` ahora sería anticipar un problema que no existe todavía. **No se construye en v1.** Se congela la decisión de *forma* (C, no B) para que cuando llegue el momento no haya que rediscutir vector-store-sí-o-no.
+**Captura automática** (hooks en código que ya existe):
+- Decisión aprobada/rechazada (`decisionResolvers.ts`) → `category='decision'`, con el `reasoning` ya guardado.
+- Objetivo logrado/abandonado (`objectiveService.ts`) → `category='result'`.
+- `work_item` cancelado tras 3 reintentos (`stage4_checkTTLs`) → `category='error'`.
+- Respuesta de una consulta a Claude (§9.2) → `category='learning'`, `related_entity_type='claude_consultation'`.
+
+**Captura activa** — nuevo marcador junto al `[MEMORIA: clave=valor]` ya existente (que sigue escribiendo en `agent_memory`, privado): `[APRENDIZAJE: categoria | título | contenido]` para investigación/aprendizaje/contexto que un agente descubre y no queda capturado por ningún cambio de estado.
+
+**Lectura:** en `aiService.ts::askAgent()`, junto al bloque `[LO QUE SÉ]` ya existente (memoria privada), un segundo bloque `[MEMORIA DEL NEGOCIO]` con las entradas más relevantes de `memory_entries` para el `venture_id` en curso.
 
 ### Consecuencias a 2-3 años
 
-Si Hokage gestiona 3+ negocios con historial real de decisiones y resultados, la ausencia de una capa de conocimiento compartido significa que Hokage (el CEO) no puede razonar "esto ya lo intentamos con el venture anterior y falló por X" — pierde exactamente la ventaja competitiva que `CLAUDE.md` promete. Esa es la señal de disparo para construir C.
+Con captura automática desde ya, el historial de "qué se intentó y por qué falló" empieza a acumularse desde el primer venture, no desde el segundo — cuando llegue un segundo o tercer negocio, Hokage ya tiene años de contexto real que consultar, no una memoria vacía que empezó tarde.
 
 ---
 
@@ -308,27 +339,49 @@ Hokage OS (el runtime de agentes) no usa MCP hoy — `aiService.ts` habla direct
 
 ---
 
-## 9. Hermes — papel exacto
+## 9. Los dos motores: Hermes y Claude
 
-🔒 **CONGELADO**, ratificando y formalizando la decisión de esta sesión.
+🔒 **CONGELADO — v2.** Reemplaza la versión anterior de esta sección. Jorge cuestionó explícitamente el diseño original de Hermes por no coincidir con la visión real del producto ("Hermes y Claude deben ser los dos motores principales del ecosistema") — no era una reactivación pendiente, era una decisión mal dimensionada desde el principio. Se corrige aquí, con la razón documentada, no disimulada.
 
-### Definición oficial
+### 9.1 Hermes — de utilidad estrecha a coordinador permanente
 
-Hermes es el **único agente del sistema con acceso a ejecución de comandos de sistema** (`system.exec`). No es un agente de negocio (no atiende clientes, no genera contenido, no analiza mercado) — es infraestructura interna, tratada como un servicio de sistema con interfaz de agente.
+**Lo que estaba mal en la v1:** definí a Hermes como "el único agente con acceso a `system.exec`, infraestructura interna, sin caso de uso real" — y lo pausé. Eso confunde **una herramienta que Hermes tiene** con **lo que Hermes es**. Mientras tanto, el verdadero coordinador del ecosistema — el que ya asigna trabajo, vigila presupuestos, cierra el loop de decisiones — es `AgentRuntime`: una clase de TypeScript sin nombre, sin sala, sin voz, invisible para Jorge salvo como infraestructura. `VISION.md` pide una empresa que se sienta viva incluso desconectado; una clase anónima no puede hablar contigo sobre cómo va el día. Un agente con nombre, sí.
 
-**Regla dura que se congela aquí explícitamente, no estaba escrita en ningún sitio hasta ahora:**
+**Definición oficial v2:** Hermes es la **personificación del Runtime/Scheduler** — el proceso que ya corre 24/7 (§2), ahora con presencia real: nombre, sala, y capacidad de que Jorge le pregunte "¿cómo va todo?" y reciba un estado operativo de verdad, no una sala vacía con una terminal.
 
-> `system.exec` (o cualquier capacidad equivalente de ejecutar comandos reales en la máquina) **nunca se duplica en otro agente**. Toda necesidad de "tocar el sistema" — de cualquier agente, de cualquier automation, de cualquier plugin futuro — pasa por Hermes, exclusivamente. Nunca se le da esa capacidad directamente a Finanzas, a Operaciones, ni a ningún agente de negocio, por conveniente que parezca en el momento.
+- **Reactivado**, no pausado — `agents.status` vuelve a activo, `departments.active = 1` para su sala. El disparador que faltaba en la v1 (ver memoria `project-hermes-pausado`) ya existe: coordinar y reportar es un caso de uso real desde el primer día, independiente de si `system.exec` llega a usarse.
+- **Tarea autónoma nueva** (mismo patrón que los demás roles en `AUTONOMOUS_TASKS`, §2): cada ciclo, Hermes reporta a Ship Comms un resumen operativo real — work items procesados, decisiones pendientes, presupuesto consumido, agentes con errores recientes. Es la traducción conversacional de R7 (§2 — overlays de datos del mapa, investigado en `prison-architect.md`, nunca implementado): si el mapa todavía no muestra esas capas visualmente, Hermes ya puede **decirlas**.
+- **Tool nueva:** `system.status` — de solo lectura, sin aprobación (no ejecuta nada, solo agrega lo que `/api/runtime/status` y `/api/metrics/summary` ya calculan). Es lo que Hermes usa para responder con datos reales, no inventados, cuando Jorge le pregunta cómo va el sistema.
+- **`system.exec` se queda exactamente como estaba especificado** (§9.1 anterior, sin cambios): siempre pide aprobación, nunca se duplica en otro agente. Esa regla no dependía de que Hermes fuera estrecho o amplio — sigue siendo correcta tal cual.
+- **Su sala dedicada** (antes "Sala de Máquinas") es candidata natural al primer panel especializado por-sala de §13 — un panel de "Estado del Sistema" en vivo, no solo el historial de comandos que ya tenía.
 
-Motivo: es la única forma de mantener una única superficie de auditoría y un único punto donde la regla "siempre pide aprobación" se hace cumplir. Duplicarla en dos sitios es duplicar el riesgo de que uno de los dos se implemente peor.
+**Regla dura que sigue vigente sin cambios:** ninguna capacidad de ejecutar comandos reales se duplica en otro agente — pasa por Hermes exclusivamente, sea cual sea su alcance.
 
-### Estado actual
+### 9.2 Claude — motor de razonamiento profundo, no un agente más de la cola
 
-Pausado (`agents.status = 'paused'`, `departments.active = 0` para su sala) — construido y probado de extremo a extremo, sin caso de uso real todavía (ningún agente autónomo necesita hoy tocar el sistema de archivos; Jorge ya tiene terminal propia y a Claude Code). Se reactiva cuando exista un disparador real y concreto — ver memoria `project-hermes-pausado`.
+**Por qué no es lo mismo que el CEO/Hokage con Sonnet.** El agente `ceo` ya usa `claude-sonnet-4.5` (§4) para tareas estratégicas rutinarias, dentro del mismo ciclo de trabajo que cualquier otro agente. Lo que Jorge pide es distinto: razonamiento de **arquitectura, investigación y evolución del sistema** — exactamente el tipo de trabajo de esta conversación, no una tarea más en `work_items`.
+
+**Decisión de diseño — por qué no es un Tool normal:** un Tool que cualquier agente invoca dentro de su propio ciclo (como llamaría a `google.trends`) trataría "consultar a Claude" como una llamada de API más, con la misma falta de fricción que cualquier otra. Pero lo que describe Jorge — arquitectura, evolución del sistema — es exactamente el tipo de decisión que este documento entero insiste en que pase por aprobación humana antes de actuar. Automatizarlo del todo repetiría el error que motivó pausar mal a Hermes: construir algo amplio sin el freno correcto.
+
+**Elegido: consulta como Decision, no como Tool automático.**
+
+```
+Cualquier agente (o Hermes, al reportar) detecta que necesita razonamiento
+que su propio modelo no puede dar con confianza
+  → createDecision({ entity_type: 'claude_consultation', title, description: la pregunta })
+  → Jorge la ve en Alertas, con la pregunta completa
+  → Jorge trae la consulta a una sesión de Claude Code (como esta)
+  → la respuesta se registra de vuelta — memory_entries (§6) con category='learning',
+    entity_type/entity_id apuntando a la Decision original
+```
+
+No hay integración de API nueva que construir — Jorge ya es el puente, literalmente en esta misma conversación. Lo único que falta es el **hueco estructurado**: el tipo de Decision, y dónde aterriza la respuesta (Memory System, §6, ya diseñado, ahora con un consumidor real más).
+
+**Lo que esto NO es, explícitamente:** no es el backend llamando a la API de Claude de forma autónoma para modificar su propio código (eso existe técnicamente — Claude API / Agent SDK — pero es un sistema auto-modificable, una categoría de riesgo completamente distinta que merece su propia decisión dedicada, no colarse dentro de "añadir Claude"). Si algún día se quiere ese nivel de automatización, es una sección nueva de este documento, con su propio análisis de alternativas — no una extensión silenciosa de esta.
 
 ### Consecuencias a 2-3 años
 
-Si Hokage OS crece hacia automatización de despliegue, gestión de VPS, o tareas de mantenimiento delegadas a agentes (ver §11), Hermes es la pieza que ya está lista para eso — el trabajo de diseño de seguridad ya está hecho. La alternativa (cada agente con su propio acceso ad-hoc) es exactamente el tipo de deuda de seguridad silenciosa que este documento existe para prevenir.
+Hermes deja de ser una pieza "lista para cuando haga falta" y pasa a ser, desde ya, la voz operativa diaria del sistema — exactamente lo que separa un sistema operativo de un panel de agentes con un mapa bonito encima. Claude queda como el escalón de razonamiento que ningún modelo barato puede sustituir, sin haber construido una integración de API que hoy sería prematura y de riesgo desproporcionado al beneficio.
 
 ---
 
@@ -532,7 +585,7 @@ No es una tabla nueva — es una **vista de solo lectura sobre datos que ya exis
 
 ### 12.2 Founder Profile
 
-Datos estructurados sobre Jorge que Hokage (el agente CEO) usa para personalizar su razonamiento estratégico — objetivos personales, tolerancia al riesgo, estilo de comunicación preferido, lecciones de negocios anteriores. Es la contraparte "humana" del Knowledge System (§6): mientras `knowledge_entries` (cuando exista) guarda hechos sobre *negocios*, el Founder Profile guarda hechos sobre *el fundador*.
+Datos estructurados sobre Jorge que Hokage (el agente CEO) usa para personalizar su razonamiento estratégico — objetivos personales, tolerancia al riesgo, estilo de comunicación preferido, lecciones de negocios anteriores. Es la contraparte "humana" del Memory System (§6): mientras `memory_entries` guarda hechos sobre *negocios*, el Founder Profile guarda hechos sobre *el fundador*.
 
 **v1: una tabla simple `founder_profile` (key-value, igual patrón que `agent_memory`, sin necesidad de nada más sofisticado)**, poblada la primera vez que el Wizard de primer arranque hace sus preguntas ("¿cuál es tu objetivo económico?", "¿cuánto riesgo estás dispuesto a asumir?"), y ampliable después desde una conversación normal con Hokage — no hace falta un formulario dedicado más allá del arranque inicial.
 
@@ -551,25 +604,55 @@ Dado que este es exactamente el punto que quedó abierto antes de este documento
 
 ---
 
-## 13. Frontend: Mapa, HUD, Terminal, las 7 vistas
+## 13. Frontend: Mapa, HUD, Terminal, las 7 vistas, paneles por sala
 
-🔒 **CONGELADO** el diseño y la mayor parte de la implementación — verificado en vivo, no solo leído en docs.
+🔒 **CONGELADO — v2.** La v1 daba por cerrado el patrón de sala genérica sin haber contrastado contra `VISION.md` completo. Jorge lo cuestionó y confirmó reabrirlo — se corrige aquí.
 
 ### Mapa (World Engine)
 
-`FRONTEND_WORLD_ENGINE.md` describe 7 fases; el estado real verificado hoy **ya supera lo que el propio documento marca como "pendiente"**: Fase 2 (cámara libre: pan, zoom, minimapa) está implementada y confirmada en `WorldCanvas.tsx` pese a que el documento la marca como "siguiente". Fase 3 (departamentos como datos) está hecha. Fase 4 (agentes con estado visual real — `activityLevel`, `hasError`) está hecha. Fase 5 (eventos reales → animación) está parcialmente hecha (salas "respiran" según actividad real, hay ripples). **Acción de bajo coste, no bloqueante: actualizar la tabla de fases de ese documento a la realidad — está desactualizada, no incorrecta en su diseño.**
+`FRONTEND_WORLD_ENGINE.md` describe 7 fases; el estado real verificado **ya supera lo que el propio documento marca como "pendiente"**: Fase 2 (cámara libre: pan, zoom, minimapa), Fase 3 (departamentos como datos) y Fase 4 (agentes con estado visual real) están hechas. Fase 5 (eventos reales → animación) parcial. **Acción de bajo coste, no bloqueante: actualizar la tabla de fases de ese documento a la realidad.**
+
+**Hallazgo nuevo, de `docs/research/world-engine/prison-architect.md` (investigación real del proyecto, nunca antes cruzada contra este documento):** la recomendación **R7 — overlays de datos activables** (actividad, presupuesto, pipeline, salud, visualización directa del modelo de datos) está identificada como valiosa desde hace días y **nunca se incorporó aquí ni se construyó**. Es la forma más literal de "el mapa no debe ser decoración" — que Hermes (§9.1) ya empieza a resolver **hablado**, pero el mapa debería resolverlo **visualmente**. Se anota como el siguiente candidato real del World Engine, no bloqueante para lo que sigue, pero no se vuelve a perder de vista.
 
 ### HUD
 
-`GameHUD.tsx` — barra superior persistente. Tras la limpieza de esta sesión ya no muestra nada decorativo: agentes conectados, alertas (con pulso visual si hay una urgente — riesgo alto, importe, o +24h esperando), mensajes, coste de IA de hoy, objetivos activos, crew, acceso a configuración. Cada número mostrado tiene una consulta real detrás — ninguno es estático. Esta es la barra de invariantes: **cualquier tile nueva que se añada aquí debe pasar la misma regla — si el dato no cambia con el estado real del backend, no entra al HUD.**
+`GameHUD.tsx` — barra superior persistente, sin nada decorativo tras la limpieza de esta sesión: cada número mostrado tiene una consulta real detrás. **Regla que se congela: cualquier tile nueva debe pasar la misma prueba — si el dato no cambia con el estado real del backend, no entra al HUD.**
+
+### Salas: paneles especializados por tipo de departamento
+
+`VISION.md` (documento fundacional, releído completo en esta ronda) es explícito y mucho más ambicioso que lo que la v1 de este documento congeló: *"Sala Desarrollo: terminal real, logs reales, commits. Sala Diseño: Figma, versiones. Sala Tienda: catálogo real, pedidos reales, ventas. Todo debe ser funcional. No decorativo."* Cada sala es una experiencia distinta, no una skin sobre el mismo panel.
+
+Lo construido hasta ahora (`BuildingView` con 7 pestañas idénticas en todas las salas — Chat/Outputs/Feed/Stats/Pipeline/Alertas/Config) es honesto con el backend pero no es esa ambición. Se corrige con un **registro de paneles por tipo de sala**, mismo principio que ya rige Tools (§8.2) y Capabilities (§11.2) — extensión por datos/registro, nunca por `if` acumulados en `BuildingView.tsx`:
+
+```typescript
+// frontend/src/panels/roomPanels.ts
+interface RoomPanel {
+  departmentKey: string;                         // 'hermes' | 'banco' | 'tienda' | ...
+  label: string;
+  component: React.ComponentType<{ agent: Agent; building: Building }>;
+}
+```
+
+Las 7 pestañas genéricas **se quedan** como base común (chat, alertas y configuración son legítimamente iguales en cualquier sala) — los paneles del registro se **añaden** encima, nunca las sustituyen. `TerminalPanel.tsx` (hoy un caso especial hardcodeado en `BuildingView.tsx` solo para `role === 'hermes'`) es, sin saberlo, el primer ejemplo de este patrón — se generaliza al registro en vez de quedarse como la única excepción.
+
+**Regla dura, honesta, para no repetir el error de la capa de XP eliminada esta sesión:** un panel especializado **solo se construye cuando hay dato real detrás**. Verificado sala por sala:
+
+| Sala | Panel especializado | Estado |
+|---|---|---|
+| Hermes | Estado del sistema en vivo (§9.1 — cola, presupuesto, salud) | **Construible ya** — reutiliza `/api/runtime/status` + `/api/metrics/summary` |
+| Banco (Finanzas) | Presupuesto y coste real por venture | **Construible ya** — reutiliza `agent_costs`/`ventures`, ya expuesto |
+| Laboratorio (Explorador) | Tendencias detectadas | **Ya existe** — es `OutputsPanel` filtrado a `market` |
+| Estudio (Escritor) | Contenido creado | **Ya existe** — es `OutputsPanel` filtrado a `content` |
+| Tienda (Tráfico) | Catálogo, pedidos, ventas reales | **Bloqueado** — no hay integración de Etsy/Shopify (§8.1, Fase 6). No se construye una versión con datos falsos mientras tanto. |
+| Taller (Operaciones) | Salud de sistemas | Candidato, sin dato específico más allá de lo que ya cubre Stats — no urgente |
 
 ### Terminal
 
-Es la UI de Hermes (§9), no un concepto de frontend independiente — pausada junto con el agente. `TerminalPanel.tsx` ya construido: historial de comandos con estado, stdout/stderr, exit code.
+UI de Hermes (§9.1) — ya no pausada. `TerminalPanel.tsx` (historial de comandos, stdout/stderr, exit code) se mantiene y pasa a ser el primer panel registrado en `roomPanels.ts`, junto al nuevo panel de Estado del Sistema.
 
 ### Las 7 vistas
 
-Confirmado en el tipo `Screen` real: **Mapa, Crew, Alertas, Comms, Ventures, Objetivos, Config.** (`boot`, `menu` y `building` son pantallas de transición/detalle, no vistas de primer nivel — de ahí que sean 7 y no 10.) Cada una sigue el mismo patrón: overlay sobre el mapa, nunca una navegación que abandone el mundo vivo. **Regla que se congela: una vista nueva se añade a este mismo patrón de overlay — nunca como una ruta/pantalla separada del mapa.**
+Sin cambios: **Mapa, Crew, Alertas, Comms, Ventures, Objetivos, Config**, todas overlay sobre el mapa. **Regla que se congela: una vista nueva se añade a este mismo patrón — nunca como ruta separada.**
 
 ---
 
@@ -628,16 +711,25 @@ Ver §8.4 — es composición de lo anterior (canal + Tool + Automations por def
 
 ### Congelado sin más discusión (🔒)
 
-Arquitectura en capas del Core · Runtime/Scheduler/Event Bus · Contrato de Tool como sistema de plugins · Diseño de plugins visuales del mapa · Papel exclusivo de Hermes para ejecución de sistema · Modelo de economía (agent_costs/agent_budgets/ventures) · VPS y despliegue · Diseño del World Engine y las 7 vistas · **Modelo multi-venture, implementado y verificado** (§3) · **Sistema de permisos single-owner sin hardcode** (§11.1, implementado) · **Arquitectura de gestión de secretos v2** (§11.2 — `SecretProvider` como interfaz sustituible, capacidades en vez de secretos concretos, scope instalación/venture; estáticos en `.env` nunca escritos por la app, OAuth2 en tabla cifrada por venture escrita solo por el propio backend).
+Arquitectura en capas del Core · Runtime/Scheduler/Event Bus (contrastado contra investigación previa del proyecto — R1-R4 ya implementadas) · Contrato de Tool como sistema de plugins · Diseño de plugins visuales del mapa · Modelo de economía (agent_costs/agent_budgets/ventures) · VPS y despliegue · **Modelo multi-venture, implementado y verificado** (§3) · **Sistema de permisos single-owner sin hardcode** (§11.1, implementado) · **Arquitectura de gestión de secretos v2** (§11.2 — `SecretProvider`, capacidades, scope por venture) · **Hermes y Claude como los dos motores del ecosistema v2** (§9 — Hermes personifica el Runtime y coordina permanentemente; Claude como consulta profunda estructurada vía Decision, no API automática) · **Registro de paneles especializados por sala** (§13 — reabierto tras contrastar contra VISION.md completo).
 
 ### Decidido aquí por primera vez (🆕)
 
-Definición de Business Module (composición, no mecanismo nuevo) · Postura sobre MCP (no adoptar en v1, dejar la puerta abierta — sus credenciales usarían el mismo mecanismo de §11.2 el día que se adopte) · Founder Profile y System Profile (qué son, cómo se construyen) · Alcance definitivo del Setup Wizard (dos flujos: Fresh Install + New Venture) · Postura sobre Knowledge System (diseño C, no construir todavía) · Arquitectura completa de Secret Management reforzada con 3 principios de crecimiento a petición de Jorge — `SecretProvider`, capacidades, scope por venture — con el límite honesto de que solo OAuth2 puede ser de-venture, anotado explícitamente en vez de disimulado.
+Definición de Business Module · Postura sobre MCP (no adoptar en v1) · Founder Profile y System Profile · Alcance definitivo del Setup Wizard (Fresh Install + New Venture) · **Memory System — diseño completo y activado, revierte la decisión de "no construir en v1" tras la definición explícita de Jorge** (§6 — captura automática desde decisiones/objetivos/errores + captura activa vía marcador, sin esperar a un segundo venture) · Arquitectura completa de Secret Management reforzada con los 3 principios de crecimiento pedidos.
+
+### Pausa estratégica de esta ronda — qué cambió y por qué
+
+Antes de seguir implementando, Jorge pidió una relectura completa contra `VISION.md` y la investigación ya existente en el proyecto (`docs/research/world-engine/`). Encontró — y yo confirmé, no rechacé — dos decisiones de la v1 que no coincidían con la visión real:
+
+1. **Hermes estaba mal dimensionado.** Diseñado como utilidad estrecha y pausada; debía ser el coordinador permanente del ecosistema. Corregido en §9.1.
+2. **El patrón de sala genérica no cumplía `VISION.md`.** El documento pedía salas radicalmente distintas entre sí desde el primer día; la v1 congeló un patrón único de 7 pestañas sin haber leído `VISION.md` completo antes de hacerlo. Corregido en §13, con la regla explícita de no construir paneles con datos falsos (Tienda queda bloqueada hasta Fase 6, no simulada).
+
+También se incorporó investigación del propio proyecto (`prison-architect.md`, `rimworld.md`) que nunca se había cruzado contra el documento — confirmando que el Runtime ya sigue R1-R4 sin que se supiera, y dejando R5/R7 anotadas.
 
 ### Ya no queda ninguna decisión ⚠️ pendiente de confirmación
 
-Las tres del cierre anterior — multi-venture, permisos, secretos — están confirmadas; las dos primeras ya implementadas. Secretos queda especificado en su forma definitiva pero **no implementado todavía** (este documento es solo el diseño, tal como se pidió dos veces).
+Todas las de esta ronda y las anteriores están resueltas. Lo que queda es **diseño ya especificado pero no implementado**: Secret Management completo, Memory System completo, Hermes v2, paneles por sala. Ninguno se ha tocado en código — este documento sigue siendo solo la especificación, tal como se ha pedido en cada ronda.
 
 ### Bloqueante real para el Setup Wizard
 
-El **Fresh Install Wizard** se puede diseñar y construir ya. El **New Venture Wizard** ya no está bloqueado por el modelo multi-venture (§3, resuelto) — el único trabajo previo real que le queda es implementar §11.2 (`secret_definitions`, `secret_values`, `CapabilityResolver`, `SecretProvider`, las rutas de `/api/secrets`) si el primer venture nuevo necesita conectar un canal con credenciales propias.
+Sin cambios: el **Fresh Install Wizard** se puede construir ya. El **New Venture Wizard** depende de implementar §11.2 si el primer venture nuevo necesita credenciales propias.
