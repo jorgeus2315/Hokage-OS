@@ -134,6 +134,29 @@ Vocabulario cerrado de eventos (`AgentEventType` en `eventBus.ts`): `trend.detec
 
 **Regla dura:** cualquier reacción visual a un evento (ver §13, Mapa) se define como tabla de reacciones, nunca como `if`/`switch` disperso. Esto ya estaba bien diseñado en `FRONTEND_WORLD_ENGINE.md §3.3` y sigue siendo la decisión correcta, aunque el "Animation Director" formal descrito ahí no se ha extraído todavía como módulo — hoy vive, parcialmente, como lógica ad-hoc en `useWorldState.ts`. **Deuda reconocida, no bloqueante.**
 
+### De marcadores de texto a Tool Calling — decisión de esta ronda
+
+🔒 **CONGELADO.** Encontrado en la auditoría crítica final pre-lanzamiento (§16 — "un problema encontrado, no cero") y aceptado por Jorge sin reservas.
+
+**El problema, verificado en código:** todo efecto estructurado que un agente dispara — crear una `Decision`, reportar una tendencia, registrar contenido creado, escribir en `agent_memory` — pasa hoy por `agentRuntime.ts` líneas 208-251 buscando patrones `[DECISION: ...]`, `[TENDENCIA: ...]`, `[CONTENIDO: ...]`, `[MEMORIA: ...]` sobre el texto libre de la respuesta del LLM, con `matchAll`/`match`. **Esto convive, en el mismo codebase, con un mecanismo estrictamente mejor que ya funciona:** `aiService.ts` implementa function-calling real de OpenRouter (`tool_calls`, `registry.execute()`) para `system.exec`, `google.trends`, `web.browser`. Un marcador mal formateado no genera error ni log — el efecto simplemente no ocurre, sin traza. §6 (Memory System v2) iba a añadir un quinto marcador (`[APRENDIZAJE: ...]`) sobre el mismo patrón frágil, justo cuando se estaba a punto de construir más encima.
+
+**Decisión:** los 4 marcadores existentes se migran a Tools reales sobre el mecanismo de function-calling ya construido (§8.2) — no se inventa infraestructura nueva, se deja de tener dos caminos donde debe haber uno. El futuro `[APRENDIZAJE: ...]` de §6 nace directamente como tool (`memory.write` con `category`), nunca como marcador nuevo — ver §6, actualizado en consecuencia.
+
+**Hallazgo que corrige el orden inicial, verificado en `agentModels.ts`:** no todos los agentes pueden migrar. `TOOL_CAPABLE_MODELS` excluye explícitamente `meta-llama/llama-3.1-8b-instruct` ("no soporta tools de forma fiable") — el modelo real de `operaciones` y `soporte`. `MEMORIA` y `DECISION` los emite, en teoría, cualquiera de los 8 roles (van en el bloque genérico de instrucciones que se añade a toda tarea); `TENDENCIA` y `CONTENIDO` los emite en la práctica un único rol cada uno (`investigador` y `contenido`), ambos en modelos tool-capable. Consecuencia: `TENDENCIA` y `CONTENIDO` se pueden retirar del todo (regex borrado, cero rastro); `MEMORIA` y `DECISION` **no** — para `operaciones`/`soporte` el marcador de texto sigue siendo, permanentemente, el único camino posible mientras sigan en Llama 3.1 8B. Eso no es una limitación de la migración, es una realidad del modelo — se deja anotada aquí en vez de disimulada como "fallback temporal".
+
+**Migración incremental, no reescritura.** Plan detallado entregado y confirmado con Jorge fuera de este documento; resumen operativo:
+
+| Orden | Marcador → Tool | Por qué en esta posición | Retirada del regex |
+|---|---|---|---|
+| 1 | `[TENDENCIA: ...]` → `trend.report` | Un único rol (`investigador`, tool-capable) — valida el patrón base sin la complejidad del split de modelos. | Total, una vez verificado |
+| 2 | `[CONTENIDO: ...]` → `content.create` | Un único rol (`contenido`, tool-capable, familia de modelo distinta a la de #1) — segunda prueba del patrón. | Total, una vez verificado |
+| 3 | `[MEMORIA: k=v]` → `memory.write` | Bajo radio de impacto (privado, invisible para Jorge) pero primero en exigir el diseño de doble camino permanente (6 roles a tool, 2 a regex). | Parcial — permanece para `operaciones`/`soporte` |
+| 4 | `[DECISION: ...]` → `decision.create` | Mayor superficie y el más visible para Jorge (alimenta Alertas) — se migra último, reutilizando el patrón de doble camino ya probado en #3. | Parcial — permanece para `operaciones`/`soporte` |
+
+**Compatibilidad hacia atrás durante la transición (obligatoria, no opcional):** al migrar cada marcador, el tool nuevo se añade y el prompt del rol correspondiente se actualiza para pedir la tool en vez del marcador — pero **el parseo regex del marcador viejo no se borra todavía**. Ambos caminos conviven. Solo se retira el regex de ese marcador, para los roles tool-capable, cuando se verifique en `agent_runs`/`work_items` reales un número de invocaciones correctas consecutivas por tool call (no por marcador) — nunca antes. Para `operaciones`/`soporte` el regex de `MEMORIA`/`DECISION` no se retira nunca mientras sigan en un modelo sin tool-calling. Un módulo (= un marcador) completo, verificado y commiteado antes de pasar al siguiente, igual que el resto de este proyecto.
+
+**Consecuencia si no se hace:** cada sistema nuevo (Memory System, Business Modules, paneles por sala) seguiría el reflejo de "añadir un marcador más" en vez de "añadir un tool" — la migración se volvería más cara cuanto más se tardara.
+
 ---
 
 ## 3. Modelo multi-venture
@@ -262,7 +285,7 @@ Búsqueda por palabra clave (FTS5, nativo de SQLite, cero dependencias nuevas) �
 - `work_item` cancelado tras 3 reintentos (`stage4_checkTTLs`) → `category='error'`.
 - Respuesta de una consulta a Claude (§9.2) → `category='learning'`, `related_entity_type='claude_consultation'`.
 
-**Captura activa** — nuevo marcador junto al `[MEMORIA: clave=valor]` ya existente (que sigue escribiendo en `agent_memory`, privado): `[APRENDIZAJE: categoria | título | contenido]` para investigación/aprendizaje/contexto que un agente descubre y no queda capturado por ningún cambio de estado.
+**Captura activa** — **no nace como marcador de texto.** Tras la decisión de §2 ("De marcadores de texto a Tool Calling"), la captura activa de investigación/aprendizaje/contexto que un agente descubre y no queda cubierto por ningún cambio de estado se implementa directamente como tool (`memory.write` con `category` de `memory_entries`, no como `agent_memory` privado) — nunca como un quinto marcador regex. El propio `[MEMORIA: clave=valor]` que hoy escribe en `agent_memory` es el primer marcador que se migra a tool (§2, orden 1) — cuando el Memory System v2 se implemente, `memory.write` ya existe y solo se le añade el parámetro `category` para distinguir `agent_memory` (privado) de `memory_entries` (empresarial).
 
 **Lectura:** en `aiService.ts::askAgent()`, junto al bloque `[LO QUE SÉ]` ya existente (memoria privada), un segundo bloque `[MEMORIA DEL NEGOCIO]` con las entradas más relevantes de `memory_entries` para el `venture_id` en curso.
 
@@ -668,6 +691,8 @@ Sin cambios: **Mapa, Crew, Alertas, Comms, Ventures, Objetivos, Config**, todas 
 | Memoria por-agente → Knowledge System compartido | 3+ ventures con historial real que comparar | Revisitar §6 — no antes |
 | Tool interface propio → MCP | Integraciones externas > ~15-20 | Revisitar §8.5 — no antes |
 | Permisos single-owner → multi-usuario | Un segundo fundador usa Hokage OS | Revisitar §11.1 — no antes |
+| API sin paginación → `limit`/`offset`/filtro por venture | 2+ ventures activos simultáneos (coincide con el umbral de Postgres) | Paginar `agents`/`decisions`/`ventures`/`objectives`/`messages`, filtrar `useAppData.ts` por venture activo |
+| Cero tests automatizados → smoke-test mínimo | Antes de la siguiente migración de BD que toque tablas con FK (ya causó una regresión real esta sesión) | Un test del ciclo Decision→approve→work_item + verificación post-migración, no cobertura amplia |
 
 Esta tabla es, deliberadamente, la forma de evitar sobre-construir: cada fila es una decisión ya tomada sobre **cuándo** revisar algo, no una promesa de construirlo ahora.
 
@@ -711,7 +736,7 @@ Ver §8.4 — es composición de lo anterior (canal + Tool + Automations por def
 
 ### Congelado sin más discusión (🔒)
 
-Arquitectura en capas del Core · Runtime/Scheduler/Event Bus (contrastado contra investigación previa del proyecto — R1-R4 ya implementadas) · Contrato de Tool como sistema de plugins · Diseño de plugins visuales del mapa · Modelo de economía (agent_costs/agent_budgets/ventures) · VPS y despliegue · **Modelo multi-venture, implementado y verificado** (§3) · **Sistema de permisos single-owner sin hardcode** (§11.1, implementado) · **Arquitectura de gestión de secretos v2** (§11.2 — `SecretProvider`, capacidades, scope por venture) · **Hermes y Claude como los dos motores del ecosistema v2** (§9 — Hermes personifica el Runtime y coordina permanentemente; Claude como consulta profunda estructurada vía Decision, no API automática) · **Registro de paneles especializados por sala** (§13 — reabierto tras contrastar contra VISION.md completo).
+Arquitectura en capas del Core · Runtime/Scheduler/Event Bus (contrastado contra investigación previa del proyecto — R1-R4 ya implementadas) · Contrato de Tool como sistema de plugins · Diseño de plugins visuales del mapa · Modelo de economía (agent_costs/agent_budgets/ventures) · VPS y despliegue · **Modelo multi-venture, implementado y verificado** (§3) · **Sistema de permisos single-owner sin hardcode** (§11.1, implementado) · **Arquitectura de gestión de secretos v2** (§11.2 — `SecretProvider`, capacidades, scope por venture) · **Hermes y Claude como los dos motores del ecosistema v2** (§9 — Hermes personifica el Runtime y coordina permanentemente; Claude como consulta profunda estructurada vía Decision, no API automática) · **Registro de paneles especializados por sala** (§13 — reabierto tras contrastar contra VISION.md completo) · **Migración de marcadores de texto a Tool Calling** (§2 — MEMORIA/TENDENCIA/CONTENIDO/DECISION pasan a ser Tools reales, incremental y compatible hacia atrás).
 
 ### Decidido aquí por primera vez (🆕)
 
@@ -726,9 +751,13 @@ Antes de seguir implementando, Jorge pidió una relectura completa contra `VISIO
 
 También se incorporó investigación del propio proyecto (`prison-architect.md`, `rimworld.md`) que nunca se había cruzado contra el documento — confirmando que el Runtime ya sigue R1-R4 sin que se supiera, y dejando R5/R7 anotadas.
 
+### Auditoría crítica final pre-lanzamiento — un hallazgo real, no cero
+
+Antes de autorizar implementación del resto del sistema, se hizo la pregunta explícita: *¿existe alguna decisión que dentro de 1-2 años obligue a reconstruir algo importante?* Respuesta honesta: **sí, una** — el sistema de marcadores de texto (`[DECISION:]`, `[TENDENCIA:]`, `[CONTENIDO:]`, `[MEMORIA:]`) que hoy convive, de forma inconsistente, con el mecanismo de Tool Calling ya construido y funcionando (§8.2). Jorge aceptó la recomendación sin reservas: **migración incremental y compatible hacia atrás de los 4 marcadores a Tools reales, en el orden TENDENCIA → CONTENIDO → MEMORIA → DECISION** — ver §2, "De marcadores de texto a Tool Calling". `operaciones`/`soporte` corren en un modelo sin tool-calling fiable (Llama 3.1 8B) — para ellos el regex de `MEMORIA`/`DECISION` no se retira nunca, no es un detalle menor. El resto de riesgos encontrados en esa auditoría (ausencia de paginación en la API, cero tests automatizados, `decisions.entity_type/entity_id` sin integridad referencial, acoplamiento a OpenRouter en `aiService.ts`) se evaluaron como deuda gestionable con disparador explícito, no como bombas de relojería — ya incorporados a §14.
+
 ### Ya no queda ninguna decisión ⚠️ pendiente de confirmación
 
-Todas las de esta ronda y las anteriores están resueltas. Lo que queda es **diseño ya especificado pero no implementado**: Secret Management completo, Memory System completo, Hermes v2, paneles por sala. Ninguno se ha tocado en código — este documento sigue siendo solo la especificación, tal como se ha pedido en cada ronda.
+Todas las de esta ronda y las anteriores están resueltas. Lo que queda es **diseño ya especificado pero no implementado**: la migración marcadores→Tools (§2, siguiente paso inmediato), Secret Management completo, Memory System completo, Hermes v2, paneles por sala. Ninguno se ha tocado en código — este documento sigue siendo solo la especificación, tal como se ha pedido en cada ronda.
 
 ### Bloqueante real para el Setup Wizard
 
