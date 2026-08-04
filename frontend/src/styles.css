@@ -1140,8 +1140,8 @@ svg { display: block; flex-shrink: 0; }
 .hk-game-stat {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 5px 10px;
+  gap: 7px;
+  padding: 4px 10px;
   border-radius: var(--radius);
 }
 
@@ -1164,16 +1164,18 @@ svg { display: block; flex-shrink: 0; }
 }
 
 .hk-game-stat-label {
-  font-size: 8.5px;
+  font-size: 7.5px;
   letter-spacing: 0.12em;
   color: var(--ink-faint);
   text-transform: uppercase;
+  line-height: 1;
 }
 
 .hk-game-stat-value {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
   color: var(--ink);
+  line-height: 1;
 }
 
 .hk-game-stat--alert .hk-game-stat-value { color: var(--ember); }
@@ -1249,27 +1251,33 @@ svg { display: block; flex-shrink: 0; }
 .hk-game-overlay--left {
   left: 10px;
   top: 10px;
-  bottom: 160px;
-  width: 188px;
+  bottom: 50px;
+  width: 200px;
 }
 
+/* Acciones rápidas: fila horizontal abajo-izquierda */
 .hk-game-overlay--bottom-left {
   left: 10px;
   bottom: 10px;
-  width: 290px;
 }
 
-.hk-game-overlay--bottom-right {
-  right: 10px;
-  bottom: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  align-items: flex-end;
-}
-
-.hk-game-overlay--right {
+/* Log permanente: columna derecha siempre visible */
+.hk-game-overlay--log {
   right: 0;
+  top: 0;
+  bottom: 0;
+  width: 210px;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+.hk-game-overlay--log-hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(8px);
+}
+
+/* Panel sala: desplazado a la izquierda del log */
+.hk-game-overlay--panel {
+  right: 210px;
   top: 0;
   bottom: 0;
   width: 380px;
@@ -1302,15 +1310,35 @@ svg { display: block; flex-shrink: 0; }
 
 .hk-game-agent-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 7px;
-  padding: 6px 10px;
+  padding: 7px 10px 7px 8px;
   cursor: pointer;
   transition: background 0.1s ease;
   border-bottom: 1px solid rgba(255,255,255,0.04);
+  border-left: 2px solid transparent;
+  position: relative;
 }
 .hk-game-agent-row:last-child { border-bottom: none; }
 .hk-game-agent-row:hover { background: rgba(255,255,255,0.04); }
+.hk-game-agent-row--active { background: rgba(255,255,255,0.025); }
+
+.hk-game-agent-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ink-faint);
+  flex-shrink: 0;
+  margin-top: 3px;
+  transition: all 0.2s ease;
+}
+.hk-game-agent-dot--active {
+  animation: hk-dot-pulse 2s ease-in-out infinite;
+}
+@keyframes hk-dot-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
 
 .hk-game-agent-name {
   font-size: 11px;
@@ -1318,14 +1346,54 @@ svg { display: block; flex-shrink: 0; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  line-height: 1.3;
+  transition: color 0.2s ease;
+}
+.hk-game-agent-role {
+  font-size: 8px;
+  color: var(--ink-faint);
+  font-family: var(--font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-top: 1px;
+  margin-bottom: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .hk-game-agent-action {
-  font-size: 9px;
+  font-size: 8.5px;
   color: var(--ink-faint);
   font-family: var(--font-mono);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  line-height: 1.3;
+}
+
+/* Badges de estado del agente */
+.hk-game-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  border-radius: 2px;
+  font-family: var(--font-mono);
+  font-size: 7.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.hk-game-badge--live {
+  background: rgba(62, 207, 106, 0.15);
+  color: var(--good);
+  border: 1px solid rgba(62, 207, 106, 0.35);
+}
+.hk-game-badge--idle {
+  background: transparent;
+  color: var(--ink-faint);
+  border: 1px solid var(--line);
 }
 
 /* Event feed */
@@ -1355,9 +1423,17 @@ svg { display: block; flex-shrink: 0; }
   to { opacity: 1; transform: none; }
 }
 
-.hk-game-event-type {
-  font-size: 9.5px;
+.hk-game-event-icon {
+  font-size: 9px;
   font-weight: 700;
+  flex-shrink: 0;
+  width: 12px;
+  text-align: center;
+  font-family: var(--font-mono);
+}
+.hk-game-event-type {
+  font-size: 9px;
+  font-weight: 600;
   font-family: var(--font-mono);
   flex: 1;
   overflow: hidden;
@@ -1365,10 +1441,18 @@ svg { display: block; flex-shrink: 0; }
   white-space: nowrap;
 }
 .hk-game-event-from {
-  font-size: 9px;
+  font-size: 8.5px;
   color: var(--ink-faint);
   font-family: var(--font-mono);
   white-space: nowrap;
+}
+.hk-game-event-time {
+  font-size: 8px;
+  color: var(--ink-faint);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  margin-left: auto;
+  padding-left: 4px;
 }
 
 /* Botones de acción rápida */
@@ -1396,6 +1480,98 @@ svg { display: block; flex-shrink: 0; }
 .hk-game-action-btn--alert:hover { background: rgba(232, 67, 45, 0.08); border-color: var(--ember); }
 .hk-game-action-btn--signal { color: var(--signal); border-color: var(--signal-dim); }
 .hk-game-action-btn--signal:hover { background: rgba(79, 209, 197, 0.06); border-color: var(--signal); }
+
+/* Fila de acciones rápidas */
+.hk-game-actions-row {
+  display: flex;
+  gap: 5px;
+}
+.hk-game-action-label {
+  font-size: 8px;
+  letter-spacing: 0.1em;
+  opacity: 0.7;
+}
+
+/* Log permanente de sistema */
+.hk-game-log {
+  height: 100%;
+  background: rgba(10, 11, 13, 0.97);
+  backdrop-filter: blur(16px);
+  border-left: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.hk-game-log-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 10px 7px;
+  border-bottom: 1px solid var(--line);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  font-family: var(--font-mono);
+  flex-shrink: 0;
+  background: rgba(14, 16, 20, 0.6);
+}
+.hk-game-log-body {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.hk-game-log-empty {
+  padding: 10px;
+  font-size: 9.5px;
+  color: var(--ink-faint);
+  font-family: var(--font-mono);
+}
+.hk-game-log-entry {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 5px 8px;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  animation: hk-event-in 0.18s ease;
+}
+.hk-game-log-entry:last-child { border-bottom: none; }
+.hk-game-log-entry:hover { background: rgba(255,255,255,0.03); }
+.hk-game-log-icon {
+  font-size: 9px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  width: 10px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.hk-game-log-content { flex: 1; min-width: 0; }
+.hk-game-log-type {
+  font-size: 9px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.3;
+}
+.hk-game-log-from {
+  font-size: 8px;
+  color: var(--ink-faint);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hk-game-log-time {
+  font-size: 8px;
+  color: var(--ink-faint);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
 
 /* Panel lateral derecho (sala seleccionada) */
 .hk-game-right-panel {
@@ -1511,3 +1687,25 @@ svg { display: block; flex-shrink: 0; }
   transition: all 0.12s ease;
 }
 .hk-game-menu-close:hover { border-color: var(--ember); color: var(--ember); }
+
+/* ═══ CONFIG PANEL ═══ */
+.hk-config-input,
+.hk-config-textarea {
+  width: 100%;
+  background: var(--void-deep);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 8px 10px;
+  outline: none;
+  box-sizing: border-box;
+  transition: border-color 0.15s ease;
+  resize: vertical;
+}
+.hk-config-input:focus,
+.hk-config-textarea:focus { border-color: var(--signal); box-shadow: 0 0 0 2px rgba(79, 209, 197, 0.12); }
+.hk-config-textarea { line-height: 1.55; min-height: 80px; }
+select.hk-config-input { cursor: pointer; }
+select.hk-config-input option { background: var(--void-deep); }

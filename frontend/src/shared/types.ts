@@ -155,7 +155,7 @@ export interface Objective {
   plan?: ObjPlan;
 }
 
-export type BuildingSection = 'chat' | 'feed' | 'stats' | 'pipeline' | 'alerts';
+export type BuildingSection = 'chat' | 'feed' | 'stats' | 'pipeline' | 'alerts' | 'config';
 
 // Un color por departamento — se usa tanto en CSS (DOM) como en el renderer
 // PixiJS del mapa (WorldCanvas.tsx replica esta paleta en hex numérico).

@@ -691,6 +691,84 @@ app.patch('/api/objectives/:id', requireAdmin, async (req, res) => {
   } catch (e: any) { sendError(res, 400, e, 'Error actualizando objetivo'); }
 });
 
+// ═══════════ AGENTES: PATCH + PROMPTS ═══════════
+
+// Actualizar nombre / modelo del agente
+app.patch('/api/agents/:id', requireAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { name, model } = req.body as { name?: string; model?: string };
+    const sets: string[] = [];
+    const vals: unknown[] = [];
+    if (name !== undefined) { sets.push('name = ?'); vals.push(name.trim()); }
+    if (model !== undefined) { sets.push('model = ?'); vals.push(model.trim()); }
+    if (sets.length === 0) return res.status(400).json({ ok: false, error: 'Nada que actualizar' });
+    await run(`UPDATE agents SET ${sets.join(', ')} WHERE id = ?`, [...vals, id]);
+    const agent = await get('SELECT * FROM agents WHERE id = ?', [id]);
+    res.json({ ok: true, data: agent });
+  } catch (e: any) { sendError(res, 400, e, 'Error actualizando agente'); }
+});
+
+// Leer prompt activo de un agente
+app.get('/api/agents/:id/prompt', async (req, res) => {
+  try {
+    const agentId = Number(req.params.id);
+    const row = await get<{ content: string }>(
+      'SELECT content FROM agent_prompts WHERE agent_id = ? AND active = 1 ORDER BY version DESC LIMIT 1',
+      [agentId],
+    );
+    res.json({ ok: true, data: { content: row?.content ?? '' } });
+  } catch (e: any) { sendError(res, 500, e, 'Error leyendo prompt'); }
+});
+
+// Crear o actualizar prompt de un agente (nueva versión)
+app.put('/api/agents/:id/prompt', requireAdmin, async (req, res) => {
+  try {
+    const agentId = Number(req.params.id);
+    const { content } = req.body as { content: string };
+    if (!content?.trim()) return res.status(400).json({ ok: false, error: 'content vacío' });
+    await run('UPDATE agent_prompts SET active = 0 WHERE agent_id = ?', [agentId]);
+    const ver = await get<{ v: number }>(
+      'SELECT COALESCE(MAX(version), 0) + 1 AS v FROM agent_prompts WHERE agent_id = ?',
+      [agentId],
+    );
+    await run(
+      'INSERT INTO agent_prompts (agent_id, prompt_type, content, version, active) VALUES (?, ?, ?, ?, 1)',
+      [agentId, 'base', content.trim(), ver?.v ?? 1],
+    );
+    res.json({ ok: true });
+  } catch (e: any) { sendError(res, 500, e, 'Error actualizando prompt'); }
+});
+
+// Leer prompt maestro global (agent_id = 0)
+app.get('/api/config/master-prompt', async (_req, res) => {
+  try {
+    const row = await get<{ content: string }>(
+      'SELECT content FROM agent_prompts WHERE agent_id = 0 AND prompt_type = ? AND active = 1 ORDER BY version DESC LIMIT 1',
+      ['master'],
+    );
+    res.json({ ok: true, data: { content: row?.content ?? '' } });
+  } catch (e: any) { sendError(res, 500, e, 'Error leyendo master prompt'); }
+});
+
+// Actualizar prompt maestro global
+app.put('/api/config/master-prompt', requireAdmin, async (req, res) => {
+  try {
+    const { content } = req.body as { content: string };
+    if (content === undefined) return res.status(400).json({ ok: false, error: 'content requerido' });
+    await run('UPDATE agent_prompts SET active = 0 WHERE agent_id = 0 AND prompt_type = ?', ['master']);
+    const ver = await get<{ v: number }>(
+      'SELECT COALESCE(MAX(version), 0) + 1 AS v FROM agent_prompts WHERE agent_id = 0 AND prompt_type = ?',
+      ['master'],
+    );
+    await run(
+      'INSERT INTO agent_prompts (agent_id, prompt_type, content, version, active) VALUES (0, ?, ?, ?, 1)',
+      ['master', content.trim(), ver?.v ?? 1],
+    );
+    res.json({ ok: true });
+  } catch (e: any) { sendError(res, 500, e, 'Error actualizando master prompt'); }
+});
+
 // ═══════════ PROGRESS / ACHIEVEMENTS ═══════════
 app.use('/api', progressRouter);
 

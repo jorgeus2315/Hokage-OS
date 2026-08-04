@@ -5,12 +5,13 @@ import type { HubDescriptor, RoomDescriptor, TokenDescriptor, RippleEvent } from
 
 const COLOR = {
   void: 0x0a0b0d,
-  panel: 0x14161a,
-  line: 0x262a31,
+  panel: 0x12141a,
+  line: 0x1e2229,
   ember: 0xe8432d,
   emberDim: 0x7a2418,
   signal: 0x4fd1c5,
   amber: 0xf0a93b,
+  good: 0x3ecf6a,
   ink: 0xe8e6e1,
   inkFaint: 0x4a4d53,
   inkDim: 0x8a8d93,
@@ -21,9 +22,12 @@ const COLOR = {
 const ZOOM_MIN = 0.25;
 const ZOOM_MAX = 2.5;
 const ZOOM_STEP = 0.1;
-const MINIMAP_W = 160;
-const MINIMAP_H = 120;
+const MINIMAP_W = 150;
+const MINIMAP_H = 110;
 const MINIMAP_PAD = 12;
+
+// Room dimensions — rectangulares, más grandes
+const RW = 154, RH = 104;
 
 function makeText(text: string, style: Partial<PIXI.TextStyleOptions>): PIXI.Text {
   return new PIXI.Text({
@@ -41,19 +45,6 @@ function withClick(container: PIXI.Container): PIXI.Container {
   return container;
 }
 
-function cutPoly(w: number, h: number, cut: number): number[] {
-  return [
-    -w / 2 + cut, -h / 2,
-    w / 2 - cut, -h / 2,
-    w / 2, -h / 2 + cut,
-    w / 2, h / 2 - cut,
-    w / 2 - cut, h / 2,
-    -w / 2 + cut, h / 2,
-    -w / 2, h / 2 - cut,
-    -w / 2, -h / 2 + cut,
-  ];
-}
-
 function octPoly(r: number): number[] {
   const pts: number[] = [];
   for (let i = 0; i < 8; i++) {
@@ -65,11 +56,20 @@ function octPoly(r: number): number[] {
 
 function buildGrid(cx: number, cy: number): PIXI.Graphics {
   const g = new PIXI.Graphics();
-  const spacing = 50;
-  const range = 900;
+  const spacing = 60;
+  const range = 1000;
   for (let x = cx - range; x <= cx + range; x += spacing) {
-    for (let y = cy - range; y <= cy + range; y += spacing) {
-      g.circle(x, y, 1).fill({ color: COLOR.line, alpha: 0.45 });
+    g.moveTo(x, cy - range).lineTo(x, cy + range)
+      .stroke({ width: 0.5, color: COLOR.line, alpha: 0.35 });
+  }
+  for (let y = cy - range; y <= cy + range; y += spacing) {
+    g.moveTo(cx - range, y).lineTo(cx + range, y)
+      .stroke({ width: 0.5, color: COLOR.line, alpha: 0.35 });
+  }
+  // Accent dots at intersections (every 3rd)
+  for (let x = cx - range; x <= cx + range; x += spacing * 3) {
+    for (let y = cy - range; y <= cy + range; y += spacing * 3) {
+      g.circle(x, y, 1.2).fill({ color: COLOR.line, alpha: 0.7 });
     }
   }
   return g;
@@ -78,39 +78,206 @@ function buildGrid(cx: number, cy: number): PIXI.Graphics {
 function buildHub(): PIXI.Container {
   const container = withClick(new PIXI.Container());
   container.label = 'hub';
-  container.hitArea = new PIXI.Circle(0, 0, 68);
+  container.hitArea = new PIXI.Circle(0, 0, 72);
 
   const glow = new PIXI.Graphics()
-    .poly(octPoly(86))
-    .stroke({ width: 16, color: COLOR.ember, alpha: 0.18 });
+    .poly(octPoly(90))
+    .stroke({ width: 18, color: COLOR.ember, alpha: 0.12 });
 
   const outerRing = new PIXI.Graphics()
-    .poly(octPoly(74))
-    .stroke({ width: 1, color: COLOR.emberDim, alpha: 0.55 });
+    .poly(octPoly(76))
+    .stroke({ width: 1, color: COLOR.emberDim, alpha: 0.6 });
 
   const crosshair = new PIXI.Graphics()
-    .moveTo(-90, 0).lineTo(90, 0).stroke({ width: 0.5, color: COLOR.ember, alpha: 0.18 })
-    .moveTo(0, -90).lineTo(0, 90).stroke({ width: 0.5, color: COLOR.ember, alpha: 0.18 });
+    .moveTo(-100, 0).lineTo(100, 0).stroke({ width: 0.5, color: COLOR.ember, alpha: 0.15 })
+    .moveTo(0, -100).lineTo(0, 100).stroke({ width: 0.5, color: COLOR.ember, alpha: 0.15 });
 
   const main = new PIXI.Graphics()
-    .poly(octPoly(60))
+    .poly(octPoly(62))
     .fill(COLOR.panel)
     .stroke({ width: 2, color: COLOR.ember });
 
   const innerRing = new PIXI.Graphics()
-    .poly(octPoly(48))
-    .stroke({ width: 0.5, color: COLOR.ember, alpha: 0.3 });
+    .poly(octPoly(50))
+    .stroke({ width: 0.5, color: COLOR.ember, alpha: 0.35 });
 
-  const label = makeText('', { fontSize: 12, fontWeight: '700', letterSpacing: 2 });
+  // Interior grid lines
+  const interiorGrid = new PIXI.Graphics();
+  for (let i = -40; i <= 40; i += 14) {
+    interiorGrid.moveTo(-55, i).lineTo(55, i).stroke({ width: 0.4, color: COLOR.ember, alpha: 0.12 });
+  }
+
+  const label = makeText('', { fontSize: 12, fontWeight: '700', letterSpacing: 2.5, fill: COLOR.ink });
   label.anchor.set(0.5);
-  label.position.set(0, -7);
+  label.position.set(0, -8);
 
-  const sublabel = makeText('', { fontSize: 7.5, fill: COLOR.inkFaint, letterSpacing: 1.5 });
+  const sublabel = makeText('', { fontSize: 7.5, fill: COLOR.inkFaint, letterSpacing: 1.8 });
   sublabel.anchor.set(0.5);
   sublabel.position.set(0, 10);
 
-  container.addChild(glow, crosshair, outerRing, main, innerRing, label, sublabel);
+  container.addChild(glow, crosshair, outerRing, main, innerRing, interiorGrid, label, sublabel);
   Object.assign(container, { __label: label, __sublabel: sublabel, __glow: glow });
+  return container;
+}
+
+function buildRoom(color: number): {
+  container: PIXI.Container;
+  alertDot: PIXI.Graphics;
+  pulseRing: PIXI.Graphics;
+  activeDot: PIXI.Graphics;
+} {
+  const container = withClick(new PIXI.Container());
+  container.label = 'room';
+  container.hitArea = new PIXI.Rectangle(-RW / 2, -RH / 2, RW, RH);
+
+  // Outer ambient glow
+  const glowOuter = new PIXI.Graphics()
+    .roundRect(-RW / 2 - 12, -RH / 2 - 12, RW + 24, RH + 24, 8)
+    .stroke({ width: 12, color, alpha: 0.07 });
+
+  // Interior colored fill
+  const interiorFill = new PIXI.Graphics()
+    .roundRect(-RW / 2 + 2, -RH / 2 + 8, RW - 4, RH - 10, 3)
+    .fill({ color, alpha: 0.06 });
+
+  // Interior horizontal grid lines
+  const gridLines = new PIXI.Graphics();
+  for (let y = -RH / 2 + 22; y < RH / 2 - 12; y += 14) {
+    gridLines.moveTo(-RW / 2 + 6, y).lineTo(RW / 2 - 6, y)
+      .stroke({ width: 0.5, color, alpha: 0.14 });
+  }
+
+  // Main body
+  const main = new PIXI.Graphics()
+    .roundRect(-RW / 2, -RH / 2, RW, RH, 4)
+    .fill({ color: COLOR.panel, alpha: 0.96 })
+    .stroke({ width: 1.5, color, alpha: 0.82 });
+
+  // Top accent bar (solid color strip)
+  const accentBar = new PIXI.Graphics()
+    .roundRect(-RW / 2 + 2, -RH / 2 + 2, RW - 4, 4, 2)
+    .fill({ color, alpha: 0.9 });
+
+  // Corner accent marks (L-brackets)
+  const corners = new PIXI.Graphics();
+  const cLen = 11;
+  const cx2 = RW / 2 - 7, cy2 = RH / 2 - 7;
+  corners
+    .moveTo(-cx2 - cLen, -cy2).lineTo(-cx2, -cy2).lineTo(-cx2, -cy2 - cLen)
+    .stroke({ width: 1, color, alpha: 0.45 })
+    .moveTo(cx2 + cLen, -cy2).lineTo(cx2, -cy2).lineTo(cx2, -cy2 - cLen)
+    .stroke({ width: 1, color, alpha: 0.45 })
+    .moveTo(-cx2 - cLen, cy2).lineTo(-cx2, cy2).lineTo(-cx2, cy2 + cLen)
+    .stroke({ width: 1, color, alpha: 0.45 })
+    .moveTo(cx2 + cLen, cy2).lineTo(cx2, cy2).lineTo(cx2, cy2 + cLen)
+    .stroke({ width: 1, color, alpha: 0.45 });
+
+  // Bottom activity bar background
+  const bottomBarBg = new PIXI.Graphics()
+    .roundRect(-RW / 2 + 5, RH / 2 - 9, RW - 10, 3, 1)
+    .fill({ color: 0x000000, alpha: 0.5 });
+
+  // Bottom activity bar fill (drawn per-frame)
+  const bottomBar = new PIXI.Graphics();
+
+  // Pulse ring for pending decisions
+  const pulseRing = new PIXI.Graphics();
+
+  // Labels
+  const label = makeText('', { fontSize: 10.5, fontWeight: '700', letterSpacing: 1.4, fill: COLOR.ink });
+  label.anchor.set(0.5);
+  label.position.set(0, -10);
+
+  const sublabel = makeText('', { fontSize: 8, fill: COLOR.inkDim, letterSpacing: 0.3 });
+  sublabel.anchor.set(0.5);
+  sublabel.position.set(0, 8);
+
+  // Alert dot — ember, top right
+  const alertDot = new PIXI.Graphics().circle(0, 0, 5).fill(COLOR.ember);
+  alertDot.position.set(RW / 2 - 10, -RH / 2 + 10);
+  alertDot.visible = false;
+
+  // Active dot — signal, top left
+  const activeDot = new PIXI.Graphics().circle(0, 0, 3.5).fill(COLOR.signal);
+  activeDot.position.set(-RW / 2 + 10, -RH / 2 + 10);
+  activeDot.visible = false;
+
+  container.addChild(
+    glowOuter, interiorFill, gridLines, main, accentBar, corners,
+    bottomBarBg, bottomBar, pulseRing, label, sublabel, alertDot, activeDot,
+  );
+
+  Object.assign(container, {
+    __label: label,
+    __sublabel: sublabel,
+    __accentBar: accentBar,
+    __glowOuter: glowOuter,
+    __interiorFill: interiorFill,
+    __bottomBar: bottomBar,
+  });
+
+  return { container, alertDot, pulseRing, activeDot };
+}
+
+function buildToken(): PIXI.Container {
+  const container = withClick(new PIXI.Container());
+  container.label = 'token';
+  const sz = 13;
+  container.hitArea = new PIXI.Circle(0, 0, sz * 2.2);
+
+  // Outer aura (justActed)
+  const ringOuter = new PIXI.Graphics()
+    .circle(0, 0, sz * 2.4)
+    .stroke({ width: 1, color: 0xffffff });
+  ringOuter.alpha = 0;
+
+  // Inner pulsing ring (working)
+  const ring = new PIXI.Graphics()
+    .circle(0, 0, sz * 1.7)
+    .stroke({ width: 1.5, color: 0xffffff });
+  ring.alpha = 0;
+
+  // Main circle body
+  const diamond = new PIXI.Graphics()  // named diamond for backward compat
+    .circle(0, 0, sz)
+    .fill(0xffffff);
+
+  // Inner depth dot
+  const innerDot = new PIXI.Graphics()
+    .circle(0, 0, sz * 0.38)
+    .fill({ color: 0x000000, alpha: 0.4 });
+
+  // Initial letter
+  const label = makeText('', { fontSize: 9, fontWeight: '700', fill: 0x060809 });
+  label.anchor.set(0.5);
+
+  // Name badge background (pill shape)
+  const nameBg = new PIXI.Graphics();
+
+  // Name text above
+  const nameText = makeText('', { fontSize: 7.5, fontWeight: '600', fill: COLOR.ink });
+  nameText.anchor.set(0.5);
+  nameText.position.set(0, -sz - 12);
+
+  // Action text + bubble below
+  const tip = makeText('', { fontSize: 7, fill: COLOR.inkDim });
+  tip.anchor.set(0.5);
+  tip.position.set(0, sz + 10);
+
+  const bubble = new PIXI.Graphics();
+  bubble.visible = false;
+
+  container.addChild(ringOuter, ring, diamond, innerDot, label, nameBg, nameText, bubble, tip);
+  Object.assign(container, {
+    __ring: ring,
+    __ringOuter: ringOuter,
+    __diamond: diamond,
+    __label: label,
+    __tip: tip,
+    __bubble: bubble,
+    __nameText: nameText,
+    __nameBg: nameBg,
+  });
   return container;
 }
 
@@ -120,119 +287,7 @@ function hashOffset(id: string): number {
   return h / 1000;
 }
 
-function buildRoom(color: number): { container: PIXI.Container; alertDot: PIXI.Graphics; pulseRing: PIXI.Graphics; activeDot: PIXI.Graphics } {
-  const container = withClick(new PIXI.Container());
-  container.label = 'room';
-
-  const W = 114, H = 70, CUT = 11;
-  const poly = cutPoly(W, H, CUT);
-  container.hitArea = new PIXI.Polygon(poly);
-
-  const glowOuter = new PIXI.Graphics()
-    .poly(cutPoly(W + 22, H + 22, CUT + 5))
-    .stroke({ width: 14, color, alpha: 0.07 });
-  const glowMid = new PIXI.Graphics()
-    .poly(cutPoly(W + 10, H + 10, CUT + 2))
-    .stroke({ width: 5, color, alpha: 0.15 });
-
-  const zoneFill = new PIXI.Graphics()
-    .poly(poly)
-    .fill({ color, alpha: 0.05 });
-
-  const main = new PIXI.Graphics()
-    .poly(poly)
-    .fill(COLOR.panel)
-    .stroke({ width: 1.5, color, alpha: 0.88 });
-
-  const accentBar = new PIXI.Graphics()
-    .rect(-W / 2 + CUT, -H / 2 + 1, W - CUT * 2, 3)
-    .fill({ color, alpha: 0.85 });
-
-  const br = new PIXI.Graphics();
-  const bl = 9;
-  br
-    .moveTo(-W / 2 + CUT, -H / 2 + CUT + bl).lineTo(-W / 2 + CUT, -H / 2 + CUT).lineTo(-W / 2 + CUT + bl, -H / 2 + CUT)
-    .stroke({ width: 1, color: COLOR.inkFaint, alpha: 0.35 })
-    .moveTo(W / 2 - CUT - bl, -H / 2 + CUT).lineTo(W / 2 - CUT, -H / 2 + CUT).lineTo(W / 2 - CUT, -H / 2 + CUT + bl)
-    .stroke({ width: 1, color: COLOR.inkFaint, alpha: 0.35 })
-    .moveTo(-W / 2 + CUT, H / 2 - CUT - bl).lineTo(-W / 2 + CUT, H / 2 - CUT).lineTo(-W / 2 + CUT + bl, H / 2 - CUT)
-    .stroke({ width: 1, color: COLOR.inkFaint, alpha: 0.35 })
-    .moveTo(W / 2 - CUT - bl, H / 2 - CUT).lineTo(W / 2 - CUT, H / 2 - CUT).lineTo(W / 2 - CUT, H / 2 - CUT - bl)
-    .stroke({ width: 1, color: COLOR.inkFaint, alpha: 0.35 });
-
-  const pulseRing = new PIXI.Graphics();
-
-  const label = makeText('', { fontSize: 10.5, fontWeight: '700', letterSpacing: 1 });
-  label.anchor.set(0.5);
-  label.position.set(0, 2);
-
-  const sublabel = makeText('', { fontSize: 7.5, fill: COLOR.inkFaint });
-  sublabel.anchor.set(0.5);
-  sublabel.position.set(0, 17);
-
-  // Alerta por decisión pendiente (esquina superior derecha)
-  const alertDot = new PIXI.Graphics().circle(0, 0, 4).fill(COLOR.ember);
-  alertDot.position.set(W / 2 - CUT - 5, -H / 2 + CUT + 5);
-  alertDot.visible = false;
-
-  // Indicador de agente activo (esquina superior izquierda)
-  const activeDot = new PIXI.Graphics().circle(0, 0, 3).fill(COLOR.signal);
-  activeDot.position.set(-W / 2 + CUT + 5, -H / 2 + CUT + 5);
-  activeDot.visible = false;
-
-  container.addChild(glowOuter, glowMid, zoneFill, main, accentBar, br, pulseRing, label, sublabel, alertDot, activeDot);
-  Object.assign(container, { __label: label, __sublabel: sublabel, __accentBar: accentBar, __glowOuter: glowOuter });
-  return { container, alertDot, pulseRing, activeDot };
-}
-
-function buildToken(): PIXI.Container {
-  const container = withClick(new PIXI.Container());
-  container.label = 'token';
-  const sz = 12;
-  container.hitArea = new PIXI.Circle(0, 0, 20);
-
-  // Aura circular (pulsa cuando trabaja o acaba de actuar)
-  const ring = new PIXI.Graphics()
-    .circle(0, 0, sz * 2.2)
-    .stroke({ width: 1.2, color: 0xffffff });
-  ring.alpha = 0;
-
-  // Segunda aura más grande para estado justActed
-  const ringOuter = new PIXI.Graphics()
-    .circle(0, 0, sz * 3.2)
-    .stroke({ width: 0.8, color: 0xffffff });
-  ringOuter.alpha = 0;
-
-  // Diamante principal
-  const diamond = new PIXI.Graphics()
-    .poly([0, -sz, sz, 0, 0, sz, -sz, 0])
-    .fill(0xffffff);
-
-  // Diamante interior (profundidad)
-  const innerSz = sz - 4;
-  const inner = new PIXI.Graphics()
-    .poly([0, -innerSz, innerSz, 0, 0, innerSz, -innerSz, 0])
-    .fill({ color: 0x000000, alpha: 0.28 });
-
-  const label = makeText('', { fontSize: 8.5, fontWeight: '700', fill: 0x0a0b0d });
-  label.anchor.set(0.5);
-
-  const tip = makeText('', { fontSize: 7.5, fill: COLOR.inkDim });
-  tip.anchor.set(0.5);
-  tip.position.set(0, 26);
-
-  // Fondo de burbuja de acción — visible solo cuando el agente tiene texto de acción
-  const bubble = new PIXI.Graphics();
-  bubble.visible = false;
-  bubble.position.set(0, 0);
-
-  container.addChild(ringOuter, ring, diamond, inner, label, bubble, tip);
-  Object.assign(container, { __ring: ring, __ringOuter: ringOuter, __diamond: diamond, __label: label, __tip: tip, __bubble: bubble });
-  return container;
-}
-
 type WithSlots<T> = PIXI.Container & T;
-
 type Ripple = { x: number; y: number; startMs: number; color: number };
 
 export function WorldCanvas({
@@ -256,7 +311,13 @@ export function WorldCanvas({
     let destroyed = false;
     const app = new PIXI.Application();
     const engine = new WorldEngine();
-    const roomGfx = new Map<string, { container: PIXI.Container; alertDot: PIXI.Graphics; pulseRing: PIXI.Graphics; activeDot: PIXI.Graphics; color: number }>();
+    const roomGfx = new Map<string, {
+      container: PIXI.Container;
+      alertDot: PIXI.Graphics;
+      pulseRing: PIXI.Graphics;
+      activeDot: PIXI.Graphics;
+      color: number;
+    }>();
     const tokenGfx = new Map<string, PIXI.Container>();
     const seenEventIds = new Set<string>();
     const ripples: Ripple[] = [];
@@ -326,9 +387,9 @@ export function WorldCanvas({
       app.stage.addChild(world);
 
       const gridGfx = buildGrid(1000, 1000);
-      const trailGfx = new PIXI.Graphics();   // rastros de movimiento de agentes
-      const scanGfx = new PIXI.Graphics();    // scan line diagonal de ambiente
-      const rippleGfx = new PIXI.Graphics();  // ondas de eventos en vivo
+      const trailGfx = new PIXI.Graphics();
+      const scanGfx = new PIXI.Graphics();
+      const rippleGfx = new PIXI.Graphics();
       const orbit = new PIXI.Graphics();
       const spokes = new PIXI.Graphics();
       const hubContainer = buildHub() as WithSlots<{ __label: PIXI.Text; __sublabel: PIXI.Text; __glow: PIXI.Graphics }>;
@@ -342,14 +403,14 @@ export function WorldCanvas({
         if (sw === 0 || sh === 0) return;
         const allX = [hub.x, ...rooms.map((r) => r.x)];
         const allY = [hub.y, ...rooms.map((r) => r.y)];
-        const margin = 120;
+        const margin = 140;
         const minX = Math.min(...allX) - margin;
         const maxX = Math.max(...allX) + margin;
         const minY = Math.min(...allY) - margin;
         const maxY = Math.max(...allY) + margin;
         const sceneW = maxX - minX;
         const sceneH = maxY - minY;
-        const scale = Math.min(sw / sceneW, sh / sceneH, 1.5);
+        const scale = Math.min(sw / sceneW, sh / sceneH, 1.4);
         const cx = (minX + maxX) / 2;
         const cy = (minY + maxY) / 2;
         world.scale.set(scale);
@@ -373,7 +434,6 @@ export function WorldCanvas({
 
         const t = performance.now() / 1000;
 
-        // Lookup rápido de token state por ID
         const tokenState = new Map<string, { working: boolean; justActed: boolean; action?: string }>();
         for (const tk of tokens) {
           tokenState.set(tk.id, { working: tk.working, justActed: tk.justActed ?? false, action: tk.action });
@@ -383,31 +443,32 @@ export function WorldCanvas({
         const orbitRx = 420, orbitRy = 400;
         orbit.clear()
           .ellipse(hub.x, hub.y, orbitRx, orbitRy)
-          .stroke({ width: 0.8, color: COLOR.line, alpha: 0.7 });
+          .stroke({ width: 0.8, color: COLOR.line, alpha: 0.8 });
 
         hubContainer.position.set(hub.x, hub.y);
         hubContainer.__label.text = hub.label;
         hubContainer.__sublabel.text = hub.sublabel;
-        hubContainer.__glow.alpha = 0.5 + 0.5 * Math.sin(t * 1.4);
+        hubContainer.__glow.alpha = 0.45 + 0.55 * Math.sin(t * 1.3);
         Object.assign(hubContainer, { __onClick: hub.onClick });
 
-        // Spokes: líneas hub→sala + pulsos de datos
+        // Spokes + data pulses
         spokes.clear();
         for (const r of rooms) {
-          const lineAlpha = r.active ? 0.28 : 0.15;
-          spokes.moveTo(hub.x, hub.y).lineTo(r.x, r.y).stroke({ width: r.active ? 1.5 : 1, color: r.color, alpha: lineAlpha });
+          const lineAlpha = r.active ? 0.3 : 0.14;
+          spokes.moveTo(hub.x, hub.y).lineTo(r.x, r.y)
+            .stroke({ width: r.active ? 1.5 : 0.8, color: r.color, alpha: lineAlpha });
         }
-        // Pulsos: más paquetes y más rápido cuando el agente está activo
         for (const r of rooms) {
-          const numPackets = r.active ? 3 : 2;
-          const speed = r.active ? 0.26 : 0.18;
+          const numPackets = r.active ? 4 : 2;
+          const speed = r.active ? 0.28 : 0.16;
           for (let p = 0; p < numPackets; p++) {
-            const progress = ((t * speed + hashOffset(r.id) + p / numPackets) % 1);
+            const progress = (t * speed + hashOffset(r.id) + p / numPackets) % 1;
             const px = hub.x + (r.x - hub.x) * progress;
             const py = hub.y + (r.y - hub.y) * progress;
             const fade = Math.sin(progress * Math.PI);
-            const sz = r.active ? 3.5 : 2.5;
-            spokes.circle(px, py, sz).fill({ color: r.color, alpha: (r.active ? 0.18 : 0.1) + 0.6 * fade });
+            const sz = r.active ? 3.5 : 2.2;
+            spokes.circle(px, py, sz)
+              .fill({ color: r.color, alpha: (r.active ? 0.2 : 0.1) + 0.6 * fade });
           }
         }
 
@@ -421,31 +482,76 @@ export function WorldCanvas({
             world.addChild(entry.container);
             roomGfx.set(r.id, entry);
           }
-          const c = entry.container as WithSlots<{ __label: PIXI.Text; __sublabel: PIXI.Text; __accentBar: PIXI.Graphics; __glowOuter: PIXI.Graphics }>;
+          const c = entry.container as WithSlots<{
+            __label: PIXI.Text;
+            __sublabel: PIXI.Text;
+            __accentBar: PIXI.Graphics;
+            __glowOuter: PIXI.Graphics;
+            __interiorFill: PIXI.Graphics;
+            __bottomBar: PIXI.Graphics;
+          }>;
           c.position.set(r.x, r.y);
           c.__label.text = r.label;
           c.__sublabel.text = r.sublabel;
           Object.assign(c, { __onClick: r.onClick });
 
-          // Dot de alerta (decisión pendiente)
+          // Color efectivo — ámbar si hay error, color base si no
+          const effectColor = r.hasError ? COLOR.amber : r.color;
+
+          // Alert dot
           entry.alertDot.visible = r.pending;
-          if (r.pending) entry.alertDot.alpha = 0.5 + 0.5 * Math.sin(t * 5);
+          if (r.pending) entry.alertDot.alpha = 0.6 + 0.4 * Math.sin(t * 5);
 
-          // Dot de actividad (agente trabajando)
+          // Active dot
           entry.activeDot.visible = r.active;
-          if (r.active) entry.activeDot.alpha = 0.5 + 0.5 * Math.sin(t * 4 + 1);
+          if (r.active) entry.activeDot.alpha = 0.6 + 0.4 * Math.sin(t * 4 + 1);
 
-          // Glow exterior más intenso cuando activo
-          c.__glowOuter.alpha = r.active ? 0.6 + 0.4 * Math.sin(t * 2) : 1;
+          // Outer glow — intensidad escalada por activityLevel
+          const al = r.activityLevel ?? (r.active ? 1 : 0.06);
+          if (r.active) {
+            c.__glowOuter.alpha = al * (0.55 + 0.45 * Math.sin(t * 1.8));
+          } else if (r.hasError) {
+            c.__glowOuter.alpha = 0.3 + 0.2 * Math.sin(t * 4);
+          } else if (r.pending) {
+            c.__glowOuter.alpha = 0.35 + 0.25 * Math.sin(t * 2.5);
+          } else {
+            // salas idle: dim proporcional a actividad pasada
+            c.__glowOuter.alpha = Math.max(0.04, al * 0.6);
+          }
 
-          // Pulse ring para pending
+          // Color del glow outer si hay error
+          if (r.hasError) {
+            (c.__glowOuter as PIXI.Graphics).tint = COLOR.amber;
+          } else {
+            (c.__glowOuter as PIXI.Graphics).tint = 0xffffff;
+          }
+
+          // Interior fill — respira según actividad
+          c.__interiorFill.alpha = r.active
+            ? 0.7 + 0.3 * Math.sin(t * 2.2)
+            : Math.max(0.02, al * 0.5);
+
+          // Bottom activity bar — se llena con activityLevel base + pulso si activo
+          c.__bottomBar.clear();
+          if (al > 0.05) {
+            const barW = RW - 10;
+            const fillFraction = r.active
+              ? 0.3 + 0.7 * Math.abs(Math.sin(t * 0.4 + hashOffset(r.id) * Math.PI))
+              : al;
+            const fillW = barW * fillFraction;
+            c.__bottomBar
+              .roundRect(-barW / 2, RH / 2 - 9, fillW, 3, 1)
+              .fill({ color: effectColor, alpha: r.active ? 0.85 : 0.45 });
+          }
+
+          // Pulse ring para pending o error
           entry.pulseRing.clear();
-          if (r.pending) {
-            const W = 114, H = 70, CUT = 11;
-            const s = 1 + Math.sin(t * 3) * 0.025;
+          if (r.pending || r.hasError) {
+            const pulseColor = r.hasError ? COLOR.amber : COLOR.ember;
+            const s = 1 + Math.sin(t * 2.8) * 0.02;
             entry.pulseRing
-              .poly(cutPoly(W * s, H * s, CUT))
-              .stroke({ width: 1.5, color: COLOR.ember, alpha: 0.3 + 0.2 * Math.sin(t * 3) });
+              .roundRect(-RW * s / 2, -RH * s / 2, RW * s, RH * s, 4)
+              .stroke({ width: 1.5, color: pulseColor, alpha: 0.28 + 0.18 * Math.sin(t * 2.8) });
           }
         }
         for (const [id, entry] of roomGfx) {
@@ -488,19 +594,18 @@ export function WorldCanvas({
 
         engine.tick();
 
-        // Trails: rastros de movimiento en espacio-mundo
+        // Trails
         trailGfx.clear();
         for (const node of engine.all()) {
           const trail = node.trail;
           for (let i = 0; i < trail.length; i++) {
             const frac = (i + 1) / trail.length;
-            trailGfx
-              .circle(trail[i].x, trail[i].y, 1.2 + frac * 2)
-              .fill({ color: node.color, alpha: frac * 0.2 });
+            trailGfx.circle(trail[i].x, trail[i].y, 1 + frac * 1.8)
+              .fill({ color: node.color, alpha: frac * 0.18 });
           }
         }
 
-        // Actualizar posición y animación de tokens
+        // Token visuals
         for (const node of engine.all()) {
           const gfx = tokenGfx.get(node.id) as WithSlots<{
             __ring: PIXI.Graphics;
@@ -509,6 +614,8 @@ export function WorldCanvas({
             __label: PIXI.Text;
             __tip: PIXI.Text;
             __bubble: PIXI.Graphics;
+            __nameText: PIXI.Text;
+            __nameBg: PIXI.Graphics;
           }> | undefined;
           if (!gfx) continue;
 
@@ -516,106 +623,107 @@ export function WorldCanvas({
           gfx.__diamond.tint = node.color;
           gfx.__label.text = node.label[0]?.toUpperCase() || '';
 
+          // Name badge
+          gfx.__nameText.text = node.label;
+          gfx.__nameBg.clear();
+          const nw = node.label.length * 5 + 12;
+          gfx.__nameBg
+            .roundRect(-nw / 2, -14 - 12, nw, 12, 3)
+            .fill({ color: COLOR.panel, alpha: 0.85 })
+            .stroke({ width: 0.5, color: node.color, alpha: 0.5 });
+
           const state = tokenState.get(node.id);
           const isWorking = state?.working ?? false;
           const isJustActed = state?.justActed ?? false;
 
-          // Burbuja de acción: muestra qué está haciendo el agente ahora mismo
+          // Action bubble
           const actionText = (isWorking || isJustActed) ? (state?.action || '') : '';
           if (actionText) {
-            const truncated = actionText.length > 22 ? actionText.slice(0, 22) + '…' : actionText;
+            const truncated = actionText.length > 20 ? actionText.slice(0, 20) + '…' : actionText;
             gfx.__tip.text = truncated;
             gfx.__tip.style.fill = isJustActed ? COLOR.amber : COLOR.signal;
-            const bw = Math.min(truncated.length * 5.4 + 16, 148);
+            const bw = Math.min(truncated.length * 5.2 + 14, 140);
             gfx.__bubble.clear()
-              .roundRect(-bw / 2, 18, bw, 13, 3)
+              .roundRect(-bw / 2, 17, bw, 12, 3)
               .fill({ color: COLOR.panel, alpha: 0.88 })
-              .stroke({ width: 0.5, color: isJustActed ? COLOR.amber : COLOR.signal, alpha: 0.5 });
+              .stroke({ width: 0.5, color: isJustActed ? COLOR.amber : COLOR.signal, alpha: 0.55 });
             gfx.__bubble.visible = true;
           } else {
-            gfx.__tip.text = node.label;
-            gfx.__tip.style.fill = COLOR.inkDim;
+            gfx.__tip.text = '';
             gfx.__bubble.visible = false;
           }
 
           if (isJustActed) {
-            // Estado más intenso: anillo doble pulsante, rotación del diamante
-            const fastPulse = 0.5 + 0.5 * Math.sin(t * 10);
-            gfx.__ring.alpha = 0.5 + 0.4 * fastPulse;
-            gfx.__ring.scale.set(0.8 + 0.35 * fastPulse);
-            gfx.__ring.tint = COLOR.amber;          // amarillo para "acaba de actuar"
-            gfx.__ringOuter.alpha = 0.2 + 0.3 * (1 - fastPulse);
-            gfx.__ringOuter.scale.set(0.9 + 0.2 * fastPulse);
+            const fp = 0.5 + 0.5 * Math.sin(t * 9);
+            gfx.__ring.alpha = 0.5 + 0.4 * fp;
+            gfx.__ring.scale.set(0.85 + 0.3 * fp);
+            gfx.__ring.tint = COLOR.amber;
+            gfx.__ringOuter.alpha = 0.2 + 0.25 * (1 - fp);
+            gfx.__ringOuter.scale.set(0.9 + 0.18 * fp);
             gfx.__ringOuter.tint = COLOR.ember;
-            gfx.__diamond.rotation = Math.sin(t * 7) * 0.18; // pequeña oscilación
+            gfx.__diamond.rotation = Math.sin(t * 6) * 0.0;
           } else if (isWorking) {
-            // Trabajando: anillo simple pulsando despacio, color ember
-            const slowPulse = 0.5 + 0.5 * Math.sin(t * 3.5);
-            gfx.__ring.alpha = 0.2 + 0.3 * slowPulse;
-            gfx.__ring.scale.set(0.9 + 0.15 * slowPulse);
+            const sp = 0.5 + 0.5 * Math.sin(t * 3.2);
+            gfx.__ring.alpha = 0.2 + 0.28 * sp;
+            gfx.__ring.scale.set(0.88 + 0.18 * sp);
             gfx.__ring.tint = COLOR.ember;
             gfx.__ringOuter.alpha = 0;
-            gfx.__diamond.rotation = 0;
           } else {
-            // Idle: sin anillos
             gfx.__ring.alpha = 0;
             gfx.__ringOuter.alpha = 0;
-            gfx.__diamond.rotation = 0;
           }
         }
 
-        // Scan line diagonal de ambiente — barre el mundo cada 10s
-        const SCAN_PERIOD = 10;
+        // Scan line
+        const SCAN_PERIOD = 12;
         const scanPhase = (t % SCAN_PERIOD) / SCAN_PERIOD;
         const scanBase = hub.x - 700;
         const scanEnd = hub.x + 700;
         const scanX = scanBase + scanPhase * (scanEnd - scanBase + 600) - 100;
         scanGfx.clear()
-          .moveTo(scanX - 200, hub.y - 700)
-          .lineTo(scanX + 200, hub.y + 700)
-          .stroke({ width: 2, color: COLOR.signal, alpha: 0.03 })
-          .moveTo(scanX - 100, hub.y - 700)
-          .lineTo(scanX + 100, hub.y + 700)
-          .stroke({ width: 1, color: COLOR.signal, alpha: 0.055 });
+          .moveTo(scanX - 200, hub.y - 700).lineTo(scanX + 200, hub.y + 700)
+          .stroke({ width: 2, color: COLOR.signal, alpha: 0.025 })
+          .moveTo(scanX - 80, hub.y - 700).lineTo(scanX + 80, hub.y + 700)
+          .stroke({ width: 1, color: COLOR.signal, alpha: 0.045 });
 
-        // Detectar eventos nuevos → crear ripples
+        // Ripples from events
         const { events } = propsRef.current;
         for (const ev of events) {
           if (!seenEventIds.has(ev.id)) {
             seenEventIds.add(ev.id);
             const room = rooms.find((r) => r.id === ev.roomId);
             if (room) {
-              const rippleColor = ev.type.includes('error') ? COLOR.ember
-                : ev.type.includes('done') ? COLOR.signal
-                : COLOR.amber;
+              const rippleColor = ev.type.includes('error')
+                ? COLOR.ember
+                : ev.type.includes('done')
+                  ? COLOR.signal
+                  : COLOR.amber;
               ripples.push({ x: room.x, y: room.y, startMs: performance.now(), color: rippleColor });
             }
           }
         }
 
-        // Dibujar ripples — forma cutPoly que replica el edificio
         const now = performance.now();
         rippleGfx.clear();
         for (let i = ripples.length - 1; i >= 0; i--) {
           const r = ripples[i];
           const age = (now - r.startMs) / 1800;
           if (age >= 1) { ripples.splice(i, 1); continue; }
-          const RW = 114, RH = 70, RCUT = 11;
           for (let ring = 0; ring < 2; ring++) {
-            const ringAge = Math.min(1, age + ring * 0.3);
+            const ringAge = Math.min(1, age + ring * 0.28);
             if (ringAge >= 1) continue;
-            const scale = 1 + ringAge * 2.8;
-            const alpha = (1 - ringAge) * (ring === 0 ? 0.55 : 0.25);
-            const pts = cutPoly(RW * scale, RH * scale, RCUT * scale);
-            const shifted = pts.map((v, idx) => v + (idx % 2 === 0 ? r.x : r.y));
-            rippleGfx.poly(shifted).stroke({ width: ring === 0 ? 1.5 : 0.8, color: r.color, alpha });
+            const scale = 1 + ringAge * 2.6;
+            const alpha = (1 - ringAge) * (ring === 0 ? 0.55 : 0.22);
+            rippleGfx
+              .roundRect(r.x - (RW * scale) / 2, r.y - (RH * scale) / 2, RW * scale, RH * scale, 4 * scale)
+              .stroke({ width: ring === 0 ? 1.5 : 0.8, color: r.color, alpha });
           }
         }
 
-        // Minimapa
+        // Minimap
         const allX = [hub.x, ...rooms.map((r) => r.x)];
         const allY = [hub.y, ...rooms.map((r) => r.y)];
-        const pad = 120;
+        const pad = 130;
         const sceneMinX = Math.min(...allX) - pad;
         const sceneMinY = Math.min(...allY) - pad;
         const sceneMaxX = Math.max(...allX) + pad;
@@ -629,31 +737,24 @@ export function WorldCanvas({
 
         minimapBg.clear()
           .roundRect(0, 0, MINIMAP_W, MINIMAP_H, 3)
-          .fill({ color: COLOR.minimapBg, alpha: 0.9 })
-          .stroke({ width: 1, color: COLOR.line, alpha: 0.7 });
+          .fill({ color: COLOR.minimapBg, alpha: 0.92 })
+          .stroke({ width: 1, color: COLOR.line, alpha: 0.8 });
 
         minimapDots.clear();
         const toMmX = (wx: number) => ((wx - sceneMinX) / sceneW) * MINIMAP_W;
         const toMmY = (wy: number) => ((wy - sceneMinY) / sceneH) * MINIMAP_H;
 
-        minimapDots.circle(toMmX(hub.x), toMmY(hub.y), 3.5).fill(COLOR.ember);
+        minimapDots.circle(toMmX(hub.x), toMmY(hub.y), 4).fill(COLOR.ember);
         for (const r of rooms) {
-          minimapDots.rect(toMmX(r.x) - 3, toMmY(r.y) - 2, 6, 4).fill(r.color);
+          minimapDots.roundRect(toMmX(r.x) - 4, toMmY(r.y) - 3, 8, 5, 1).fill(r.color);
           if (r.active) {
-            minimapDots.circle(toMmX(r.x), toMmY(r.y), 6).stroke({ width: 0.8, color: r.color, alpha: 0.4 });
+            minimapDots.circle(toMmX(r.x), toMmY(r.y), 7).stroke({ width: 0.8, color: r.color, alpha: 0.4 });
           }
         }
         for (const node of engine.all()) {
           const state = tokenState.get(node.id);
-          const dotColor = (state?.justActed) ? COLOR.amber : (state?.working ? COLOR.ember : COLOR.signal);
-          minimapDots
-            .poly([
-              toMmX(node.pos.x), toMmY(node.pos.y) - 3,
-              toMmX(node.pos.x) + 3, toMmY(node.pos.y),
-              toMmX(node.pos.x), toMmY(node.pos.y) + 3,
-              toMmX(node.pos.x) - 3, toMmY(node.pos.y),
-            ])
-            .fill(dotColor);
+          const dotColor = state?.justActed ? COLOR.amber : state?.working ? COLOR.ember : COLOR.signal;
+          minimapDots.circle(toMmX(node.pos.x), toMmY(node.pos.y), 2.5).fill(dotColor);
         }
 
         const vpLeft = -world.position.x / world.scale.x;
@@ -661,8 +762,8 @@ export function WorldCanvas({
         const vpW = sw / world.scale.x;
         const vpH = sh / world.scale.x;
         minimapViewport.clear()
-          .rect(toMmX(vpLeft), toMmY(vpTop), (vpW / sceneW) * MINIMAP_W, (vpH / sceneH) * MINIMAP_H)
-          .stroke({ width: 1, color: COLOR.minimapViewport, alpha: 0.7 });
+          .roundRect(toMmX(vpLeft), toMmY(vpTop), (vpW / sceneW) * MINIMAP_W, (vpH / sceneH) * MINIMAP_H, 2)
+          .stroke({ width: 1, color: COLOR.minimapViewport, alpha: 0.75 });
       });
     })();
 

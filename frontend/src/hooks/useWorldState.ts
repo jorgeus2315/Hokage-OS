@@ -60,6 +60,20 @@ export function useWorldState({
     const last = lastRunFor(agentId);
     return !!last && Date.now() - new Date(last.started_at).getTime() < JUST_ACTED_MS;
   };
+  const calcActivityLevel = (agentId: number): number => {
+    const last = lastRunFor(agentId);
+    if (!last) return 0;
+    const ms = Date.now() - new Date(last.started_at).getTime();
+    if (ms < 5 * 60_000) return 1.0;
+    if (ms < 15 * 60_000) return 0.72;
+    if (ms < 60 * 60_000) return 0.42;
+    if (ms < 3 * 60 * 60_000) return 0.2;
+    return 0.06;
+  };
+  const hasRecentError = (agentId: number): boolean => {
+    const last = lastRunFor(agentId);
+    return !!last && (last.status === 'error' || last.status === 'failed');
+  };
 
   const [atHub, setAtHub] = useState<Record<number, boolean>>({});
   const runsRef = useRef(runs);
@@ -129,6 +143,8 @@ export function useWorldState({
       sublabel: agentWorking && currentAction ? currentAction : (agent?.name || '—'),
       pending: pending.some((d) => d.agent_id === agent?.id),
       active: agentWorking,
+      activityLevel: agent ? calcActivityLevel(agent.id) : 0,
+      hasError: agent ? hasRecentError(agent.id) : false,
       color: Number(b.color.replace('#', '0x')),
       onClick: () => onEnterBuilding(b),
     };

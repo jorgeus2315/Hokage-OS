@@ -189,6 +189,8 @@ export function MapView({
               sublabel: agentWorking && currentAction ? currentAction : (agent?.name || '—'),
               pending: pending.some((d) => d.agent_id === agent?.id),
               active: agentWorking,
+              activityLevel: agentWorking ? 1.0 : 0.06,
+              hasError: false,
               color: Number(b.color.replace('#', '0x')),
               onClick: () => onEnterBuilding(b),
             };

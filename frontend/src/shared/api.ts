@@ -124,4 +124,29 @@ export const api = {
     }),
   retryObjective: (id: number) =>
     req<import('./types').Objective>(`/objectives/${id}/retry`, { method: 'POST' }),
+
+  // Prompts y configuración de agentes
+  getAgentPrompt: (agentId: number) =>
+    req<{ content: string }>(`/agents/${agentId}/prompt`),
+  setAgentPrompt: (agentId: number, content: string) =>
+    req(`/agents/${agentId}/prompt`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }),
+    }),
+  updateAgent: (agentId: number, payload: { name?: string; model?: string }) =>
+    req(`/agents/${agentId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+
+  // Prompt maestro global
+  getMasterPrompt: () => req<{ content: string }>('/config/master-prompt'),
+  setMasterPrompt: (content: string) =>
+    req('/config/master-prompt', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }),
+    }),
 };

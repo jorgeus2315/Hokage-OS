@@ -171,17 +171,26 @@ export function GameLayout() {
           <div className="hk-game-glass" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', maxHeight: '100%' }}>
             <div className="hk-game-rail-title">
               <Led state={wsConnected ? 'on' : 'idle'} />
-              CREW · {agents.length}
+              SHIP CREW · {agents.length}
             </div>
             <div style={{ overflowY: 'auto', flex: 1 }}>
               {agents.map((a) => {
                 const building = allDepts.find((b) => b.role === a.role);
                 const last = runs.find((r) => r.agent_id === a.id);
                 const working = isWorking(a.id);
+                const color = building?.color || '#4fd1c5';
+                let timeAgo = '';
+                if (last) {
+                  const mins = Math.round(
+                    (Date.now() - new Date(last.started_at).getTime()) / 60000,
+                  );
+                  timeAgo = mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h`;
+                }
                 return (
                   <div
                     key={a.id}
-                    className="hk-game-agent-row"
+                    className={`hk-game-agent-row${working ? ' hk-game-agent-row--active' : ''}`}
+                    style={{ borderLeftColor: working ? color : 'transparent' }}
                     onClick={() => building && enterBuilding(building)}
                     role="button"
                     tabIndex={0}
@@ -192,11 +201,29 @@ export function GameLayout() {
                       }
                     }}
                   >
-                    <Led state={working ? 'alert' : 'on'} />
+                    <span
+                      className={`hk-game-agent-dot${working ? ' hk-game-agent-dot--active' : ''}`}
+                      style={working ? { background: color, boxShadow: `0 0 5px ${color}` } : {}}
+                    />
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div className="hk-game-agent-name">{a.name}</div>
-                      <div className="hk-game-agent-action">{last?.action || 'En espera'}</div>
+                      <div
+                        className="hk-game-agent-name"
+                        style={{ color: working ? color : undefined }}
+                      >
+                        {a.name}
+                      </div>
+                      <div className="hk-game-agent-role">{a.role}</div>
+                      {last && (
+                        <div className="hk-game-agent-action">
+                          {(last.action || 'En espera').slice(0, 26)}
+                        </div>
+                      )}
                     </div>
+                    {working ? (
+                      <span className="hk-game-badge hk-game-badge--live">LIVE</span>
+                    ) : timeAgo ? (
+                      <span className="hk-game-badge hk-game-badge--idle">{timeAgo}</span>
+                    ) : null}
                   </div>
                 );
               })}
@@ -204,61 +231,94 @@ export function GameLayout() {
           </div>
         </div>
 
-        {/* Feed de eventos: abajo-izquierda */}
+        {/* Acciones rápidas: abajo-izquierda */}
         <div className="hk-game-overlay hk-game-overlay--bottom-left">
-          <div className="hk-game-glass">
-            <div className="hk-game-feed-title">EVENTOS EN VIVO</div>
-            {liveEvents.length === 0 ? (
-              <div style={{ padding: '7px 10px', fontSize: 10, color: 'var(--ink-faint)', fontFamily: 'var(--font-mono)' }}>
-                Sin eventos todavía.
-              </div>
-            ) : (
-              liveEvents.slice(0, 6).map((e) => (
-                <div key={e._cid ?? `${e.type}-${e.timestamp}`} className="hk-game-event">
-                  <div
-                    className="hk-game-event-type"
-                    style={{
-                      color: e.type?.includes('error')
-                        ? 'var(--ember)'
-                        : e.type?.includes('done')
-                          ? 'var(--good)'
-                          : 'var(--signal)',
-                    }}
-                  >
-                    {e.type}
-                  </div>
-                  {e.from && <div className="hk-game-event-from">{e.from}</div>}
-                </div>
-              ))
-            )}
+          <div className="hk-game-actions-row">
+            <button
+              className={`hk-game-action-btn${pending.length > 0 ? ' hk-game-action-btn--alert' : ''}`}
+              onClick={() => setScreen('alerts')}
+            >
+              ⚠{pending.length > 0 ? ` ${pending.length}` : ' 0'}
+              <span className="hk-game-action-label">ALERTAS</span>
+            </button>
+            <button className="hk-game-action-btn" onClick={() => setScreen('comms')}>
+              ◈
+              <span className="hk-game-action-label">COMMS</span>
+            </button>
+            <button
+              className={`hk-game-action-btn${objectives.filter((o) => o.status === 'active').length > 0 ? ' hk-game-action-btn--signal' : ''}`}
+              onClick={() => setScreen('objetivos')}
+            >
+              ◎
+              <span className="hk-game-action-label">OBJETIVOS</span>
+            </button>
+            <button className="hk-game-action-btn" onClick={() => setScreen('ventures')}>
+              ⬡
+              <span className="hk-game-action-label">VENTURES</span>
+            </button>
           </div>
         </div>
 
-        {/* Acciones rápidas: abajo-derecha */}
-        <div className="hk-game-overlay hk-game-overlay--bottom-right">
-          <button
-            className={`hk-game-action-btn${pending.length > 0 ? ' hk-game-action-btn--alert' : ''}`}
-            onClick={() => setScreen('alerts')}
-          >
-            ⚠ Alertas{pending.length > 0 ? ` (${pending.length})` : ''}
-          </button>
-          <button className="hk-game-action-btn" onClick={() => setScreen('comms')}>
-            ◈ Comms
-          </button>
-          <button
-            className={`hk-game-action-btn${objectives.filter((o) => o.status === 'active').length > 0 ? ' hk-game-action-btn--signal' : ''}`}
-            onClick={() => setScreen('objetivos')}
-          >
-            ◎ Objetivos
-          </button>
-          <button className="hk-game-action-btn" onClick={() => setScreen('ventures')}>
-            ⬡ Ventures
-          </button>
+        {/* Log de sistema: panel derecho permanente */}
+        <div className={`hk-game-overlay hk-game-overlay--log${showBuildingPanel ? ' hk-game-overlay--log-hidden' : ''}`}>
+          <div className="hk-game-log">
+            <div className="hk-game-log-header">
+              <span
+                className="hk-led"
+                style={{
+                  background: wsConnected ? 'var(--good)' : 'var(--ember)',
+                  boxShadow: wsConnected ? '0 0 5px var(--good)' : '0 0 5px var(--ember)',
+                }}
+              />
+              <span>SISTEMA EN VIVO</span>
+              <span style={{ marginLeft: 'auto', color: 'var(--ink-faint)', fontSize: 8 }}>
+                {liveEvents.length}
+              </span>
+            </div>
+            <div className="hk-game-log-body">
+              {liveEvents.length === 0 ? (
+                <div className="hk-game-log-empty">Sin actividad…</div>
+              ) : (
+                liveEvents.slice(0, 28).map((e) => {
+                  const isError = e.type?.includes('error');
+                  const isDone = e.type?.includes('done') || e.type?.includes('created');
+                  const iconColor = isError
+                    ? 'var(--ember)'
+                    : isDone
+                      ? 'var(--good)'
+                      : 'var(--signal)';
+                  const icon = isError ? '✕' : isDone ? '✓' : '▶';
+                  let timeAgo = '';
+                  if (e.timestamp) {
+                    const ms = Date.now() - new Date(e.timestamp).getTime();
+                    const secs = Math.floor(ms / 1000);
+                    if (secs < 60) timeAgo = `${secs}s`;
+                    else if (secs < 3600) timeAgo = `${Math.floor(secs / 60)}m`;
+                    else timeAgo = `${Math.floor(secs / 3600)}h`;
+                  }
+                  return (
+                    <div key={e._cid ?? `${e.type}-${e.timestamp}`} className="hk-game-log-entry">
+                      <span className="hk-game-log-icon" style={{ color: iconColor }}>{icon}</span>
+                      <div className="hk-game-log-content">
+                        <div className="hk-game-log-type" style={{ color: iconColor }}>
+                          {e.type}
+                        </div>
+                        {e.from && <div className="hk-game-log-from">{e.from}</div>}
+                      </div>
+                      {timeAgo && (
+                        <span className="hk-game-log-time">{timeAgo}</span>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
         </div>
 
         {/* Panel derecho: sala seleccionada */}
         {showBuildingPanel && (
-          <div className="hk-game-overlay hk-game-overlay--right">
+          <div className="hk-game-overlay hk-game-overlay--panel">
             <div className="hk-game-right-panel">
               <div className="hk-game-panel-header">
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -298,6 +358,7 @@ export function GameLayout() {
                   onApprove={approve}
                   onReject={reject}
                   onRunNow={runNow}
+                  onAgentUpdated={reload.loadAgents}
                 />
               </div>
             </div>

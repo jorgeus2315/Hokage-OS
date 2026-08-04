@@ -67,12 +67,14 @@ function toolToOpenRouterSchema(tool: ReturnType<typeof registry.get>) {
 
 export async function askAgent(agentId: number, userMessage: string): Promise<AskResult> {
   try {
-    const [promptRow, agentRow] = await Promise.all([
-      get<{ content: string }>('SELECT content FROM agent_prompts WHERE agent_id = ? AND active = 1', [agentId]),
-      get<{ role: string; model: string | null }>('SELECT role, model FROM agents WHERE id = ?', [agentId]),
+    const [promptRow, agentRow, masterRow] = await Promise.all([
+      get<{ content: string }>('SELECT content FROM agent_prompts WHERE agent_id = ? AND active = 1 ORDER BY version DESC LIMIT 1', [agentId]),
+      get<{ role: string; model: string | null; name: string }>('SELECT role, model, name FROM agents WHERE id = ?', [agentId]),
+      get<{ content: string }>('SELECT content FROM agent_prompts WHERE agent_id = 0 AND prompt_type = ? AND active = 1 ORDER BY version DESC LIMIT 1', ['master']),
     ]);
 
-    const basePrompt = promptRow?.content || 'Eres un agente de HOKAGE OS.';
+    const masterBlock = masterRow?.content ? `[CONTEXTO GLOBAL DEL SISTEMA]\n${masterRow.content}\n\n` : '';
+    const basePrompt = promptRow?.content || `Eres ${agentRow?.name ?? 'un agente'} de HOKAGE OS.`;
     const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
     const MODEL = agentRow?.model || (agentRow?.role ? modelForRole(agentRow.role) : process.env.AI_MODEL) || DEFAULT_MODEL;
 
@@ -85,7 +87,7 @@ export async function askAgent(agentId: number, userMessage: string): Promise<As
     const memoryBlock = memoryRows.length > 0
       ? '\n\n[LO QUE SÉ]\n' + memoryRows.map(m => `- ${m.key}: ${m.value}`).join('\n')
       : '';
-    const systemPrompt = basePrompt + memoryBlock;
+    const systemPrompt = masterBlock + basePrompt + memoryBlock;
 
     // Construir tools disponibles para este agente (solo si el modelo lo soporta)
     const availableTools = modelSupportsTools(MODEL)
