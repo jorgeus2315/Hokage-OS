@@ -110,3 +110,16 @@ export interface ContentCreateOutput {
   contentId: number;
   keyword: string;
 }
+
+// Fase 3 de la migración marcadores → Tool Calling (HOKAGE_CORE_SPECIFICATION_v1.md §2).
+// Solo disponible para roles tool-capable — operaciones/soporte (Llama 3.1 8B) siguen en
+// [MEMORIA: k=v] de forma permanente, no como transición.
+export interface MemoryWriteInput {
+  key: string;
+  value: string;
+}
+
+export interface MemoryWriteOutput {
+  key: string;
+  saved: boolean;
+}

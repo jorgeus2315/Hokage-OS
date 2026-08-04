@@ -28,15 +28,18 @@ const TOOL_CAPABLE_MODELS = new Set([
 
 // Tools disponibles por rol. Solo se incluyen en la llamada a OpenRouter
 // si el modelo del agente soporta function calling.
+// memory.write (Fase 3) solo va a roles tool-capable (ver TOOL_CAPABLE_MODELS arriba).
+// operaciones/soporte, en Llama 3.1 8B, se quedan permanentemente en [MEMORIA: k=v] —
+// no es una omisión temporal, es la realidad del modelo (ver HOKAGE_CORE_SPECIFICATION_v1.md §2).
 const AGENT_TOOLS: Record<string, string[]> = {
-  ceo:          ['web.browser'],
-  investigador: ['google.trends', 'web.browser', 'trend.report'],
-  contenido:    ['web.browser', 'content.create'],
-  trafico:      ['google.trends', 'web.browser'],
-  finanzas:     [],
+  ceo:          ['web.browser', 'memory.write'],
+  investigador: ['google.trends', 'web.browser', 'trend.report', 'memory.write'],
+  contenido:    ['web.browser', 'content.create', 'memory.write'],
+  trafico:      ['google.trends', 'web.browser', 'memory.write'],
+  finanzas:     ['memory.write'],
   operaciones:  [],
   soporte:      [],
-  hermes:       ['system.exec'],
+  hermes:       ['system.exec', 'memory.write'],
 };
 
 export function modelForRole(role: string): string {

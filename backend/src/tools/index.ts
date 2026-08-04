@@ -1,10 +1,13 @@
 import type { Tool, ToolContext, ToolResult, ToolStatus, ToolPermission } from './base.js';
-import type { EtsyListingInput, EtsyListingOutput, ShopifyListingInput, ShopifyListingOutput, PrintifyProductInput, PrintifyProductOutput, GoogleTrendsInput, GoogleTrendsOutput, WebBrowserInput, WebBrowserOutput, SystemExecInput, SystemExecOutput, TrendReportInput, TrendReportOutput, ContentCreateInput, ContentCreateOutput } from './types.js';
+import type { EtsyListingInput, EtsyListingOutput, ShopifyListingInput, ShopifyListingOutput, PrintifyProductInput, PrintifyProductOutput, GoogleTrendsInput, GoogleTrendsOutput, WebBrowserInput, WebBrowserOutput, SystemExecInput, SystemExecOutput, TrendReportInput, TrendReportOutput, ContentCreateInput, ContentCreateOutput, MemoryWriteInput, MemoryWriteOutput } from './types.js';
 import { requestExec } from '../services/hermesService.js';
 import { createMarket } from '../services/marketService.js';
 import { createContent } from '../services/contentService.js';
+import { writeAgentMemory } from '../services/agentMemoryService.js';
 import { get } from '../db/init.js';
 import bus from '../config/eventBus.js';
+
+const MEMORY_KEY_PATTERN = /^[a-z_][a-z0-9_]*$/;
 
 function permission(
   scope: ToolPermission['scope'],
@@ -453,6 +456,56 @@ export const ContentCreateTool: Tool<ContentCreateInput, ContentCreateOutput> = 
     } catch (err: any) {
       console.error(`[TOOL:content.create] error:`, err.message);
       return result<ContentCreateOutput>(false, { error: `ContentCreate: ${err.message}` });
+    }
+  },
+};
+
+// Fase 3 de la migración marcadores → Tool Calling (HOKAGE_CORE_SPECIFICATION_v1.md §2).
+// Sustituye el parseo regex de [MEMORIA: clave=valor] en agentRuntime.ts, solo para roles
+// tool-capable. operaciones/soporte (Llama 3.1 8B) nunca reciben esta tool — se quedan en el
+// marcador de forma permanente, no como transición.
+export const MemoryWriteTool: Tool<MemoryWriteInput, MemoryWriteOutput> = {
+  id: 'memory.write',
+  name: 'Memory Write',
+  description: 'Guarda un hecho relevante en tu memoria privada para recordarlo en el futuro. Úsala en vez de escribir texto libre.',
+  category: 'pipeline',
+  status: 'ready',
+  permissions: permission('agent'),
+  requiredApproval: false,
+  inputSchema: stubInputSchema(
+    {
+      key:   { type: 'string', description: 'Clave en snake_case (ej: cliente_principal)', pattern: '^[a-z_][a-z0-9_]*$' },
+      value: { type: 'string', description: 'Valor a recordar, menos de 150 caracteres', maxLength: 150 },
+    },
+    ['key', 'value']
+  ),
+  outputSchema: stubOutputSchema({
+    key:   { type: 'string' },
+    saved: { type: 'boolean' },
+  }),
+  async estimateCost(_input) { return 0; },
+  async execute(input, ctx) {
+    try {
+      const key = input.key.trim().toLowerCase();
+      if (!MEMORY_KEY_PATTERN.test(key)) {
+        // A diferencia del regex viejo (que descartaba en silencio una clave mal formada),
+        // aquí el error vuelve al modelo en el resultado de la tool — puede corregir y reintentar.
+        return result<MemoryWriteOutput>(false, { error: `MemoryWrite: clave inválida "${key}" — debe ser snake_case` });
+      }
+      if (!ctx.agentId) {
+        return result<MemoryWriteOutput>(false, { error: 'MemoryWrite: falta agentId en el contexto' });
+      }
+      const value = input.value.trim().slice(0, 150);
+
+      await writeAgentMemory(ctx.agentId, key, value);
+
+      const agent = await get<{ name: string }>('SELECT name FROM agents WHERE id = ?', [ctx.agentId]);
+      console.log(`[TOOL:memory.write] ${agent?.name || 'agente'} → agent_memory :: ${key}`);
+
+      return result<MemoryWriteOutput>(true, { data: { key, saved: true }, cost: 0 });
+    } catch (err: any) {
+      console.error(`[TOOL:memory.write] error:`, err.message);
+      return result<MemoryWriteOutput>(false, { error: `MemoryWrite: ${err.message}` });
     }
   },
 };

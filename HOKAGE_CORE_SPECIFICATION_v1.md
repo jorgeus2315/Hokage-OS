@@ -180,6 +180,20 @@ Mismo patrón exacto que Fase 1, aplicado a `contenido` (Escritor, `claude-haiku
 
 Verificado con ejecución real (`POST /api/agents/3/run`): log `[TOOL:content.create] Escritor → content.created :: fase2-verify-token`, fila real en `content`, evento `content.created` publicado, automation `Contenido → Tráfico` disparada igual que antes. Dato de prueba limpiado de la BD tras verificar.
 
+### Fase 3 — `memory.write` — ✅ completada y verificada (2026-08-04)
+
+Primera fase que activa de verdad el camino dual: `memory.write` se añade a `AGENT_TOOLS` de los 6 roles tool-capable (`ceo`, `investigador`, `contenido`, `trafico`, `finanzas`, `hermes`) — `operaciones`/`soporte` (Llama 3.1 8B) no la reciben y siguen en `[MEMORIA: k=v]` de forma permanente, tal como se fijó al cerrar esta migración. El bloque `INSTRUCCIONES DE FORMATO` de `runAgent()` deja de ofrecer la línea del marcador solo a los roles que ya tienen la tool — mismo mecanismo de Fases 1-2, generalizado sin cambios de diseño.
+
+**Mejora de observabilidad real, no solo formal:** el regex viejo descartaba en silencio una clave mal formada (sin snake_case). `MemoryWriteTool.execute()` valida el formato y devuelve un error explícito al propio modelo dentro del resultado de la tool — el agente puede verlo y reintentar en el mismo turno. Es la primera vez que la migración entrega una mejora de comportamiento, no solo de arquitectura.
+
+**Hallazgo real de diseño, no anticipado en el plan — reportado antes de continuar, como pidió Jorge:** `writeAgentMemory()` vivía en `aiService.ts`, que importa `tools/registry.ts` → `tools/index.ts`. Si `MemoryWriteTool` hubiera importado esa función directamente desde `aiService.ts`, se cerraba un ciclo de imports (`aiService.ts → tools/registry.ts → tools/index.ts → aiService.ts`). **Fix:** la función se extrajo a un fichero nuevo y mínimo, `services/agentMemoryService.ts`, sin dependencia hacia `tools/`; `aiService.ts` la re-exporta para no romper a los importadores existentes (`agentRuntime.ts`). **Regla general que se deja anotada aquí para no redescubrirla:** cualquier Tool nuevo que necesite invocar una función que hoy vive dentro de `aiService.ts` corre el mismo riesgo de ciclo — se resuelve igual, extrayendo esa función a su propio servicio sin dependencia hacia `tools/`, antes de que el Tool la importe.
+
+**Verificación real, con las dos ramas del camino dual probadas por separado:**
+- Rol tool-capable (`investigador`, `POST /api/agents/2/run`): log `[TOOL:memory.write] Explorador → agent_memory :: <clave>`, fila real en `agent_memory` con el valor correcto.
+- Rol sin tool-calling (`operaciones`, Llama 3.1 8B, mismo endpoint): el marcador `[MEMORIA: ...]` sigue disponible en su prompt (verificado por código, sin cambios), y el rol ya tiene **257 filas históricas** en `agent_memory` escritas por esa vía en su ciclo autónomo normal — la ejecución manual de prueba con un prompt ad-hoc dio una respuesta de baja calidad (propio de Llama 3.1 8B con instrucciones atípicas), no una regresión: no es lo mismo "el modelo es limitado" que "la migración rompió algo", y aquí es lo primero, confirmado con datos históricos, no solo con la ejecución de prueba.
+
+Datos de prueba limpiados tras verificar.
+
 **Consecuencia si no se hace:** cada sistema nuevo (Memory System, Business Modules, paneles por sala) seguiría el reflejo de "añadir un marcador más" en vez de "añadir un tool" — la migración se volvería más cara cuanto más se tardara.
 
 ---

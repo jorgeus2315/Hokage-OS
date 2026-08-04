@@ -195,13 +195,18 @@ class AgentRuntime {
         formatLines.push('- Si acabas de crear contenido listo para distribuir, añade: [CONTENIDO: keyword | resumen de 1 linea]');
       }
       formatLines.push('- Si necesitas que Jorge apruebe algo (publicar contenido, gastar dinero, cambiar configuración), añade: [DECISION: título en menos de 80 caracteres]');
-      formatLines.push('- Si descubres un hecho relevante para recordar en el futuro, añade: [MEMORIA: clave_snake_case=valor en menos de 150 caracteres] (máximo 3 por respuesta)');
+      if (!roleTools.includes('memory.write')) {
+        formatLines.push('- Si descubres un hecho relevante para recordar en el futuro, añade: [MEMORIA: clave_snake_case=valor en menos de 150 caracteres] (máximo 3 por respuesta)');
+      }
       formatLines.push('- Usa los marcadores solo cuando realmente sean necesarios.');
       if (roleTools.includes('trend.report')) {
         formatLines.push('- Para reportar una tendencia, llama SIEMPRE a la tool trend.report — nunca uses [TENDENCIA: ...].');
       }
       if (roleTools.includes('content.create')) {
         formatLines.push('- Para registrar contenido creado, llama SIEMPRE a la tool content.create — nunca uses [CONTENIDO: ...].');
+      }
+      if (roleTools.includes('memory.write')) {
+        formatLines.push('- Para recordar un hecho relevante, llama SIEMPRE a la tool memory.write — nunca uses [MEMORIA: ...].');
       }
 
       const taskPrompt = `${task.context || task.taskType}

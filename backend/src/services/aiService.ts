@@ -229,13 +229,6 @@ export async function callAIJson<T = unknown>(systemPrompt: string, userMessage:
   }
 }
 
-// Escribe un hecho semántico en la memoria del agente.
-// Con el UNIQUE index en (agent_id, key) el INSERT REPLACE garantiza upsert sin duplicados.
-export async function writeAgentMemory(agentId: number, key: string, value: string): Promise<void> {
-  await run(
-    `INSERT INTO agent_memory (agent_id, key, value, category, updated_at)
-     VALUES (?, ?, ?, 'fact', datetime('now'))
-     ON CONFLICT(agent_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
-    [agentId, key, value]
-  );
-}
+// Movida a agentMemoryService.ts para evitar un ciclo de imports con tools/index.ts —
+// se re-exporta aquí para no romper a los importadores existentes (agentRuntime.ts).
+export { writeAgentMemory } from './agentMemoryService.js';
