@@ -1,3 +1,13 @@
+# Prompts Históricos — INIT_PROMPT
+> Categoría: histórico
+> Migrado desde `docs/prompts/INIT_PROMPT.md` — Fase 6 de la migración documental
+
+**Snapshot histórico, no arquitectura vigente.** Este documento era el prompt de reinicio de sesión usado en una fase temprana del proyecto (World Engine Fase 1, justo antes de la cámara libre). Varias piezas que describe ya no existen — tabla `businesses`, sistema de XP/logros, rutas muertas — todas eliminadas según el historial de commits. Se conserva como referencia de cómo evolucionó el pensamiento arquitectónico, igual que [[ARCHITECTURE (legacy)]]. Para el estado actual, consultar `HOKAGE_CORE_SPECIFICATION_v1.md` y las notas de `02_Sistemas`.
+
+---
+
+## Texto original del prompt
+
 # PROMPT DE INICIALIZACION — HOKAGE OS
 
 Copia y pega todo este documento como primer mensaje en un nuevo chat de Claude para continuar el desarrollo exactamente donde se quedo.
@@ -63,7 +73,7 @@ Vite proxy: `frontend/vite.config.ts` redirige `/api` a `http://localhost:3000`.
 
 ---
 
-## ARQUITECTURA ACTUAL
+## ARQUITECTURA ACTUAL (en el momento de este snapshot)
 
 ### Estructura de archivos
 
@@ -152,7 +162,7 @@ tienda (Tienda, trafico) | banco (Banco, finanzas) | taller (Taller, operaciones
 
 ---
 
-## HISTORIAL DE COMMITS
+## HISTORIAL DE COMMITS (al momento de este snapshot)
 
 ```
 a1a0f3c Fase 1 del World Engine: mapa migrado a PixiJS con paridad visual
@@ -178,15 +188,13 @@ El objetivo final es un ecosistema estilo tycoon donde:
 
 ---
 
-## HOJA DE RUTA (7 fases)
+## HOJA DE RUTA (7 fases, según este snapshot)
 
-Documentada en detalle en `docs/frontend-world-engine.md`.
-
-| Fase | Estado | Descripcion |
+| Fase | Estado (en el snapshot) | Descripcion |
 |------|--------|-------------|
 | 0 | HECHO | Diseno arquitectonico + mapa DOM/CSS |
 | 1 | HECHO | World Engine minimo con PixiJS, paridad visual |
-| **2** | **PENDIENTE — SIGUIENTE** | **Camera libre: pan + zoom + coordenadas de mundo + minimapa** |
+| 2 | PENDIENTE — SIGUIENTE (en el snapshot) | Camera libre: pan + zoom + coordenadas de mundo + minimapa |
 | 3 | Pendiente | Departamentos como datos en BD (tabla + endpoints) |
 | 4 | Pendiente | Agentes visibles con estados (arte placeholder) |
 | 5 | Pendiente | Eventos reales → animaciones (Event Adapter + Animation Director) |
@@ -195,7 +203,7 @@ Documentada en detalle en `docs/frontend-world-engine.md`.
 
 ---
 
-## FASE 2 — CAMERA LIBRE (siguiente a implementar)
+## FASE 2 — CAMERA LIBRE (instrucción original de continuación)
 
 ### Scope exacto
 
@@ -228,7 +236,7 @@ Documentada en detalle en `docs/frontend-world-engine.md`.
 
 ---
 
-## BUGS CONOCIDOS / NOTAS
+## BUGS CONOCIDOS / NOTAS (al momento de este snapshot)
 
 - **Ship Comms repetitivos**: los agentes repiten mensajes similares porque sus prompts autonomos no tienen suficiente contexto/memoria. No es un bug de UI.
 - **PixiJS ticker en tab de fondo**: el browser throttlea `requestAnimationFrame` en tabs no visibles. No es un bug real.
@@ -236,14 +244,9 @@ Documentada en detalle en `docs/frontend-world-engine.md`.
 
 ---
 
-## INSTRUCCION
+## Relacionado
 
-Continua con la **Fase 2 — Camera libre**. Lee los archivos listados arriba para entender el estado actual del codigo antes de empezar. Implementa en este orden:
-
-1. Introduce `worldContainer` en WorldCanvas.tsx
-2. Convierte coordenadas de % a world units (types.ts, MapView.tsx, WorldCanvas.tsx)
-3. Implementa pan (drag)
-4. Implementa zoom (wheel)
-5. Anade minimapa
-
-Verifica que el mapa sigue funcionando correctamente despues de cada paso. No rompas nada que ya funcione.
+- [[ARCHITECTURE (legacy)]]
+- [[Núcleo - Arquitectura del Core]]
+- [[Frontend World Engine]]
+- [[INDEX]]

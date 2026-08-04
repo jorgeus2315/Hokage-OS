@@ -175,6 +175,24 @@ async function runMigrations(): Promise<void> {
     console.log('[DB] Migración: agent_costs.business_id ya no referencia la tabla businesses (eliminada)');
   }
 
+  // Columna nueva en departments — el WorldLayoutEngine necesita distinguir una posición
+  // calculada por el motor de una posición fijada a mano por Jorge (Hallazgo 1, auditoría
+  // de arquitecto 2026-08-05). 0 = el motor puede recalcular; 1 = fijada, nunca se toca
+  // salvo acción explícita del usuario.
+  const hadPositionLocked = await columnExists('departments', 'position_locked');
+  if (!hadPositionLocked) {
+    await run(`ALTER TABLE departments ADD COLUMN position_locked INTEGER NOT NULL DEFAULT 0`);
+
+    // Migración de una sola vez, empaquetada aquí a propósito: los departamentos no-hub
+    // nacían active=1 por el DEFAULT de la columna, contradiciendo el mecanismo de niebla
+    // de La Fundación (Hallazgo 2, misma auditoría) — solo Torre Hokage debe nacer activa,
+    // el resto se revela mediante ese flujo. Se corrige una única vez aquí, gateado por la
+    // misma condición de arriba: después de esta migración, active 0→1 solo lo cambia
+    // La Fundación o una acción explícita de Jorge, nunca de nuevo un arranque del servidor.
+    await run(`UPDATE departments SET active = 0 WHERE is_hub = 0`);
+    console.log('[DB] Migración: departments.position_locked añadida; departamentos no-hub normalizados a active=0 (niebla de La Fundación)');
+  }
+
   // Mantener sincronizado el modelo óptimo de cada agente con la fuente de verdad (agentModels.ts)
   const agents = await all<{ id: number; role: string; model: string | null }>('SELECT id, role, model FROM agents');
   for (const agent of agents) {
@@ -548,10 +566,13 @@ async function seedDepartments(): Promise<void> {
     { key: 'taller', name: 'Taller',       desc: 'Sala técnica',    role: 'operaciones',   glyph: 'workshop', color: '#4f8cff', pos_x: 619.6,  pos_y: 876.4,  is_hub: 0, sort_order: 5 },
   ];
   for (const d of seed) {
+    // Solo Torre Hokage (is_hub) nace activa — el resto se revela vía La Fundación
+    // (Hallazgo 2, auditoría de arquitecto 2026-08-05). Mismo campo que ya usa la
+    // reactivación de Hermes (§9.1).
     await run(
-      `INSERT INTO departments (key,name,desc,role,glyph,color,pos_x,pos_y,is_hub,sort_order)
-       VALUES (?,?,?,?,?,?,?,?,?,?)`,
-      [d.key, d.name, d.desc, d.role, d.glyph, d.color, d.pos_x, d.pos_y, d.is_hub, d.sort_order]
+      `INSERT INTO departments (key,name,desc,role,glyph,color,pos_x,pos_y,is_hub,sort_order,active)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+      [d.key, d.name, d.desc, d.role, d.glyph, d.color, d.pos_x, d.pos_y, d.is_hub, d.sort_order, d.is_hub]
     );
   }
   console.log('[DB] Departamentos sembrados correctamente');
@@ -580,10 +601,12 @@ REGLAS ABSOLUTAS:
 
   const deptExists = await get<{ id: number }>(`SELECT id FROM departments WHERE key = 'hermes'`);
   if (!deptExists) {
+    // active=0: no es hub, nace en niebla como el resto — la reactivación de Hermes
+    // (§9.1) es quien la pone a 1, igual que ya hace con agents.status.
     await run(
-      `INSERT INTO departments (key,name,desc,role,glyph,color,pos_x,pos_y,is_hub,sort_order)
-       VALUES (?,?,?,?,?,?,?,?,?,?)`,
-      ['hermes', 'Sala de Máquinas', 'Ejecución de sistema', 'hermes', 'terminal', '#8b5cf6', 1000, 1400, 0, 6]
+      `INSERT INTO departments (key,name,desc,role,glyph,color,pos_x,pos_y,is_hub,sort_order,active)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+      ['hermes', 'Sala de Máquinas', 'Ejecución de sistema', 'hermes', 'terminal', '#8b5cf6', 1000, 1400, 0, 6, 0]
     );
   }
 

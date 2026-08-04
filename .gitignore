@@ -4,3 +4,8 @@
 skills-lock.json
 backend/data/*.db-shm
 backend/data/*.db-wal
+
+# Estado local de Obsidian: contiene API keys y claves TLS en texto plano
+# (plugins/obsidian-local-rest-api/data.json), además de cache/workspace
+# que no debe versionarse.
+Hokage Knowledge/.obsidian/
