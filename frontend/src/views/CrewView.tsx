@@ -1,5 +1,4 @@
 import type { Agent, AgentRun, Building } from '../shared/types';
-import { BUILDINGS } from '../shared/constants';
 import { ROLES } from '../shared/types';
 import { Panel, Led } from '../shared/ui';
 import { BuildingGlyph } from '../shared/icons';
@@ -7,10 +6,12 @@ import { BuildingGlyph } from '../shared/icons';
 export function CrewView({
   agents,
   runs,
+  buildings,
   onEnterBuilding,
 }: {
   agents: Agent[];
   runs: AgentRun[];
+  buildings: Building[];
   onEnterBuilding: (b: Building) => void;
 }) {
   return (
@@ -23,7 +24,7 @@ export function CrewView({
       </div>
       {agents.map((a) => {
         const lastRun = runs.filter((r) => r.agent_id === a.id)[0];
-        const building = BUILDINGS.find((b) => b.role === a.role);
+        const building = buildings.find((b) => b.role === a.role);
         return (
           <Panel
             key={a.id}

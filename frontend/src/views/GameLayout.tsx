@@ -390,13 +390,14 @@ export function GameLayout() {
                 <AlertsView
                   pending={pending}
                   agents={agents}
+                  buildings={allDepts}
                   onApprove={approve}
                   onReject={reject}
                   onExpireAll={expireAll}
                 />
               )}
               {screen === 'crew' && (
-                <CrewView agents={agents} runs={runs} onEnterBuilding={enterBuilding} />
+                <CrewView agents={agents} runs={runs} buildings={allDepts} onEnterBuilding={enterBuilding} />
               )}
               {screen === 'config' && (
                 <ConfigView agents={agents} roleColors={roleColors} onAgentUpdated={reload.loadAgents} />

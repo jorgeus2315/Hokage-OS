@@ -1,5 +1,4 @@
 import type { Agent, Decision, Building } from '../shared/types';
-import { BUILDINGS } from '../shared/constants';
 import { Panel, Led, Badge } from '../shared/ui';
 import { BuildingGlyph, IconCheck } from '../shared/icons';
 import { Markdown } from '../shared/markdown';
@@ -18,12 +17,14 @@ const CAT_TONE: Record<string, 'ember' | 'amber' | 'signal' | 'dim'> = {
 export function AlertsView({
   pending,
   agents,
+  buildings,
   onApprove,
   onReject,
   onExpireAll,
 }: {
   pending: Decision[];
   agents: Agent[];
+  buildings: Building[];
   onApprove: (id: number) => void;
   onReject: (id: number) => void;
   onExpireAll?: () => void;
@@ -54,7 +55,7 @@ export function AlertsView({
       )}
       {pending.map((d) => {
         const agent = agents.find((a) => a.id === d.agent_id);
-        const building: Building | undefined = BUILDINGS.find((b) => b.role === agent?.role);
+        const building: Building | undefined = buildings.find((b) => b.role === agent?.role);
         const catTone = CAT_TONE[d.category] ?? 'dim';
         return (
           <Panel key={d.id} className="hk-mb-16">
