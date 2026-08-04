@@ -216,7 +216,7 @@ Mismo alcance de roles que `memory.write` (los 6 tool-capable; `operaciones`/`so
 
 ## 3. Modelo multi-venture
 
-⚠️ **REQUIERE TU CONFIRMACIÓN** — esta es la decisión más grande de todo el documento, y la más urgente si el Wizard va a "crear un negocio nuevo".
+🔒 **CONGELADO, implementado y verificado.** Era la decisión más grande de todo el documento — resuelta y con los 3 puntos de implementación mínima ya en código (ver §16).
 
 ### Por qué importa
 
@@ -459,7 +459,7 @@ Ejemplo concreto: un "Módulo Etsy" = el campo `platform: 'etsy'` en un venture/
 
 ### 8.5 MCP
 
-⚠️ **REQUIERE TU CONFIRMACIÓN**, con recomendación clara.
+🔒 **CONGELADO.**
 
 Hokage OS (el runtime de agentes) no usa MCP hoy — `aiService.ts` habla directo con OpenRouter usando function-calling nativo. MCP es, hoy, solo la forma en que *yo* (Claude Code) me conecto a herramientas — no tiene relación con el runtime de Hokage.
 
@@ -671,7 +671,7 @@ Hermes deja de ser una pieza "lista para cuando haga falta" y pasa a ser, desde 
 
 ### 11.1 Sistema de permisos
 
-⚠️ **REQUIERE TU CONFIRMACIÓN.**
+🔒 **CONGELADO, implementado.** `OWNER_NAME` sustituyó el string `'Jorge'` hardcodeado (ver §16).
 
 **Estado real:** no existe ningún sistema de permisos. Hay un único `ADMIN_TOKEN` (bearer, comparación de string) que gatea todas las rutas de mutación. No hay usuarios, no hay roles humanos, no hay distinción entre "Jorge" y "cualquiera con el token". Hallazgo concreto: `approveDecision(id, 'Jorge')` — el string `'Jorge'` está **hardcodeado como literal** en el código de aprobación, no es un valor de configuración.
 
