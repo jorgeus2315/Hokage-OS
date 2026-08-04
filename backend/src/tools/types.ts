@@ -77,3 +77,14 @@ export interface WebBrowserOutput {
   content: string;
   truncated: boolean;
 }
+
+export interface SystemExecInput {
+  command: string;
+  cwd?: string;
+  reason?: string;
+}
+
+export interface SystemExecOutput {
+  status: 'pending_approval';
+  execRunId: number;
+}

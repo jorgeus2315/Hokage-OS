@@ -14,6 +14,7 @@ export const AGENT_MODELS: Record<string, string> = {
   finanzas:     'google/gemini-2.5-flash',
   operaciones:  'meta-llama/llama-3.1-8b-instruct',
   soporte:      'meta-llama/llama-3.1-8b-instruct',
+  hermes:       'anthropic/claude-haiku-4.5',
 };
 
 // Modelos con soporte real de function calling vía OpenRouter.
@@ -35,6 +36,7 @@ const AGENT_TOOLS: Record<string, string[]> = {
   finanzas:     [],
   operaciones:  [],
   soporte:      [],
+  hermes:       ['system.exec'],
 };
 
 export function modelForRole(role: string): string {

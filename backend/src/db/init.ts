@@ -529,12 +529,29 @@ export async function initSchema(): Promise<void> {
     created_at           TEXT DEFAULT (datetime('now'))
   )`);
 
+  // ═══════════ HERMES — ejecución de comandos, siempre pendiente de aprobación ═══
+  await run(`CREATE TABLE IF NOT EXISTS exec_runs (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    decision_id           INTEGER REFERENCES decisions(id),
+    requested_by_agent_id INTEGER REFERENCES agents(id),
+    command               TEXT NOT NULL,
+    cwd                   TEXT,
+    status                TEXT NOT NULL DEFAULT 'pending',
+    exit_code             INTEGER,
+    stdout                TEXT,
+    stderr                TEXT,
+    created_at            TEXT NOT NULL DEFAULT (datetime('now')),
+    executed_at           TEXT
+  )`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_exec_runs_created ON exec_runs(created_at DESC)`);
+
   const deptCount = await get<{ count: number }>('SELECT COUNT(*) as count FROM departments');
   if (!deptCount || deptCount.count === 0) await seedDepartments();
 
   await runMigrations();
   await seedDefaultVenture();
   await seedAutomations();
+  await seedHermesAgent();
 }
 
 async function seedDepartments(): Promise<void> {
@@ -555,4 +572,37 @@ async function seedDepartments(): Promise<void> {
     );
   }
   console.log('[DB] Departamentos sembrados correctamente');
+}
+
+async function seedHermesAgent(): Promise<void> {
+  const existing = await get<{ id: number }>(`SELECT id FROM agents WHERE role = 'hermes'`);
+  if (existing) return;
+
+  const agentResult = await run(
+    `INSERT INTO agents (name, role, status, model) VALUES (?, ?, ?, ?)`,
+    ['Hermes', 'hermes', 'idle', modelForRole('hermes')]
+  );
+  const agentId = agentResult.lastID;
+
+  await run(
+    `INSERT INTO agent_prompts (agent_id, prompt_type, content, version, active) VALUES (?, 'base', ?, 1, 1)`,
+    [agentId, `Eres Hermes, el agente de sistema de HOKAGE OS. Tu única función es ejecutar comandos de terminal en el Mac de Jorge cuando él o otro agente te lo pida, usando la herramienta system.exec.
+
+REGLAS ABSOLUTAS:
+- Nunca ejecutas nada directamente. Cada comando que propones queda pendiente de aprobación de Jorge — así se lo explicas si te preguntan.
+- Antes de proponer un comando, explica en una frase qué hace y por qué es necesario.
+- Nunca propongas comandos destructivos (rm -rf, dd, mkfs, formatear disco) salvo que Jorge lo pida explícitamente y confirme el riesgo.
+- Si no tienes claro qué comando ejecutar exactamente, pregunta — no adivines.`]
+  );
+
+  const deptExists = await get<{ id: number }>(`SELECT id FROM departments WHERE key = 'hermes'`);
+  if (!deptExists) {
+    await run(
+      `INSERT INTO departments (key,name,desc,role,glyph,color,pos_x,pos_y,is_hub,sort_order)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      ['hermes', 'Sala de Máquinas', 'Ejecución de sistema', 'hermes', 'terminal', '#8b5cf6', 1000, 1400, 0, 6]
+    );
+  }
+
+  console.log('[DB] Agente Hermes sembrado correctamente');
 }

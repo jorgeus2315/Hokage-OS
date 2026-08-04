@@ -44,6 +44,7 @@ import { askAgent, callAIJson } from './services/aiService.js';
 import { listContent } from './services/contentService.js';
 import { listMarket } from './services/marketService.js';
 import { markObjectiveAchieved } from './services/objectiveService.js';
+import { runApprovedExec, rejectExec, listExecRuns } from './services/hermesService.js';
 import progressRouter from './routes/progress.js';
 import { runtime } from './config/agentRuntime.js';
 import bus from './config/eventBus.js';
@@ -234,6 +235,9 @@ app.put('/api/decisions/:id/approve', requireAdmin, async (req, res) => {
     if (decision.entity_type === 'objective' && decision.entity_id != null) {
       await markObjectiveAchieved(decision.entity_id);
     }
+    if (decision.entity_type === 'system_exec' && decision.entity_id != null) {
+      runApprovedExec(decision.entity_id).catch((err) => console.error('[HERMES] Error ejecutando comando:', err.message));
+    }
     bus.publish({ type: 'decision.approved', from: 'Jorge', payload: { decisionId: id } });
     broadcast('decision.approved', { id });
     res.json({ ok: true });
@@ -243,11 +247,22 @@ app.put('/api/decisions/:id/approve', requireAdmin, async (req, res) => {
 app.put('/api/decisions/:id/reject', requireAdmin, async (req, res) => {
   try {
     const id = Number(req.params.id);
-    await rejectDecision(id, 'Jorge');
+    const decision = await rejectDecision(id, 'Jorge');
+    if (decision.entity_type === 'system_exec' && decision.entity_id != null) {
+      await rejectExec(decision.entity_id);
+    }
     bus.publish({ type: 'decision.rejected', from: 'Jorge', payload: { decisionId: id } });
     broadcast('decision.rejected', { id });
     res.json({ ok: true });
   } catch (e: any) { sendError(res, 400, e, 'Error rechazando decision'); }
+});
+
+// ═══════════ HERMES ═══════════
+app.get('/api/hermes/runs', async (_req, res) => {
+  try {
+    const runs = await listExecRuns(30);
+    res.json({ ok: true, data: runs });
+  } catch (e: any) { sendError(res, 500, e, 'Error listando ejecuciones de Hermes'); }
 });
 
 // ═══════════ MENSAJES ═══════════

@@ -1,5 +1,6 @@
 import type { Tool, ToolContext, ToolResult, ToolStatus, ToolPermission } from './base.js';
-import type { EtsyListingInput, EtsyListingOutput, ShopifyListingInput, ShopifyListingOutput, PrintifyProductInput, PrintifyProductOutput, GoogleTrendsInput, GoogleTrendsOutput, WebBrowserInput, WebBrowserOutput } from './types.js';
+import type { EtsyListingInput, EtsyListingOutput, ShopifyListingInput, ShopifyListingOutput, PrintifyProductInput, PrintifyProductOutput, GoogleTrendsInput, GoogleTrendsOutput, WebBrowserInput, WebBrowserOutput, SystemExecInput, SystemExecOutput } from './types.js';
+import { requestExec } from '../services/hermesService.js';
 
 function permission(
   scope: ToolPermission['scope'],
@@ -317,6 +318,37 @@ export const WebBrowserTool: Tool<WebBrowserInput, WebBrowserOutput> = {
       return result<WebBrowserOutput>(true, { data: { url: input.url, title, content, truncated }, cost: 0 });
     } catch (err: any) {
       return result<WebBrowserOutput>(false, { error: `WebBrowser: ${err.message}` });
+    }
+  },
+};
+
+export const SystemExecTool: Tool<SystemExecInput, SystemExecOutput> = {
+  id: 'system.exec',
+  name: 'System Exec',
+  description: 'Propone un comando de terminal para ejecutar en el Mac de Jorge. NUNCA se ejecuta directo — siempre queda pendiente de aprobación en Alertas.',
+  category: 'system',
+  status: 'ready',
+  permissions: permission('agent', { requiresAdmin: true }),
+  requiredApproval: true,
+  inputSchema: stubInputSchema(
+    {
+      command: { type: 'string', description: 'Comando exacto de shell a ejecutar' },
+      cwd:     { type: 'string', description: 'Directorio de trabajo relativo a la raíz del proyecto (opcional)' },
+      reason:  { type: 'string', description: 'Por qué hace falta este comando, en una frase' },
+    },
+    ['command']
+  ),
+  outputSchema: stubOutputSchema({
+    status:    { type: 'string' },
+    execRunId: { type: 'integer' },
+  }),
+  async estimateCost(_input) { return 0; },
+  async execute(input, ctx) {
+    try {
+      const { execRunId } = await requestExec({ agentId: ctx.agentId, command: input.command, cwd: input.cwd, reason: input.reason });
+      return result<SystemExecOutput>(true, { data: { status: 'pending_approval', execRunId }, cost: 0 });
+    } catch (err: any) {
+      return result<SystemExecOutput>(false, { error: `SystemExec: ${err.message}` });
     }
   },
 };

@@ -1,5 +1,5 @@
 import type { Tool, ToolContext, ToolResult, ToolStatus, ToolPermission } from './base.js';
-import { EtsyTool, ShopifyTool, PrintifyTool, GoogleTrendsTool, WebBrowserTool } from './index.js';
+import { EtsyTool, ShopifyTool, PrintifyTool, GoogleTrendsTool, WebBrowserTool, SystemExecTool } from './index.js';
 
 const registry = new Map<string, Tool>([
   [EtsyTool.id, EtsyTool],
@@ -7,6 +7,7 @@ const registry = new Map<string, Tool>([
   [PrintifyTool.id, PrintifyTool],
   [GoogleTrendsTool.id, GoogleTrendsTool],
   [WebBrowserTool.id, WebBrowserTool],
+  [SystemExecTool.id, SystemExecTool],
 ]);
 
 export interface ToolMeta {
