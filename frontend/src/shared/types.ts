@@ -33,16 +33,6 @@ export interface Decision {
   created_at: string;
 }
 
-export interface Achievement {
-  id: number;
-  code: string;
-  title: string;
-  description: string;
-  icon: string | null;
-  xp_reward: number;
-  unlocked_at: string | null;
-}
-
 export interface AgentRun {
   id: number;
   agent_id: number;
@@ -111,7 +101,7 @@ export interface WorkItem {
   resolved_at: string | null;
 }
 
-export type Screen = 'boot' | 'menu' | 'map' | 'building' | 'crew' | 'missions' | 'alerts' | 'comms' | 'ventures' | 'objetivos' | 'config';
+export type Screen = 'boot' | 'menu' | 'map' | 'building' | 'crew' | 'alerts' | 'comms' | 'ventures' | 'objetivos' | 'config';
 
 // ═══════════ GOAL SYSTEM ════════════════════════════════════════════════════
 export type ObjectiveStatus = 'planning' | 'active' | 'pending_review' | 'achieved' | 'paused' | 'abandoned';

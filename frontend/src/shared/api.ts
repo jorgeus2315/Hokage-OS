@@ -42,10 +42,8 @@ export const api = {
   agents: () => req<import('./types').Agent[]>('/agents'),
   businesses: () => req<import('./types').Business[]>('/businesses'),
   decisions: () => req<import('./types').Decision[]>('/decisions'),
-  achievements: () => req<import('./types').Achievement[]>('/achievements'),
   agentRuns: (agentId?: number) => req<import('./types').AgentRun[]>(agentId ? `/agent-runs?agent_id=${agentId}` : '/agent-runs'),
   messages: () => req<import('./types').CommMsg[]>('/messages'),
-  progress: () => req<Array<{ xp: number; level: number }>>('/progress'),
 
   ask: (agentId: number, message: string) =>
     req<{ response: string; tokens: number }>(`/agents/${agentId}/ask`, {

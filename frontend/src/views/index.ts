@@ -2,7 +2,6 @@ export * from './BootView';
 export * from './MenuView';
 export * from './BuildingView';
 export * from './CommsView';
-export * from './MissionsView';
 export * from './AlertsView';
 export * from './CrewView';
 export * from './VenturesView';

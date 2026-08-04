@@ -1,21 +1,17 @@
 import type { Screen } from '../shared/types';
 import { Led } from '../shared/ui';
-import { IconMap, IconComms, IconMissions, IconAlert, IconCrew, IconChevron, IconVenture, IconConfig } from '../shared/icons';
+import { IconMap, IconComms, IconAlert, IconCrew, IconChevron, IconVenture, IconConfig } from '../shared/icons';
 
 const NAV_ITEMS: Array<{ screen: Screen; title: string; desc: string; icon: JSX.Element; color: string; featured?: boolean }> = [
   { screen: 'map',      title: 'Ecosistema', desc: 'Mapa táctico · Edificios y agentes en tiempo real', icon: <IconMap />,     color: 'var(--ember)', featured: true },
   { screen: 'ventures', title: 'Ventures',   desc: 'Iniciativas económicas · Assets · Pipeline rules',  icon: <IconVenture />, color: 'var(--signal)' },
   { screen: 'comms',    title: 'Ship Comms', desc: 'Canal de comunicación entre agentes',               icon: <IconComms />,   color: 'var(--signal)' },
-  { screen: 'missions', title: 'Misiones',   desc: 'Progreso · Nivel · Logros desbloqueados',           icon: <IconMissions />,color: 'var(--amber)' },
   { screen: 'alerts',   title: 'Alertas',    desc: 'Decisiones pendientes de aprobación',               icon: <IconAlert />,   color: 'var(--ember)' },
   { screen: 'crew',     title: 'Ship Crew',  desc: 'Estado y actividad de cada agente',                 icon: <IconCrew />,    color: 'var(--good)' },
   { screen: 'config',   title: 'Configuración', desc: 'Prompt maestro global · Gestión de agentes',     icon: <IconConfig />,  color: 'var(--ink)' },
 ];
 
 export function MenuView({
-  level,
-  xp,
-  xpNext,
   agentsCount,
   businessCount,
   pendingCount,
@@ -26,9 +22,6 @@ export function MenuView({
   onToggleRuntime,
   onNavigate,
 }: {
-  level: number;
-  xp: number;
-  xpNext: number;
   agentsCount: number;
   businessCount: number;
   pendingCount: number;
@@ -39,8 +32,6 @@ export function MenuView({
   onToggleRuntime: () => void;
   onNavigate: (s: Screen) => void;
 }) {
-  const xpPct = Math.min(100, (xp / xpNext) * 100);
-
   const badgeFor = (screen: Screen): number | undefined => {
     if (screen === 'alerts') return pendingCount || undefined;
     if (screen === 'comms') return messagesCount || undefined;
@@ -61,16 +52,8 @@ export function MenuView({
           <div className="hk-ps4-avatar">J</div>
           <div>
             <div className="hk-ps4-cmd-name">JORGE</div>
-            <div className="hk-ps4-cmd-rank">COMANDANTE · NV.{level}</div>
+            <div className="hk-ps4-cmd-rank">COMANDANTE</div>
           </div>
-        </div>
-
-        {/* XP bar */}
-        <div className="hk-ps4-xp">
-          <div className="hk-ps4-xp-track">
-            <div className="hk-ps4-xp-fill" style={{ width: `${xpPct}%` }} />
-          </div>
-          <div className="hk-ps4-xp-label">{xp} / {xpNext} XP</div>
         </div>
 
         {/* Stats */}

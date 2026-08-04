@@ -52,18 +52,4 @@ router.get('/tools', async (_req, res) => {
   } catch (e: any) { sendError(res, 500, e, 'No se pudieron obtener las herramientas'); }
 });
 
-router.get('/progress', async (_req, res) => {
-  try {
-    const progress = await all('SELECT * FROM agent_progress ORDER BY updated_at DESC');
-    res.json({ ok: true, data: progress });
-  } catch (e: any) { sendError(res, 500, e, 'No se pudo obtener el progreso'); }
-});
-
-router.get('/achievements', async (_req, res) => {
-  try {
-    const achievements = await all('SELECT * FROM achievements ORDER BY created_at DESC');
-    res.json({ ok: true, data: achievements });
-  } catch (e: any) { sendError(res, 500, e, 'No se pudieron obtener los logros'); }
-});
-
 export default router;

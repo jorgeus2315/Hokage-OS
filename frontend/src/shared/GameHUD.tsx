@@ -10,9 +10,6 @@ export function GameHUD({
   runtimeOn,
   connected,
   clock,
-  level,
-  xp,
-  xpNext,
   onToggleRuntime,
   onMenu,
   onAlerts,
@@ -29,9 +26,6 @@ export function GameHUD({
   runtimeOn: boolean;
   connected: boolean;
   clock: string;
-  level: number;
-  xp: number;
-  xpNext: number;
   onToggleRuntime: () => void;
   onMenu: () => void;
   onAlerts: () => void;
@@ -44,8 +38,6 @@ export function GameHUD({
     (o) => o.status === 'active' || o.plan?.status === 'proposed',
   ).length;
   const isUrgent = metrics.urgent_decisions > 0;
-
-  const xpPct = Math.min(100, xpNext > 0 ? (xp / xpNext) * 100 : 0);
 
   return (
     <div className="hk-game-hud">
@@ -131,15 +123,6 @@ export function GameHUD({
       </div>
 
       <div style={{ flex: 1 }} />
-
-      {/* XP bar */}
-      <div className="hk-game-xp">
-        <span className="hk-game-xp-level">NV.{level}</span>
-        <div className="hk-game-xp-bar" title={`${xp} / ${xpNext} XP`}>
-          <div className="hk-game-xp-fill" style={{ width: `${xpPct}%` }} />
-        </div>
-        <span className="hk-game-xp-text">{xp}<span style={{ opacity: 0.4 }}>/{xpNext}</span></span>
-      </div>
 
       <div className="hk-game-hud-sep" />
 

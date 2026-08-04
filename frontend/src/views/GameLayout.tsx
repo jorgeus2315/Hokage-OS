@@ -10,7 +10,6 @@ import { WorldCanvas } from '../world/WorldCanvas';
 import { BuildingView } from './BuildingView';
 import { CommsView } from './CommsView';
 import { CrewView } from './CrewView';
-import { MissionsView } from './MissionsView';
 import { AlertsView } from './AlertsView';
 import { VenturesView } from './VenturesView';
 import { ObjectivesView } from './ObjectivesView';
@@ -21,7 +20,6 @@ const RECENT_MS = 5 * 60 * 1000;
 
 const SCREEN_TITLE: Partial<Record<Screen, string>> = {
   crew: 'Ship Crew',
-  missions: 'Misiones',
   alerts: 'Alertas',
   comms: 'Ship Comms',
   ventures: 'Ventures',
@@ -43,8 +41,8 @@ export function GameLayout() {
   );
 
   const {
-    agents, ventures, achievements, runs, messages, liveEvents,
-    departments, objectives, metrics, xp, level, runtimeOn, pending, wsConnected, reload,
+    agents, ventures, runs, messages, liveEvents,
+    departments, objectives, metrics, runtimeOn, pending, wsConnected, reload,
   } = useAppData();
 
   useEffect(() => {
@@ -139,7 +137,6 @@ export function GameLayout() {
 
   const buildingAgent = activeBuilding ? agents.find((a) => a.role === activeBuilding.role) : undefined;
   const pendingForAgent = buildingAgent ? pending.filter((d) => d.agent_id === buildingAgent.id) : [];
-  const xpNext = level * 1000;
 
   const showBuildingPanel = screen === 'building' && !!activeBuilding;
   const showOverlay = screen !== 'map' && screen !== 'building';
@@ -156,9 +153,6 @@ export function GameLayout() {
         runtimeOn={runtimeOn}
         connected={wsConnected}
         clock={clock}
-        level={level}
-        xp={xp}
-        xpNext={xpNext}
         onToggleRuntime={toggleRuntime}
         onMenu={() => setShowMenu(true)}
         onAlerts={() => { setShowMenu(false); setScreen('alerts'); }}
@@ -392,9 +386,6 @@ export function GameLayout() {
               {screen === 'comms' && (
                 <CommsView agents={agents} messages={messages} liveEvents={liveEvents} />
               )}
-              {screen === 'missions' && (
-                <MissionsView level={level} xp={xp} xpNext={xpNext} achievements={achievements} />
-              )}
               {screen === 'alerts' && (
                 <AlertsView
                   pending={pending}
@@ -418,9 +409,6 @@ export function GameLayout() {
         {showMenu && (
           <div className="hk-game-menu-overlay">
             <MenuView
-              level={level}
-              xp={xp}
-              xpNext={xpNext}
               agentsCount={agents.length}
               businessCount={ventures.length}
               pendingCount={pending.length}
