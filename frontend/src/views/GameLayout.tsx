@@ -387,7 +387,7 @@ export function GameLayout() {
               {screen === 'objetivos' && (
                 <ObjectivesView objectives={objectives} onReload={reload.loadObjectives} />
               )}
-              {screen === 'ventures' && <VenturesView ventures={ventures} />}
+              {screen === 'ventures' && <VenturesView ventures={ventures} agents={agents} />}
               {screen === 'comms' && (
                 <CommsView agents={agents} messages={messages} liveEvents={liveEvents} />
               )}

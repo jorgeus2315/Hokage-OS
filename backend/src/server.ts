@@ -521,6 +521,27 @@ app.patch('/api/automations/:id/toggle', requireAdmin, async (req, res) => {
   } catch (e: any) { sendError(res, 400, e, 'Error toggling automation'); }
 });
 
+app.put('/api/automations/:id', requireAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const allowed = ['name', 'trigger_event', 'action_agent_role', 'action_priority', 'action_context_template', 'requires_approval', 'venture_id'];
+    const sets = allowed.filter((k) => req.body[k] !== undefined).map((k) => `${k} = ?`);
+    const vals = allowed.filter((k) => req.body[k] !== undefined).map((k) => (k === 'requires_approval' ? (req.body[k] ? 1 : 0) : req.body[k]));
+    if (sets.length === 0) return res.status(400).json({ ok: false, error: 'Sin campos a actualizar' });
+    await run(`UPDATE automations SET ${sets.join(', ')} WHERE id = ?`, [...vals, id]);
+    const automation = await get('SELECT * FROM automations WHERE id = ?', [id]);
+    res.json({ ok: true, data: automation });
+  } catch (e: any) { sendError(res, 400, e, 'Error actualizando automation'); }
+});
+
+app.delete('/api/automations/:id', requireAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    await run(`DELETE FROM automations WHERE id = ?`, [id]);
+    res.json({ ok: true });
+  } catch (e: any) { sendError(res, 400, e, 'Error borrando automation'); }
+});
+
 // ═══════════ GOAL SYSTEM ═══════════
 app.get('/api/objectives', async (_req, res) => {
   try {

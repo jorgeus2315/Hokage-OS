@@ -107,7 +107,11 @@ export const api = {
 
   automations: () => req<import('./types').Automation[]>('/automations'),
   createAutomation: (payload: Record<string, unknown>) =>
-    req('/automations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }),
+    req<import('./types').Automation>('/automations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }),
+  updateAutomation: (id: number, payload: Record<string, unknown>) =>
+    req<import('./types').Automation>(`/automations/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }),
+  deleteAutomation: (id: number) =>
+    req(`/automations/${id}`, { method: 'DELETE' }),
   toggleAutomation: (id: number) =>
     req(`/automations/${id}/toggle`, { method: 'PATCH' }),
 

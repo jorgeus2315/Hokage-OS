@@ -236,4 +236,15 @@ export const ROLES: Record<string, string> = {
   soporte: 'Atención al Cliente',
   finanzas: 'Director Financiero',
   operaciones: 'Director de Operaciones',
+  hermes: 'Agente de Sistema',
 };
+
+// Eventos que puede emitir el bus — fuente: backend/src/config/eventBus.ts (AgentEventType)
+export const AUTOMATION_EVENTS: string[] = [
+  'trend.detected', 'content.created', 'content.ready',
+  'decision.created', 'decision.approved', 'decision.rejected',
+  'sale.made', 'alert.triggered',
+  'agent.task.start', 'agent.task.done', 'agent.task.error',
+  'report.daily', 'system.error',
+  'objective.created', 'objective.approved', 'objective.achieved',
+];
