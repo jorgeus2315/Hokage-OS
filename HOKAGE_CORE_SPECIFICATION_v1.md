@@ -362,11 +362,134 @@ Si Hokage OS crece hacia automatización de despliegue, gestión de VPS, o tarea
 
 ### 11.2 Secretos y credenciales
 
-⚠️ **REQUIERE TU CONFIRMACIÓN** — es el hueco más concreto para cualquier Wizard de primer arranque.
+🔒 **CONGELADO** — diseño completo, sustituye la versión anterior de esta sección (que solo fijaba la regla de no escribir `.env` por HTTP; esto es el mecanismo entero detrás de esa regla).
 
-**Estado real:** `OPENROUTER_API_KEY` y `ADMIN_TOKEN` se validan al arrancar (`REQUIRED_ENV`) y se leen de `.env`. **No existe ninguna ruta, servicio ni UI para gestionar secretos.** Si el Wizard va a pedir credenciales (Etsy, Shopify, lo que sea) en algún paso de "primer arranque", hoy no hay ningún sitio donde esas credenciales puedan aterrizar salvo que Jorge edite el `.env` a mano.
+#### Por qué importa
 
-**Decisión para Hokage OS:** no se construye una UI de gestión de secretos en v1 del Wizard. Se congela la regla ya existente en `CLAUDE.md` ("nunca hardcodear API keys, siempre desde `.env`") y se extiende: **si el Wizard pide una credencial, el paso termina con una instrucción textual de qué añadir al `.env` y un botón "ya lo añadí, verificar conexión"** — nunca con un formulario que escriba directamente al `.env` desde una request HTTP (eso abriría una superficie de escritura de secretos vía red, exactamente lo que `ADMIN_TOKEN` existe para evitar en el resto del sistema).
+Hoy solo existen 2 secretos (`OPENROUTER_API_KEY`, `ADMIN_TOKEN`), gestionados a mano. El Setup Wizard (§12.3) y los Business Modules (§8.4) van a necesitar credenciales de Etsy, Shopify, GitHub, futuros servidores MCP (§8.5) y lo que venga — sin un diseño explícito, cada integración nueva reinventaría su propia forma de pedir, guardar y usar una clave.
+
+#### El problema de fondo que hay que resolver
+
+Hay **dos tipos de secreto completamente distintos**, y tratarlos igual es el error que hay que evitar desde el diseño:
+
+1. **Secretos estáticos** (`OPENROUTER_API_KEY`, un GitHub PAT, la mayoría de API keys): no rotan solos. Un humano los pega una vez y no vuelven a cambiar hasta que él decide rotarlos.
+2. **Credenciales OAuth2 con refresh** (Etsy, Shopify — ambas usan OAuth2 en su API real): el `access_token` caduca en horas y se renueva automáticamente con un `refresh_token`. Esto **no puede vivir solo en `.env`** — algo tiene que escribir el token renovado en algún sitio, automáticamente, sin intervención humana, potencialmente varias veces al día.
+
+Diseñar un único mecanismo para ambos fuerza una mala solución en uno de los dos casos. Se diseñan como dos piezas relacionadas, no una.
+
+#### Alternativas
+
+**A. Todo en `.env`, sin excepción** (lo que hay hoy, extendido a más variables)
+- Ventajas: cero superficie nueva, cero cifrado que gestionar, ya es el patrón establecido.
+- Inconvenientes: no resuelve el caso OAuth (no hay dónde escribir el token renovado sin editar el fichero por código, algo que ya se prohibió explícitamente). No escala bien más allá de un puñado de claves — cada integración nueva exige acceso a fichero, en local y en el VPS.
+
+**B. Todos los secretos cifrados en SQLite, el Wizard los escribe vía formulario**
+- Ventajas: autoservicio completo — pegar clave, probar conexión, listo, sin tocar ficheros ni SSH al VPS.
+- Inconvenientes: **contradice tu instrucción explícita** ("el Wizard nunca debe escribir directamente... mediante HTTP" — esto se extiende en espíritu a cualquier escritura de secretos vía HTTP, no solo al fichero `.env` literal). Además introduce un problema circular real: para cifrar secretos en BD hace falta una clave maestra, y esa clave maestra tiene que vivir en algún sitio — vuelve a ser `.env`, solo que ahora protegiendo algo más grande. Más superficie de ataque (la BD, que hoy no contiene ningún secreto, pasaría a contenerlos todos) sin resolver el problema, solo moverlo.
+
+**C. Híbrido — estáticos en `.env` (nunca escritos por la app), OAuth en una tabla cifrada nueva (escrita solo por el propio backend, nunca por una request que reciba un valor pegado por un humano)**
+- Ventajas: respeta la instrucción al pie de la letra sin excepción para el caso estático (que es la mayoría de los secretos). Resuelve el caso OAuth de la única forma que realmente funciona (renovación automática necesita almacenamiento que la app pueda escribir sola). El cifrado se limita a lo que de verdad lo necesita — no cifra `OPENROUTER_API_KEY` innecesariamente.
+- Inconvenientes: dos mecanismos en vez de uno — más superficie conceptual que memorizar. Se mitiga con un único punto de entrada (`GET /api/secrets`) que presenta ambos de forma uniforme de cara al Wizard, aunque por debajo funcionen distinto.
+
+#### Decisión para Hokage OS: C
+
+### Arquitectura
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  secret_definitions (SQLite) — METADATA, nunca valores           │
+│  id · label · kind ('static_env' | 'oauth2') · env_var           │
+│  required · docs_url · last_validated_at · last_validation_ok    │
+└─────────────────────────────────────────────────────────────────┘
+        │ kind='static_env'                    │ kind='oauth2'
+        ▼                                       ▼
+┌───────────────────────┐          ┌─────────────────────────────────┐
+│  process.env (.env)   │          │  oauth_tokens (SQLite, cifrado)  │
+│  el operador lo edita │          │  access_token_enc · refresh_..   │
+│  a mano, siempre      │          │  expires_at · scope              │
+└───────────────────────┘          │  escrito SOLO por el propio      │
+                                    │  backend (callback OAuth +       │
+                                    │  refresco silencioso)            │
+                                    └─────────────────────────────────┘
+```
+
+#### 1. Definiciones — código, no formulario
+
+Cada integración declara qué secretos necesita **donde ya vive su propio código** (mismo principio que el contrato de `Tool`, §8.2 — nunca un formulario genérico desconectado de quién realmente consume la clave):
+
+```typescript
+// tools/index.ts, junto a cada Tool
+export const EtsyTool_secrets: SecretDefinition[] = [
+  { id: 'etsy_oauth', label: 'Etsy (OAuth)', kind: 'oauth2',
+    docsUrl: 'https://www.etsy.com/developers/register',
+    validate: async () => { /* llamada de lectura mínima a la API de Etsy */ } },
+];
+```
+
+Al arrancar, `initSchema()` sincroniza estas definiciones con la tabla `secret_definitions` (`INSERT OR REPLACE`, igual patrón que ya sincroniza `agents.model` contra `agentModels.ts` en cada boot) — **la tabla nunca diverge de lo que el código realmente espera**, porque se regenera de la fuente de verdad cada vez.
+
+#### 2. Secretos estáticos — `.env`, sin excepción
+
+`env_var` apunta al nombre de la variable (`OPENROUTER_API_KEY`, `GITHUB_PAT`...). El backend solo **lee** `process.env[env_var]` para saber si está presente — **nunca la escribe, nunca la recibe por HTTP.** Si el Wizard necesita esta clave, el flujo es exactamente el ya fijado: instrucción textual + botón "ya lo añadí, verificar conexión", que dispara `validate()` server-side contra el valor que el proceso ya tiene cargado en memoria — el navegador nunca envía ni recibe el valor de la clave en ningún momento.
+
+#### 3. Credenciales OAuth2 — la única excepción real, y por qué no rompe la regla
+
+Etsy y Shopify exigen el flujo estándar OAuth2: el usuario autoriza en la web del proveedor, que redirige de vuelta con un `code` de un solo uso. **Ese `code` sí llega por HTTP — es inevitable, es cómo funciona OAuth2 en todo el ecosistema** — pero es categóricamente distinto de "el Wizard te deja pegar tu API key en un campo de texto": el `code` no es la credencial, es un ticket de un solo uso que el backend intercambia server-to-server por los tokens reales. El usuario nunca ve ni transmite el secreto en sí.
+
+```
+Jorge → GET /api/secrets/etsy_oauth/oauth/start   (requireAdmin)
+      → redirect a Etsy con client_id + redirect_uri
+Etsy  → el usuario autoriza
+      → redirect a GET /api/secrets/etsy_oauth/oauth/callback?code=...
+Backend → intercambia code por access_token + refresh_token (llamada server-to-server)
+        → cifra ambos (AES-256-GCM, clave en OAUTH_ENCRYPTION_KEY del .env)
+        → guarda en oauth_tokens
+        → nunca los expone de vuelta al navegador
+```
+
+`OAUTH_ENCRYPTION_KEY` es en sí misma un secreto estático — vive en `.env`, protege solo esta tabla. Es cifrado con alcance mínimo (solo lo que de verdad rota y hay que persistir), no cifrado del sistema entero — coherente con no sobre-construir.
+
+**Renovación:** cuando un Tool que necesita el token lo pide (`oauthTokenService.getValidAccessToken('etsy_oauth')`), el servicio comprueba `expires_at`; si está vencido, usa el `refresh_token` para pedir uno nuevo a Etsy, lo re-cifra y actualiza la fila — transparente para el Tool, que nunca sabe si hubo renovación.
+
+#### 4. Consumo — los Tools nunca gestionan secretos por su cuenta
+
+- Secreto estático: el Tool lee `process.env.MI_VAR` directamente, igual que hoy.
+- Secreto OAuth: el Tool llama a `oauthTokenService.getValidAccessToken(id)` y recibe el access token vigente, sin saber si hubo refresco.
+
+Ninguna otra capa del sistema (agentes, rutas, frontend) toca un valor de secreto jamás — ni siquiera cifrado.
+
+#### 5. Validación
+
+Cada `SecretDefinition` declara un `validate()` opcional: una llamada de solo lectura mínima al proveedor (OpenRouter: comprobar créditos; Etsy: `getUser()`; GitHub: `GET /user`). `POST /api/secrets/:id/validate` (requireAdmin) la ejecuta y persiste `last_validated_at`/`last_validation_ok` en `secret_definitions` — es lo que enciende el botón "✓ Conectado" en el Wizard.
+
+#### 6. API expuesta (toda `requireAdmin` salvo el callback)
+
+```
+GET  /api/secrets                     → [{ id, label, kind, required, present, last_validated_at, last_validation_ok }]
+                                          (present = booleano; JAMÁS un valor)
+POST /api/secrets/:id/validate        → dispara validate()
+GET  /api/secrets/:id/oauth/start     → redirect al proveedor (solo kind='oauth2')
+GET  /api/secrets/:id/oauth/callback  → recibe el `code`, intercambia, cifra, guarda (público — lo llama el proveedor, no Jorge; protegido por el `state` de OAuth, no por ADMIN_TOKEN)
+```
+
+`GET /api/secrets` es la fuente real detrás de lo que §12.1 (System Profile) ya prometía ("variables de entorno presentes, sin exponer valores") — ahora con estado de validación, no solo presencia.
+
+#### 7. Desarrollo local vs VPS/producción
+
+Estructuralmente idéntico — la única diferencia es cómo llega el fichero:
+
+| | Local | VPS |
+|---|---|---|
+| Dónde vive `.env` | `backend/.env`, gitignored | `.env` en el servidor, nunca en el repo, copiado por Jorge (`scp`/editor SSH) |
+| Cómo se aplica un cambio | Reiniciar `tsx` a mano | `pm2 restart hokage-backend` (§11.3) |
+| `oauth_tokens` | Misma tabla SQLite, mismo fichero `.db` | Igual — viaja con el resto de la BD, ya cifrada en reposo |
+| `OAUTH_ENCRYPTION_KEY` | Una en `.env` local (puede diferir de producción sin problema — son bases de datos distintas) | Una en `.env` del VPS, generada una vez, nunca reutilizada entre entornos |
+
+**Regla dura:** `.env` nunca se commitea, nunca viaja por HTTP, nunca lo genera el Wizard — se mantiene un `.env.example` (sin valores, solo nombres + comentario, regenerado desde `secret_definitions` para que nunca quede desactualizado) como única ayuda automatizada.
+
+#### Consecuencias a 2-3 años
+
+Añadir una integración nueva (un Business Module completo, §8.4) es: declarar su `SecretDefinition` junto a su `Tool`, y listo — aparece sola en `GET /api/secrets`, el Wizard la detecta sin cambios propios. Si algún día se adopta MCP (§8.5), un servidor MCP que necesite credenciales usa exactamente el mismo mecanismo — no hace falta un tercer sistema. El único coste real que se paga por adelantado es la tabla `oauth_tokens` cifrada — pequeña, acotada, justificada por un problema real (rotación automática) y no por "cifrar por si acaso".
 
 ### 11.3 VPS y despliegue
 
@@ -382,7 +505,7 @@ Si Hokage OS crece hacia automatización de despliegue, gestión de VPS, o tarea
 
 Snapshot de configuración de **esta instalación concreta** de Hokage OS — no de Jorge, no de un negocio. Responde: ¿qué integraciones están conectadas?, ¿qué agentes están activos/pausados?, ¿qué límites de presupuesto rigen?, ¿es un entorno de desarrollo o producción?
 
-No es una tabla nueva — es una **vista de solo lectura sobre datos que ya existen**: `agents.status`, `departments.active`, `agent_budgets`, variables de entorno presentes (sin exponer sus valores, solo si están seteadas o no — ver §11.2). Se expone como un único endpoint (`GET /api/system/profile`) que agrega estas fuentes. **Es exactamente lo que un Wizard necesita leer al arrancar para no volver a preguntar algo que ya se sabe.**
+No es una tabla nueva — es una **vista de solo lectura sobre datos que ya existen**: `agents.status`, `departments.active`, `agent_budgets`, y el estado de secretos que ya expone `GET /api/secrets` (§11.2 — presencia y validación, nunca valores). Se expone como un único endpoint (`GET /api/system/profile`) que agrega estas fuentes. **Es exactamente lo que un Wizard necesita leer al arrancar para no volver a preguntar algo que ya se sabe.**
 
 ### 12.2 Founder Profile
 
@@ -482,18 +605,16 @@ Ver §8.4 — es composición de lo anterior (canal + Tool + Automations por def
 
 ### Congelado sin más discusión (🔒)
 
-Arquitectura en capas del Core · Runtime/Scheduler/Event Bus · Contrato de Tool como sistema de plugins · Diseño de plugins visuales del mapa · Papel exclusivo de Hermes para ejecución de sistema · Modelo de economía (agent_costs/agent_budgets/ventures) · VPS y despliegue · Diseño del World Engine y las 7 vistas.
+Arquitectura en capas del Core · Runtime/Scheduler/Event Bus · Contrato de Tool como sistema de plugins · Diseño de plugins visuales del mapa · Papel exclusivo de Hermes para ejecución de sistema · Modelo de economía (agent_costs/agent_budgets/ventures) · VPS y despliegue · Diseño del World Engine y las 7 vistas · **Modelo multi-venture, implementado y verificado** (§3) · **Sistema de permisos single-owner sin hardcode** (§11.1, implementado) · **Arquitectura de gestión de secretos** (§11.2 — estáticos en `.env` nunca escritos por la app, OAuth2 en tabla cifrada escrita solo por el propio backend).
 
 ### Decidido aquí por primera vez (🆕)
 
-Definición de Business Module (composición, no mecanismo nuevo) · Postura sobre MCP (no adoptar en v1, dejar la puerta abierta) · Founder Profile y System Profile (qué son, cómo se construyen) · Alcance definitivo del Setup Wizard (dos flujos: Fresh Install + New Venture) · Postura sobre Knowledge System (diseño C, no construir todavía).
+Definición de Business Module (composición, no mecanismo nuevo) · Postura sobre MCP (no adoptar en v1, dejar la puerta abierta — sus credenciales usarían el mismo mecanismo de §11.2 el día que se adopte) · Founder Profile y System Profile (qué son, cómo se construyen) · Alcance definitivo del Setup Wizard (dos flujos: Fresh Install + New Venture) · Postura sobre Knowledge System (diseño C, no construir todavía) · Arquitectura completa de Secret Management (definiciones como código sincronizadas a BD, estáticos vs OAuth2, la excepción legítima del callback OAuth explicada).
 
-### Necesita tu confirmación explícita antes de construir nada (⚠️)
+### Ya no queda ninguna decisión ⚠️ pendiente de confirmación
 
-1. **Modelo multi-venture (§3)** — confirmar la opción A (agentes compartidos) y autorizar los 3 cambios mínimos (`objectives.venture_id`, threading real en `createDecision`/`createWorkItem`, contexto de venture en prompts).
-2. **Sistema de permisos (§11.1)** — confirmar single-owner (opción C: sin roles, pero sin el string `'Jorge'` hardcodeado).
-3. **Gestión de secretos (§11.2)** — confirmar que el Wizard nunca escribe al `.env` por HTTP, solo instruye.
+Las tres del cierre anterior — multi-venture, permisos, secretos — están confirmadas y las dos primeras ya implementadas. Secretos queda especificado pero **no implementado todavía** (este documento es solo el diseño, tal como se pidió).
 
 ### Bloqueante real para el Setup Wizard
 
-El **Fresh Install Wizard** se puede diseñar y construir ya, sin esperar a nada de lo anterior. El **New Venture Wizard** está bloqueado hasta que §3 esté resuelto — construirlo antes crearía exactamente el tipo de mentira arquitectónica (una función que parece funcionar pero no tiene datos reales detrás) que esta sesión pasó varias rondas eliminando.
+El **Fresh Install Wizard** se puede diseñar y construir ya. El **New Venture Wizard** ya no está bloqueado por el modelo multi-venture (§3, resuelto) — el único trabajo previo real que le queda es implementar §11.2 (`secret_definitions`, `oauth_tokens`, las rutas de `/api/secrets`) si el primer venture nuevo necesita conectar un canal con credenciales propias.
