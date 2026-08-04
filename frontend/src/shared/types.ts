@@ -111,7 +111,7 @@ export interface WorkItem {
   resolved_at: string | null;
 }
 
-export type Screen = 'boot' | 'menu' | 'map' | 'building' | 'crew' | 'missions' | 'alerts' | 'comms' | 'ventures' | 'objetivos';
+export type Screen = 'boot' | 'menu' | 'map' | 'building' | 'crew' | 'missions' | 'alerts' | 'comms' | 'ventures' | 'objetivos' | 'config';
 
 // ═══════════ GOAL SYSTEM ════════════════════════════════════════════════════
 export type ObjectiveStatus = 'planning' | 'active' | 'achieved' | 'paused' | 'abandoned';

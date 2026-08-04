@@ -14,6 +14,7 @@ import { MissionsView } from './MissionsView';
 import { AlertsView } from './AlertsView';
 import { VenturesView } from './VenturesView';
 import { ObjectivesView } from './ObjectivesView';
+import { ConfigView } from './ConfigView';
 import { MenuView } from './MenuView';
 
 const RECENT_MS = 5 * 60 * 1000;
@@ -25,6 +26,7 @@ const SCREEN_TITLE: Partial<Record<Screen, string>> = {
   comms: 'Ship Comms',
   ventures: 'Ventures',
   objetivos: 'Objetivos',
+  config: 'Configuración Global',
 };
 
 export function GameLayout() {
@@ -133,6 +135,8 @@ export function GameLayout() {
     return !!last && Date.now() - new Date(last.started_at).getTime() < RECENT_MS;
   };
 
+  const roleColors = Object.fromEntries(allDepts.map((d) => [d.role, d.color]));
+
   const buildingAgent = activeBuilding ? agents.find((a) => a.role === activeBuilding.role) : undefined;
   const pendingForAgent = buildingAgent ? pending.filter((d) => d.agent_id === buildingAgent.id) : [];
   const xpNext = level * 1000;
@@ -160,6 +164,7 @@ export function GameLayout() {
         onComms={() => { setShowMenu(false); setScreen('comms'); }}
         onCrew={() => { setShowMenu(false); setScreen('crew'); }}
         onObjectives={() => { setShowMenu(false); setScreen('objetivos'); }}
+        onConfig={() => { setShowMenu(false); setScreen('config'); }}
       />
 
       <div className="hk-game-scene">
@@ -400,6 +405,9 @@ export function GameLayout() {
               )}
               {screen === 'crew' && (
                 <CrewView agents={agents} runs={runs} onEnterBuilding={enterBuilding} />
+              )}
+              {screen === 'config' && (
+                <ConfigView agents={agents} roleColors={roleColors} onAgentUpdated={reload.loadAgents} />
               )}
             </div>
           </div>

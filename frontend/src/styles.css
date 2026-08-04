@@ -1181,6 +1181,14 @@ svg { display: block; flex-shrink: 0; }
 .hk-game-stat--alert .hk-game-stat-value { color: var(--ember); }
 .hk-game-stat--signal .hk-game-stat-value { color: var(--signal); }
 
+.hk-game-config-icon {
+  width: 16px;
+  height: 16px;
+  color: var(--ink-faint);
+  transition: color 0.12s ease;
+}
+.hk-game-stat-btn:hover .hk-game-config-icon { color: var(--ink); }
+
 .hk-game-xp {
   display: flex;
   align-items: center;

@@ -1,4 +1,5 @@
 import type { Agent, Decision, CommMsg, Objective } from './types';
+import { IconConfig } from './icons';
 
 export function GameHUD({
   agents,
@@ -17,6 +18,7 @@ export function GameHUD({
   onComms,
   onCrew,
   onObjectives,
+  onConfig,
 }: {
   agents: Agent[];
   pending: Decision[];
@@ -34,6 +36,7 @@ export function GameHUD({
   onComms: () => void;
   onCrew: () => void;
   onObjectives: () => void;
+  onConfig: () => void;
 }) {
   const activeObjectives = objectives.filter(
     (o) => o.status === 'active' || o.plan?.status === 'proposed',
@@ -108,6 +111,10 @@ export function GameHUD({
             <span className="hk-game-stat-label">CREW</span>
             <span className="hk-game-stat-value">{agents.length}</span>
           </div>
+        </button>
+
+        <button className="hk-game-stat hk-game-stat-btn" onClick={onConfig} title="Configuración global" aria-label="Configuración global">
+          <IconConfig className="hk-game-config-icon" />
         </button>
       </div>
 

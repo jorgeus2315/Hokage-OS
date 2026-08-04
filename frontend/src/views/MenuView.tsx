@@ -1,6 +1,6 @@
 import type { Screen } from '../shared/types';
 import { Led } from '../shared/ui';
-import { IconMap, IconComms, IconMissions, IconAlert, IconCrew, IconChevron, IconVenture } from '../shared/icons';
+import { IconMap, IconComms, IconMissions, IconAlert, IconCrew, IconChevron, IconVenture, IconConfig } from '../shared/icons';
 
 const NAV_ITEMS: Array<{ screen: Screen; title: string; desc: string; icon: JSX.Element; color: string; featured?: boolean }> = [
   { screen: 'map',      title: 'Ecosistema', desc: 'Mapa táctico · Edificios y agentes en tiempo real', icon: <IconMap />,     color: 'var(--ember)', featured: true },
@@ -9,6 +9,7 @@ const NAV_ITEMS: Array<{ screen: Screen; title: string; desc: string; icon: JSX.
   { screen: 'missions', title: 'Misiones',   desc: 'Progreso · Nivel · Logros desbloqueados',           icon: <IconMissions />,color: 'var(--amber)' },
   { screen: 'alerts',   title: 'Alertas',    desc: 'Decisiones pendientes de aprobación',               icon: <IconAlert />,   color: 'var(--ember)' },
   { screen: 'crew',     title: 'Ship Crew',  desc: 'Estado y actividad de cada agente',                 icon: <IconCrew />,    color: 'var(--good)' },
+  { screen: 'config',   title: 'Configuración', desc: 'Prompt maestro global · Gestión de agentes',     icon: <IconConfig />,  color: 'var(--ink)' },
 ];
 
 export function MenuView({
