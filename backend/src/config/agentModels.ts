@@ -30,7 +30,7 @@ const TOOL_CAPABLE_MODELS = new Set([
 // si el modelo del agente soporta function calling.
 const AGENT_TOOLS: Record<string, string[]> = {
   ceo:          ['web.browser'],
-  investigador: ['google.trends', 'web.browser'],
+  investigador: ['google.trends', 'web.browser', 'trend.report'],
   contenido:    ['web.browser'],
   trafico:      ['google.trends', 'web.browser'],
   finanzas:     [],

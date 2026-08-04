@@ -1,4 +1,5 @@
 import bus, { AgentEvent } from './eventBus.js';
+import { toolsForRole } from './agentModels.js';
 import { askAgent, writeAgentMemory } from '../services/aiService.js';
 import { listAgents } from '../services/agentService.js';
 import { createDecision } from '../services/decisionService.js';
@@ -31,7 +32,7 @@ export interface TaskResult {
 // Tareas autonomas por rol de agente
 const AUTONOMOUS_TASKS: Record<string, { task: string; interval: number }> = {
   investigador: {
-    task: 'Analiza tendencias del mercado de productos digitales (ej: "minimalist wall art", "digital planner", "printable"). PRIORIDAD: usa google.trends. Si falla o devuelve error, usa web.browser para buscar "etsy trending digital products 2024" y extrae keywords manualmente. Elige 1-2 keywords con interés creciente. Para cada tendencia añade: [TENDENCIA: keyword | descripcion breve en menos de 120 caracteres].',
+    task: 'Analiza tendencias del mercado de productos digitales (ej: "minimalist wall art", "digital planner", "printable"). PRIORIDAD: usa google.trends. Si falla o devuelve error, usa web.browser para buscar "etsy trending digital products 2024" y extrae keywords manualmente. Elige 1-2 keywords con interés creciente. Para cada tendencia, llama a la tool trend.report con keyword y una descripción breve (menos de 120 caracteres) — no escribas la tendencia como texto libre.',
     interval: 30 * 60 * 1000,
   },
   contenido: {
@@ -180,14 +181,28 @@ class AgentRuntime {
         payload: { taskType: task.taskType, agentId: task.agentId },
       });
 
+      // Migración marcadores → Tool Calling (HOKAGE_CORE_SPECIFICATION_v1.md §2): un rol con
+      // la tool de reemplazo disponible NUNCA ve la instrucción del marcador viejo — si ambas
+      // conviven en el prompt, el modelo tiende a preferir el marcador (verificado en Fase 1).
+      // El regex de agentRuntime.ts se queda como red de seguridad, pero deja de ofrecerse
+      // activamente en cuanto el rol tiene el tool real.
+      const roleTools = toolsForRole(task.agentRole);
+      const formatLines: string[] = [];
+      if (!roleTools.includes('trend.report')) {
+        formatLines.push('- Si detectas una tendencia de mercado accionable, añade: [TENDENCIA: keyword | descripcion breve]');
+      }
+      formatLines.push('- Si acabas de crear contenido listo para distribuir, añade: [CONTENIDO: keyword | resumen de 1 linea]');
+      formatLines.push('- Si necesitas que Jorge apruebe algo (publicar contenido, gastar dinero, cambiar configuración), añade: [DECISION: título en menos de 80 caracteres]');
+      formatLines.push('- Si descubres un hecho relevante para recordar en el futuro, añade: [MEMORIA: clave_snake_case=valor en menos de 150 caracteres] (máximo 3 por respuesta)');
+      formatLines.push('- Usa los marcadores solo cuando realmente sean necesarios.');
+      if (roleTools.includes('trend.report')) {
+        formatLines.push('- Para reportar una tendencia, llama SIEMPRE a la tool trend.report — nunca uses [TENDENCIA: ...].');
+      }
+
       const taskPrompt = `${task.context || task.taskType}
 
 INSTRUCCIONES DE FORMATO:
-- Si detectas una tendencia de mercado accionable, añade: [TENDENCIA: keyword | descripcion breve]
-- Si acabas de crear contenido listo para distribuir, añade: [CONTENIDO: keyword | resumen de 1 linea]
-- Si necesitas que Jorge apruebe algo (publicar contenido, gastar dinero, cambiar configuración), añade: [DECISION: título en menos de 80 caracteres]
-- Si descubres un hecho relevante para recordar en el futuro, añade: [MEMORIA: clave_snake_case=valor en menos de 150 caracteres] (máximo 3 por respuesta)
-- Usa los marcadores solo cuando realmente sean necesarios.`;
+${formatLines.join('\n')}`;
 
       const result = await askAgent(task.agentId, taskPrompt);
 

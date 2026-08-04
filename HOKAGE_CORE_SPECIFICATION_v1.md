@@ -155,6 +155,23 @@ Vocabulario cerrado de eventos (`AgentEventType` en `eventBus.ts`): `trend.detec
 
 **Compatibilidad hacia atrás durante la transición (obligatoria, no opcional):** al migrar cada marcador, el tool nuevo se añade y el prompt del rol correspondiente se actualiza para pedir la tool en vez del marcador — pero **el parseo regex del marcador viejo no se borra todavía**. Ambos caminos conviven. Solo se retira el regex de ese marcador, para los roles tool-capable, cuando se verifique en `agent_runs`/`work_items` reales un número de invocaciones correctas consecutivas por tool call (no por marcador) — nunca antes. Para `operaciones`/`soporte` el regex de `MEMORIA`/`DECISION` no se retira nunca mientras sigan en un modelo sin tool-calling. Un módulo (= un marcador) completo, verificado y commiteado antes de pasar al siguiente, igual que el resto de este proyecto.
 
+**Regla permanente añadida por Jorge al aceptar el plan, no limitada a esta migración:** a partir de esta decisión, ningún sistema nuevo puede introducir un mecanismo alternativo de comunicación estructurada entre agentes y runtime. Toda acción estructurada (crear una fila, disparar un evento, pedir aprobación) pasa por Tool Calling — nunca por un nuevo formato de texto libre parseado a mano. Esto gobierna, en concreto, el futuro Memory System v2 (§6, ya alineado: `memory.write` nace como tool) y cualquier Business Module (§8.4) que necesite que un agente dispare un efecto nuevo.
+
+**Reglas de calidad fijadas para las 4 fases (Jorge, al confirmar el plan):**
+1. Compatibilidad hacia atrás: ninguna fase puede romper a los roles que siguen en marcador.
+2. Un único mecanismo al finalizar, para todo rol que soporte Tool Calling — `operaciones`/`soporte` quedan fuera de esa exigencia por no soportarlo, no es una excepción a la regla sino su alcance explícito.
+3. Observabilidad: cada tool nuevo deja log propio (`[TOOL:<id>] ...`) además del log ya automático del bus (`[BUS] ...`) y del registro en `agent_runs`.
+4. Contratos tipados: `inputSchema`/`outputSchema` + tipos TS en `tools/types.ts`, mismo patrón que los tools existentes — ninguna excepción.
+5. Documentación: este documento se actualiza al cerrar cada fase, no al final de las cuatro.
+
+### Fase 1 — `trend.report` — ✅ completada y verificada (2026-08-04)
+
+Implementada exactamente según el plan: `TrendReportTool` (`tools/index.ts`), tipos en `tools/types.ts`, registrada en `tools/registry.ts`, añadida a `AGENT_TOOLS.investigador` (`agentModels.ts`). El regex de `[TENDENCIA: ...]` en `agentRuntime.ts` se mantiene intacto.
+
+**Hallazgo real de la verificación, no anticipado en el plan:** con ambos mecanismos disponibles a la vez (tool + instrucción del marcador en el bloque genérico de formato), el modelo (`gemini-2.5-flash`) prefería el marcador viejo incluso pidiéndole explícitamente que usara la tool — confirma, con evidencia, la preocupación de fondo de toda esta migración. **Fix aplicado:** el bloque `INSTRUCCIONES DE FORMATO` de `runAgent()` pasa a construirse dinámicamente por rol (`toolsForRole()`) — un rol con la tool disponible deja de ver la instrucción del marcador equivalente. El regex de compatibilidad se queda como red de seguridad silenciosa, no como camino ofrecido activamente. **Este mismo ajuste se reutiliza sin cambios en las Fases 2-4.**
+
+Verificado con ejecución real (`POST /api/agents/2/run`, sin datos de prueba dejados en la BD): log `[TOOL:trend.report] Explorador → trend.detected :: <keyword>`, fila real en `market`, evento `trend.detected` publicado en el bus, automation `Tendencia → Escritor` disparada exactamente igual que con el marcador — cero regresión en el pipeline existente.
+
 **Consecuencia si no se hace:** cada sistema nuevo (Memory System, Business Modules, paneles por sala) seguiría el reflejo de "añadir un marcador más" en vez de "añadir un tool" — la migración se volvería más cara cuanto más se tardara.
 
 ---

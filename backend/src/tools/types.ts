@@ -88,3 +88,14 @@ export interface SystemExecOutput {
   status: 'pending_approval';
   execRunId: number;
 }
+
+// Fase 1 de la migración marcadores → Tool Calling (HOKAGE_CORE_SPECIFICATION_v1.md §2)
+export interface TrendReportInput {
+  keyword: string;
+  description: string;
+}
+
+export interface TrendReportOutput {
+  marketId: number;
+  keyword: string;
+}
