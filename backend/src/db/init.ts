@@ -114,6 +114,62 @@ async function runMigrations(): Promise<void> {
     await run(`ALTER TABLE work_items ADD COLUMN milestone_id INTEGER REFERENCES obj_milestones(id)`);
   }
 
+  // Migración: work_items.business_id y agent_costs.business_id referenciaban
+  // a la tabla businesses, eliminada por código muerto — con
+  // PRAGMA foreign_keys=ON eso rompía CUALQUIER INSERT en ambas tablas
+  // ("no such table: main.businesses"), tirando el runtime de agentes entero.
+  // Se recrean sin la referencia colgante, mismo patrón que la migración de
+  // agent_schedules más abajo (crear → copiar → drop → renombrar).
+  const workItemsFks = await all<{ table: string }>(`PRAGMA foreign_key_list(work_items)`);
+  if (workItemsFks.some((fk) => fk.table === 'businesses')) {
+    await run(`CREATE TABLE work_items_v2 (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      agent_id         INTEGER NOT NULL REFERENCES agents(id),
+      business_id      INTEGER,
+      type             TEXT NOT NULL,
+      priority         INTEGER NOT NULL DEFAULT 6,
+      status           TEXT NOT NULL DEFAULT 'pending',
+      context          TEXT,
+      result           TEXT,
+      locked_at        TEXT,
+      ttl_minutes      INTEGER DEFAULT 30,
+      retry_count      INTEGER DEFAULT 0,
+      created_at       TEXT DEFAULT (datetime('now')),
+      resolved_at      TEXT,
+      venture_id       INTEGER REFERENCES ventures(id),
+      milestone_id     INTEGER REFERENCES obj_milestones(id)
+    )`);
+    await run(`INSERT INTO work_items_v2 (id, agent_id, business_id, type, priority, status, context, result, locked_at, ttl_minutes, retry_count, created_at, resolved_at, venture_id, milestone_id)
+               SELECT id, agent_id, business_id, type, priority, status, context, result, locked_at, ttl_minutes, retry_count, created_at, resolved_at, venture_id, milestone_id FROM work_items`);
+    await run(`DROP TABLE work_items`);
+    await run(`ALTER TABLE work_items_v2 RENAME TO work_items`);
+    await run(`CREATE INDEX IF NOT EXISTS idx_work_items_agent_status ON work_items(agent_id, status)`);
+    await run(`CREATE INDEX IF NOT EXISTS idx_work_items_priority ON work_items(priority DESC, created_at ASC)`);
+    await run(`CREATE INDEX IF NOT EXISTS idx_work_items_status ON work_items(status)`);
+    console.log('[DB] Migración: work_items.business_id ya no referencia la tabla businesses (eliminada)');
+  }
+
+  const agentCostsFks = await all<{ table: string }>(`PRAGMA foreign_key_list(agent_costs)`);
+  if (agentCostsFks.some((fk) => fk.table === 'businesses')) {
+    await run(`CREATE TABLE agent_costs_v2 (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      agent_id        INTEGER NOT NULL REFERENCES agents(id),
+      business_id     INTEGER,
+      work_item_id    INTEGER REFERENCES work_items(id),
+      tokens_in       INTEGER DEFAULT 0,
+      tokens_out      INTEGER DEFAULT 0,
+      llm_cost_usd    REAL DEFAULT 0,
+      tool_cost_usd   REAL DEFAULT 0,
+      created_at      TEXT DEFAULT (datetime('now'))
+    )`);
+    await run(`INSERT INTO agent_costs_v2 (id, agent_id, business_id, work_item_id, tokens_in, tokens_out, llm_cost_usd, tool_cost_usd, created_at)
+               SELECT id, agent_id, business_id, work_item_id, tokens_in, tokens_out, llm_cost_usd, tool_cost_usd, created_at FROM agent_costs`);
+    await run(`DROP TABLE agent_costs`);
+    await run(`ALTER TABLE agent_costs_v2 RENAME TO agent_costs`);
+    await run(`CREATE INDEX IF NOT EXISTS idx_agent_costs_agent ON agent_costs(agent_id, created_at)`);
+    console.log('[DB] Migración: agent_costs.business_id ya no referencia la tabla businesses (eliminada)');
+  }
+
   // Mantener sincronizado el modelo óptimo de cada agente con la fuente de verdad (agentModels.ts)
   const agents = await all<{ id: number; role: string; model: string | null }>('SELECT id, role, model FROM agents');
   for (const agent of agents) {

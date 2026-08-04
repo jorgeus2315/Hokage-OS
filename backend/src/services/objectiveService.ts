@@ -1,6 +1,7 @@
 import { get, run } from '../db/init.js';
 import bus from '../config/eventBus.js';
 import { createDecision } from './decisionService.js';
+import { OWNER_NAME } from '../config/env.js';
 
 // Objetivos cuyo success_criteria depende de ingresos reales — HOKAGE OS no
 // tiene todavia ninguna integracion de ventas (Etsy/Shopify), asi que no puede
@@ -59,9 +60,9 @@ export async function closeMilestoneOnResult(milestoneId: number, ok: boolean): 
   console.log(`[GOAL] Objetivo ${milestone.objective_id} COMPLETADO`);
 }
 
-// Cierra el objetivo cuando Jorge aprueba la decision de confirmacion (ver arriba).
+// Cierra el objetivo cuando el dueño aprueba la decision de confirmacion (ver arriba).
 export async function markObjectiveAchieved(objectiveId: number): Promise<void> {
   await run(`UPDATE objectives SET status = 'achieved' WHERE id = ?`, [objectiveId]);
-  bus.publish({ type: 'objective.achieved', from: 'Jorge', payload: { objectiveId } });
-  console.log(`[GOAL] Objetivo ${objectiveId} confirmado por Jorge`);
+  bus.publish({ type: 'objective.achieved', from: OWNER_NAME, payload: { objectiveId } });
+  console.log(`[GOAL] Objetivo ${objectiveId} confirmado por ${OWNER_NAME}`);
 }

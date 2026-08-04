@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 import { sendError, structuredErrorHandler } from './middleware/errorHandler.js';
+import { OWNER_NAME } from './config/env.js';
 
 const REQUIRED_ENV = ['OPENROUTER_API_KEY', 'ADMIN_TOKEN'];
 const missing = REQUIRED_ENV.filter((key) => !process.env[key]);
@@ -259,9 +260,9 @@ app.post('/api/decisions', requireAdmin, async (req, res) => {
 app.put('/api/decisions/:id/approve', requireAdmin, async (req, res) => {
   try {
     const id = Number(req.params.id);
-    const decision = await approveDecision(id, 'Jorge');
+    const decision = await approveDecision(id, OWNER_NAME);
     await resolveDecisionApproval(decision);
-    bus.publish({ type: 'decision.approved', from: 'Jorge', payload: { decisionId: id } });
+    bus.publish({ type: 'decision.approved', from: OWNER_NAME, payload: { decisionId: id } });
     broadcast('decision.approved', { id });
     res.json({ ok: true });
   } catch (e: any) { sendError(res, 400, e, 'Error aprobando decision'); }
@@ -270,9 +271,9 @@ app.put('/api/decisions/:id/approve', requireAdmin, async (req, res) => {
 app.put('/api/decisions/:id/reject', requireAdmin, async (req, res) => {
   try {
     const id = Number(req.params.id);
-    const decision = await rejectDecision(id, 'Jorge');
+    const decision = await rejectDecision(id, OWNER_NAME);
     await resolveDecisionRejection(decision);
-    bus.publish({ type: 'decision.rejected', from: 'Jorge', payload: { decisionId: id } });
+    bus.publish({ type: 'decision.rejected', from: OWNER_NAME, payload: { decisionId: id } });
     broadcast('decision.rejected', { id });
     res.json({ ok: true });
   } catch (e: any) { sendError(res, 400, e, 'Error rechazando decision'); }
@@ -686,7 +687,7 @@ app.post('/api/objectives', requireAdmin, async (req, res) => {
     const plan = await get('SELECT * FROM obj_plans WHERE id = ?', [planId]);
     const milestones = await all('SELECT * FROM obj_milestones WHERE plan_id = ? ORDER BY phase_index ASC, created_at ASC', [planId]);
 
-    bus.publish({ type: 'objective.created', from: 'Jorge', payload: { objectiveId, title: title.trim() } });
+    bus.publish({ type: 'objective.created', from: OWNER_NAME, payload: { objectiveId, title: title.trim() } });
     res.status(201).json({ ok: true, data: { ...(objective as object), plan: { ...(plan as object), milestones } } });
   } catch (e: any) { sendError(res, 500, e, 'Error creando objetivo'); }
 });
@@ -747,7 +748,7 @@ app.put('/api/objectives/:id/plan/approve', requireAdmin, async (req, res) => {
       console.log(`[GOAL] Milestone ${m.id} → work_item ${wiResult.lastID} para ${agent.name}`);
     }
 
-    bus.publish({ type: 'objective.approved', from: 'Jorge', payload: { objectiveId } });
+    bus.publish({ type: 'objective.approved', from: OWNER_NAME, payload: { objectiveId } });
     const updated = await get('SELECT * FROM objectives WHERE id = ?', [objectiveId]);
     res.json({ ok: true, data: updated });
   } catch (e: any) { sendError(res, 500, e, 'Error aprobando plan'); }
