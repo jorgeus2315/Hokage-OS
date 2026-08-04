@@ -31,7 +31,7 @@ const TOOL_CAPABLE_MODELS = new Set([
 const AGENT_TOOLS: Record<string, string[]> = {
   ceo:          ['web.browser'],
   investigador: ['google.trends', 'web.browser', 'trend.report'],
-  contenido:    ['web.browser'],
+  contenido:    ['web.browser', 'content.create'],
   trafico:      ['google.trends', 'web.browser'],
   finanzas:     [],
   operaciones:  [],

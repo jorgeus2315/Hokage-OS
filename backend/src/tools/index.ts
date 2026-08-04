@@ -1,7 +1,8 @@
 import type { Tool, ToolContext, ToolResult, ToolStatus, ToolPermission } from './base.js';
-import type { EtsyListingInput, EtsyListingOutput, ShopifyListingInput, ShopifyListingOutput, PrintifyProductInput, PrintifyProductOutput, GoogleTrendsInput, GoogleTrendsOutput, WebBrowserInput, WebBrowserOutput, SystemExecInput, SystemExecOutput, TrendReportInput, TrendReportOutput } from './types.js';
+import type { EtsyListingInput, EtsyListingOutput, ShopifyListingInput, ShopifyListingOutput, PrintifyProductInput, PrintifyProductOutput, GoogleTrendsInput, GoogleTrendsOutput, WebBrowserInput, WebBrowserOutput, SystemExecInput, SystemExecOutput, TrendReportInput, TrendReportOutput, ContentCreateInput, ContentCreateOutput } from './types.js';
 import { requestExec } from '../services/hermesService.js';
 import { createMarket } from '../services/marketService.js';
+import { createContent } from '../services/contentService.js';
 import { get } from '../db/init.js';
 import bus from '../config/eventBus.js';
 
@@ -402,6 +403,56 @@ export const TrendReportTool: Tool<TrendReportInput, TrendReportOutput> = {
     } catch (err: any) {
       console.error(`[TOOL:trend.report] error:`, err.message);
       return result<TrendReportOutput>(false, { error: `TrendReport: ${err.message}` });
+    }
+  },
+};
+
+// Fase 2 de la migración marcadores → Tool Calling (HOKAGE_CORE_SPECIFICATION_v1.md §2).
+// Sustituye el parseo regex de [CONTENIDO: keyword | resumen] en agentRuntime.ts —
+// el regex se queda activo hasta verificar N ejecuciones reales por esta tool.
+export const ContentCreateTool: Tool<ContentCreateInput, ContentCreateOutput> = {
+  id: 'content.create',
+  name: 'Content Create',
+  description: 'Registra contenido SEO listo para distribuir. Úsala en vez de escribir texto libre — cada llamada crea un registro real en el pipeline de contenido.',
+  category: 'pipeline',
+  status: 'ready',
+  permissions: permission('agent'),
+  requiredApproval: false,
+  inputSchema: stubInputSchema(
+    {
+      keyword: { type: 'string', description: 'Keyword del contenido creado' },
+      summary: { type: 'string', description: 'Resumen de 1 línea del contenido', maxLength: 120 },
+    },
+    ['keyword', 'summary']
+  ),
+  outputSchema: stubOutputSchema({
+    contentId: { type: 'integer' },
+    keyword:   { type: 'string' },
+  }),
+  async estimateCost(_input) { return 0; },
+  async execute(input, ctx) {
+    try {
+      const agent = ctx.agentId ? await get<{ name: string }>('SELECT name FROM agents WHERE id = ?', [ctx.agentId]) : null;
+      const agentName = agent?.name || 'agente';
+
+      const content = await createContent({
+        agent_id: ctx.agentId ?? null,
+        platform: 'seo',
+        body: `${input.keyword} — ${input.summary}`,
+        status: 'draft',
+      });
+
+      bus.publish({
+        type: 'content.created',
+        from: agentName,
+        payload: { keyword: input.keyword, summary: input.summary, agentId: ctx.agentId ?? null, createdAt: new Date().toISOString() },
+      });
+      console.log(`[TOOL:content.create] ${agentName} → content.created :: ${input.keyword}`);
+
+      return result<ContentCreateOutput>(true, { data: { contentId: content.id, keyword: input.keyword }, cost: 0 });
+    } catch (err: any) {
+      console.error(`[TOOL:content.create] error:`, err.message);
+      return result<ContentCreateOutput>(false, { error: `ContentCreate: ${err.message}` });
     }
   },
 };

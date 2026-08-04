@@ -36,7 +36,7 @@ const AUTONOMOUS_TASKS: Record<string, { task: string; interval: number }> = {
     interval: 30 * 60 * 1000,
   },
   contenido: {
-    task: 'Revisa tu contexto de trabajo. Si recibes una tendencia del Explorador, crea una descripcion de producto SEO-optimizada (titulo, descripcion, 5 tags). Cuando termines añade: [CONTENIDO: keyword | resumen de 1 linea] y [DECISION: Publicar contenido SEO — keyword]. Si no hay trabajo nuevo, reporta estado brevemente.',
+    task: 'Revisa tu contexto de trabajo. Si recibes una tendencia del Explorador, crea una descripcion de producto SEO-optimizada (titulo, descripcion, 5 tags). Cuando termines, llama a la tool content.create con el keyword y un resumen de 1 linea — no escribas el contenido como texto libre. Después añade: [DECISION: Publicar contenido SEO — keyword]. Si no hay trabajo nuevo, reporta estado brevemente.',
     interval: 20 * 60 * 1000,
   },
   finanzas: {
@@ -191,12 +191,17 @@ class AgentRuntime {
       if (!roleTools.includes('trend.report')) {
         formatLines.push('- Si detectas una tendencia de mercado accionable, añade: [TENDENCIA: keyword | descripcion breve]');
       }
-      formatLines.push('- Si acabas de crear contenido listo para distribuir, añade: [CONTENIDO: keyword | resumen de 1 linea]');
+      if (!roleTools.includes('content.create')) {
+        formatLines.push('- Si acabas de crear contenido listo para distribuir, añade: [CONTENIDO: keyword | resumen de 1 linea]');
+      }
       formatLines.push('- Si necesitas que Jorge apruebe algo (publicar contenido, gastar dinero, cambiar configuración), añade: [DECISION: título en menos de 80 caracteres]');
       formatLines.push('- Si descubres un hecho relevante para recordar en el futuro, añade: [MEMORIA: clave_snake_case=valor en menos de 150 caracteres] (máximo 3 por respuesta)');
       formatLines.push('- Usa los marcadores solo cuando realmente sean necesarios.');
       if (roleTools.includes('trend.report')) {
         formatLines.push('- Para reportar una tendencia, llama SIEMPRE a la tool trend.report — nunca uses [TENDENCIA: ...].');
+      }
+      if (roleTools.includes('content.create')) {
+        formatLines.push('- Para registrar contenido creado, llama SIEMPRE a la tool content.create — nunca uses [CONTENIDO: ...].');
       }
 
       const taskPrompt = `${task.context || task.taskType}

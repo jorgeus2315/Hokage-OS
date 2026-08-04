@@ -99,3 +99,14 @@ export interface TrendReportOutput {
   marketId: number;
   keyword: string;
 }
+
+// Fase 2 de la migración marcadores → Tool Calling (HOKAGE_CORE_SPECIFICATION_v1.md §2)
+export interface ContentCreateInput {
+  keyword: string;
+  summary: string;
+}
+
+export interface ContentCreateOutput {
+  contentId: number;
+  keyword: string;
+}

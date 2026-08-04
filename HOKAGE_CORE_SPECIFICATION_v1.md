@@ -172,6 +172,14 @@ Implementada exactamente según el plan: `TrendReportTool` (`tools/index.ts`), t
 
 Verificado con ejecución real (`POST /api/agents/2/run`, sin datos de prueba dejados en la BD): log `[TOOL:trend.report] Explorador → trend.detected :: <keyword>`, fila real en `market`, evento `trend.detected` publicado en el bus, automation `Tendencia → Escritor` disparada exactamente igual que con el marcador — cero regresión en el pipeline existente.
 
+### Fase 2 — `content.create` — ✅ completada y verificada (2026-08-04)
+
+Mismo patrón exacto que Fase 1, aplicado a `contenido` (Escritor, `claude-haiku-4.5`): `ContentCreateTool` (`tools/index.ts` + `types.ts` + `registry.ts`), añadida a `AGENT_TOOLS.contenido`, línea `[CONTENIDO: ...]` retirada del bloque de formato solo para ese rol (misma función `formatLines` de Fase 1, extendida). La tarea autónoma de `contenido` pide la tool para la parte de contenido, **pero mantiene sin tocar la instrucción `[DECISION: Publicar contenido SEO — keyword]`** — DECISION es Fase 4, fuera de alcance aquí.
+
+**Sin hallazgos nuevos que reporten un comportamiento emergente distinto al de Fase 1** — el ajuste de prompt por rol descubierto en Fase 1 se generalizó sin fricción: la tool se invocó correctamente a la primera, sin que el modelo recurriera al marcador viejo en ningún momento de la verificación. Esto confirma, no descubre, el patrón — no se abre una entrada nueva en memoria persistente por esto (regla de este documento: memoria solo para decisiones con impacto arquitectónico, no para confirmaciones repetidas de un patrón ya registrado).
+
+Verificado con ejecución real (`POST /api/agents/3/run`): log `[TOOL:content.create] Escritor → content.created :: fase2-verify-token`, fila real en `content`, evento `content.created` publicado, automation `Contenido → Tráfico` disparada igual que antes. Dato de prueba limpiado de la BD tras verificar.
+
 **Consecuencia si no se hace:** cada sistema nuevo (Memory System, Business Modules, paneles por sala) seguiría el reflejo de "añadir un marcador más" en vez de "añadir un tool" — la migración se volvería más cara cuanto más se tardara.
 
 ---
