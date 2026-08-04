@@ -362,134 +362,157 @@ Si Hokage OS crece hacia automatización de despliegue, gestión de VPS, o tarea
 
 ### 11.2 Secretos y credenciales
 
-🔒 **CONGELADO** — diseño completo, sustituye la versión anterior de esta sección (que solo fijaba la regla de no escribir `.env` por HTTP; esto es el mecanismo entero detrás de esa regla).
+🔒 **CONGELADO — v2, definitiva.** Jorge aceptó el diseño base (v1, abajo conservado como fundamento) y pidió reforzarlo con tres principios de crecimiento antes de darlo por cerrado. Los tres son compatibles — se evaluaron, no se aceptaron a ciegas — con un límite honesto anotado explícitamente donde correspondía, no disimulado.
 
 #### Por qué importa
 
-Hoy solo existen 2 secretos (`OPENROUTER_API_KEY`, `ADMIN_TOKEN`), gestionados a mano. El Setup Wizard (§12.3) y los Business Modules (§8.4) van a necesitar credenciales de Etsy, Shopify, GitHub, futuros servidores MCP (§8.5) y lo que venga — sin un diseño explícito, cada integración nueva reinventaría su propia forma de pedir, guardar y usar una clave.
+Hoy solo existen 2 secretos (`OPENROUTER_API_KEY`, `ADMIN_TOKEN`), gestionados a mano. El Setup Wizard (§12.3) y los Business Modules (§8.4) van a necesitar credenciales de Etsy, Shopify, GitHub, futuros servidores MCP (§8.5) y lo que venga.
 
-#### El problema de fondo que hay que resolver
+#### El problema de fondo (fundamento v1, sigue vigente)
 
-Hay **dos tipos de secreto completamente distintos**, y tratarlos igual es el error que hay que evitar desde el diseño:
+Hay **dos tipos de secreto completamente distintos**:
 
-1. **Secretos estáticos** (`OPENROUTER_API_KEY`, un GitHub PAT, la mayoría de API keys): no rotan solos. Un humano los pega una vez y no vuelven a cambiar hasta que él decide rotarlos.
-2. **Credenciales OAuth2 con refresh** (Etsy, Shopify — ambas usan OAuth2 en su API real): el `access_token` caduca en horas y se renueva automáticamente con un `refresh_token`. Esto **no puede vivir solo en `.env`** — algo tiene que escribir el token renovado en algún sitio, automáticamente, sin intervención humana, potencialmente varias veces al día.
+1. **Estáticos** (`OPENROUTER_API_KEY`, un GitHub PAT): no rotan solos.
+2. **OAuth2 con refresh** (Etsy, Shopify): el `access_token` caduca en horas y se renueva solo con un `refresh_token` — no puede vivir en `.env`, algo tiene que escribirlo automáticamente.
 
-Diseñar un único mecanismo para ambos fuerza una mala solución en uno de los dos casos. Se diseñan como dos piezas relacionadas, no una.
+**Alternativas evaluadas (sin cambios respecto a la v1):** A (todo en `.env`) no resuelve OAuth. B (todo cifrado en SQLite, el Wizard escribe vía formulario) contradice la instrucción explícita de no escribir secretos por HTTP y además crea un problema circular (la clave maestra que cifraría la BD tiene que vivir en algún sitio — vuelve a ser `.env`, protegiendo algo más grande). **C — híbrido — sigue siendo la decisión correcta**, ahora reforzada con tres capas que la hacen sustituible, capaz y multi-venture sin reescribirse.
 
-#### Alternativas
+#### Los tres principios, evaluados
 
-**A. Todo en `.env`, sin excepción** (lo que hay hoy, extendido a más variables)
-- Ventajas: cero superficie nueva, cero cifrado que gestionar, ya es el patrón establecido.
-- Inconvenientes: no resuelve el caso OAuth (no hay dónde escribir el token renovado sin editar el fichero por código, algo que ya se prohibió explícitamente). No escala bien más allá de un puñado de claves — cada integración nueva exige acceso a fichero, en local y en el VPS.
+**1. `SecretProvider` — todo el sistema depende de una interfaz, nunca de `.env` directamente.**
+Compatible, y corrige un defecto real de la v1: ahí los secretos estáticos se leían con `process.env` directo desde cada Tool, mientras que los OAuth pasaban por un servicio — dos caminos de consumo distintos para el mismo concepto. Se unifican en una única interfaz.
 
-**B. Todos los secretos cifrados en SQLite, el Wizard los escribe vía formulario**
-- Ventajas: autoservicio completo — pegar clave, probar conexión, listo, sin tocar ficheros ni SSH al VPS.
-- Inconvenientes: **contradice tu instrucción explícita** ("el Wizard nunca debe escribir directamente... mediante HTTP" — esto se extiende en espíritu a cualquier escritura de secretos vía HTTP, no solo al fichero `.env` literal). Además introduce un problema circular real: para cifrar secretos en BD hace falta una clave maestra, y esa clave maestra tiene que vivir en algún sitio — vuelve a ser `.env`, solo que ahora protegiendo algo más grande. Más superficie de ataque (la BD, que hoy no contiene ningún secreto, pasaría a contenerlos todos) sin resolver el problema, solo moverlo.
+**2. Agentes y Tools piden capacidades (`ai`, `etsy`, `shopify`, `github`), nunca secretos concretos.**
+Compatible — es una capa que se coloca encima de `SecretProvider`, no lo sustituye. Beneficio inmediato no pedido pero gratis: si mañana cambia el proveedor de IA, ningún Tool que pida la capacidad `ai` se entera.
 
-**C. Híbrido — estáticos en `.env` (nunca escritos por la app), OAuth en una tabla cifrada nueva (escrita solo por el propio backend, nunca por una request que reciba un valor pegado por un humano)**
-- Ventajas: respeta la instrucción al pie de la letra sin excepción para el caso estático (que es la mayoría de los secretos). Resuelve el caso OAuth de la única forma que realmente funciona (renovación automática necesita almacenamiento que la app pueda escribir sola). El cifrado se limita a lo que de verdad lo necesita — no cifra `OPENROUTER_API_KEY` innecesariamente.
-- Inconvenientes: dos mecanismos en vez de uno — más superficie conceptual que memorizar. Se mitiga con un único punto de entrada (`GET /api/secrets`) que presenta ambos de forma uniforme de cara al Wizard, aunque por debajo funcionen distinto.
+**3. Los secretos deben poder pertenecer a un Workspace/Venture, no al servidor.**
+Compatible **con un límite explícito**: solo tiene sentido para credenciales **OAuth2** (que ya tienen un sitio propio en la app donde vivir cifradas). Un secreto **estático no puede ser de-venture** — no existe un `.env` por venture, y forzarlo por HTTP violaría la regla ya fijada. Etsy y Shopify, las dos integraciones nombradas, son ambas OAuth2 — el límite no afecta a ningún caso real de hoy. "Workspace" no se construye como tabla nueva: hoy Workspace = la instalación única (igual que en el resto de este documento, §11.1 ya fijó single-owner) — el diseño deja el hueco (`scope`) para que un `workspace_id` se añada después de forma aditiva, exactamente como se hizo con `venture_id` en el resto del Core, sin que eso sea trabajo de hoy.
 
-#### Decisión para Hokage OS: C
-
-### Arquitectura
+#### Arquitectura (v2)
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│  secret_definitions (SQLite) — METADATA, nunca valores           │
-│  id · label · kind ('static_env' | 'oauth2') · env_var           │
-│  required · docs_url · last_validated_at · last_validation_ok    │
-└─────────────────────────────────────────────────────────────────┘
-        │ kind='static_env'                    │ kind='oauth2'
-        ▼                                       ▼
-┌───────────────────────┐          ┌─────────────────────────────────┐
-│  process.env (.env)   │          │  oauth_tokens (SQLite, cifrado)  │
-│  el operador lo edita │          │  access_token_enc · refresh_..   │
-│  a mano, siempre      │          │  expires_at · scope              │
-└───────────────────────┘          │  escrito SOLO por el propio      │
-                                    │  backend (callback OAuth +       │
-                                    │  refresco silencioso)            │
-                                    └─────────────────────────────────┘
+                    ┌─────────────────────────────────────┐
+   Tools/Agentes →  │  CapabilityResolver                  │   Principio 2
+                    │  resolve('etsy', { ventureId })      │
+                    └──────────────────┬────────────────────┘
+                                       │ mira qué SecretDefinition respalda la capability
+                    ┌──────────────────▼────────────────────┐
+                    │  secret_definitions (SQLite)           │
+                    │  id · label · capability · kind        │
+                    │  scope ('installation'|'venture')      │
+                    │  env_var · required · docs_url          │
+                    └──────────────────┬────────────────────┘
+                                       │
+                    ┌──────────────────▼────────────────────┐
+   Principio 1  →   │  SecretProvider (interfaz)              │
+                    │  getStatic(envVar)                      │
+                    │  getDynamic(defId, ventureId)            │
+                    │  setDynamic(defId, ventureId, value)     │  ← solo el propio backend
+                    └───────┬──────────────────────┬──────────┘
+                            │ kind='static'         │ kind='oauth2'
+                            ▼                       ▼
+                  ┌──────────────────┐   ┌──────────────────────────┐
+                  │ LocalEnvProvider │   │ secret_values (cifrado)   │  Principio 3
+                  │ → process.env    │   │ definition_id · venture_id│
+                  │ (scope siempre   │   │ (NULL=instalación)        │
+                  │  'installation') │   │ value_enc · expires_at     │
+                  └──────────────────┘   └──────────────────────────┘
 ```
 
-#### 1. Definiciones — código, no formulario
+Implementaciones futuras de `SecretProvider` (Docker secrets, Vault, AWS Secrets Manager) sustituyen `LocalEnvProvider` entero sin que `CapabilityResolver`, `secret_definitions` ni un solo Tool cambien una línea — es exactamente la garantía que pedía el principio 1.
 
-Cada integración declara qué secretos necesita **donde ya vive su propio código** (mismo principio que el contrato de `Tool`, §8.2 — nunca un formulario genérico desconectado de quién realmente consume la clave):
+#### 1. Capacidades — lo único que agentes y Tools conocen
 
 ```typescript
-// tools/index.ts, junto a cada Tool
-export const EtsyTool_secrets: SecretDefinition[] = [
-  { id: 'etsy_oauth', label: 'Etsy (OAuth)', kind: 'oauth2',
-    docsUrl: 'https://www.etsy.com/developers/register',
-    validate: async () => { /* llamada de lectura mínima a la API de Etsy */ } },
-];
+// config/capabilities.ts
+interface Capability {
+  id: string;                 // 'ai' | 'etsy' | 'shopify' | 'github'
+  secretDefinitionId: string; // qué definición la resuelve
+  scope: 'installation' | 'venture';
+}
+
+interface CapabilityResolver {
+  resolve(capabilityId: string, ctx?: { ventureId?: number }): Promise<string | null>;
+}
 ```
 
-Al arrancar, `initSchema()` sincroniza estas definiciones con la tabla `secret_definitions` (`INSERT OR REPLACE`, igual patrón que ya sincroniza `agents.model` contra `agentModels.ts` en cada boot) — **la tabla nunca diverge de lo que el código realmente espera**, porque se regenera de la fuente de verdad cada vez.
+Un `Tool` nunca llama a `secretProvider.get('etsy_oauth')`. Llama a `capabilities.resolve('etsy', { ventureId: ctx.ventureId })`. El resolver mira qué `SecretDefinition` respalda `'etsy'`, y según su `scope`, delega en `SecretProvider.getStatic()` o `getDynamic(defId, ventureId)`. El Tool nunca sabe si detrás hay `.env`, una tabla cifrada, o Vault.
 
-#### 2. Secretos estáticos — `.env`, sin excepción
+#### 2. `SecretProvider` — la interfaz que hace todo lo demás sustituible
 
-`env_var` apunta al nombre de la variable (`OPENROUTER_API_KEY`, `GITHUB_PAT`...). El backend solo **lee** `process.env[env_var]` para saber si está presente — **nunca la escribe, nunca la recibe por HTTP.** Si el Wizard necesita esta clave, el flujo es exactamente el ya fijado: instrucción textual + botón "ya lo añadí, verificar conexión", que dispara `validate()` server-side contra el valor que el proceso ya tiene cargado en memoria — el navegador nunca envía ni recibe el valor de la clave en ningún momento.
+```typescript
+// config/secretProvider.ts
+interface SecretProvider {
+  getStatic(envVar: string): string | null;
+  getDynamic(definitionId: string, ventureId: number | null): Promise<{ value: string; expiresAt?: string } | null>;
+  setDynamic(definitionId: string, ventureId: number | null, value: { value: string; expiresAt?: string }): Promise<void>;
+}
+```
 
-#### 3. Credenciales OAuth2 — la única excepción real, y por qué no rompe la regla
+`LocalEnvProvider` (única implementación en v1): `getStatic` lee `process.env`; `getDynamic`/`setDynamic` leen/escriben `secret_values` cifrado (AES-256-GCM, clave en `OAUTH_ENCRYPTION_KEY` del `.env`, alcance mínimo — solo protege esta tabla, no el sistema entero). `setDynamic` **nunca lo invoca una ruta HTTP que reciba un valor de un formulario** — solo el callback OAuth (ver abajo) y el refresco silencioso.
 
-Etsy y Shopify exigen el flujo estándar OAuth2: el usuario autoriza en la web del proveedor, que redirige de vuelta con un `code` de un solo uso. **Ese `code` sí llega por HTTP — es inevitable, es cómo funciona OAuth2 en todo el ecosistema** — pero es categóricamente distinto de "el Wizard te deja pegar tu API key en un campo de texto": el `code` no es la credencial, es un ticket de un solo uso que el backend intercambia server-to-server por los tokens reales. El usuario nunca ve ni transmite el secreto en sí.
+#### 3. Definiciones — código, con `capability` y `scope` explícitos
+
+```typescript
+// tools/index.ts, junto a cada Tool — mismo principio que el contrato de Tool, §8.2
+export const EtsySecretDefinition: SecretDefinition = {
+  id: 'etsy_oauth', label: 'Etsy (OAuth)', capability: 'etsy',
+  kind: 'oauth2', scope: 'venture',   // cada venture conecta SU PROPIA tienda Etsy
+  docsUrl: 'https://www.etsy.com/developers/register',
+  validate: async (ctx) => { /* llamada de lectura mínima a la API de Etsy */ },
+};
+
+export const GithubSecretDefinition: SecretDefinition = {
+  id: 'github_pat', label: 'GitHub', capability: 'github',
+  kind: 'static', scope: 'installation',   // Hermes/despliegue no es de un venture
+  envVar: 'GITHUB_PAT',
+};
+```
+
+Al arrancar, `initSchema()` sincroniza estas definiciones con `secret_definitions` (`INSERT OR REPLACE`, mismo patrón que ya sincroniza `agents.model` contra `agentModels.ts`) — la tabla nunca diverge del código.
+
+#### 4. OAuth2 — la única excepción real a "nunca por HTTP", y ahora venture-aware
+
+Etsy y Shopify redirigen con un `code` de un solo uso — inevitable en OAuth2, y categóricamente distinto de "pegar una API key en un formulario": el `code` no es la credencial, es un ticket que el backend cambia server-to-server.
 
 ```
-Jorge → GET /api/secrets/etsy_oauth/oauth/start   (requireAdmin)
-      → redirect a Etsy con client_id + redirect_uri
+Jorge → GET /api/secrets/etsy_oauth/oauth/start?venture_id=3   (requireAdmin)
+      → redirect a Etsy (el `venture_id` viaja en el `state` firmado del OAuth)
 Etsy  → el usuario autoriza
-      → redirect a GET /api/secrets/etsy_oauth/oauth/callback?code=...
-Backend → intercambia code por access_token + refresh_token (llamada server-to-server)
-        → cifra ambos (AES-256-GCM, clave en OAUTH_ENCRYPTION_KEY del .env)
-        → guarda en oauth_tokens
-        → nunca los expone de vuelta al navegador
+      → redirect a GET /api/secrets/etsy_oauth/oauth/callback?code=...&state=...
+Backend → valida state → recupera venture_id=3
+        → intercambia code por tokens (server-to-server)
+        → SecretProvider.setDynamic('etsy_oauth', 3, { value, expiresAt })
+        → nunca expone los tokens de vuelta al navegador
 ```
 
-`OAUTH_ENCRYPTION_KEY` es en sí misma un secreto estático — vive en `.env`, protege solo esta tabla. Es cifrado con alcance mínimo (solo lo que de verdad rota y hay que persistir), no cifrado del sistema entero — coherente con no sobre-construir.
-
-**Renovación:** cuando un Tool que necesita el token lo pide (`oauthTokenService.getValidAccessToken('etsy_oauth')`), el servicio comprueba `expires_at`; si está vencido, usa el `refresh_token` para pedir uno nuevo a Etsy, lo re-cifra y actualiza la fila — transparente para el Tool, que nunca sabe si hubo renovación.
-
-#### 4. Consumo — los Tools nunca gestionan secretos por su cuenta
-
-- Secreto estático: el Tool lee `process.env.MI_VAR` directamente, igual que hoy.
-- Secreto OAuth: el Tool llama a `oauthTokenService.getValidAccessToken(id)` y recibe el access token vigente, sin saber si hubo refresco.
-
-Ninguna otra capa del sistema (agentes, rutas, frontend) toca un valor de secreto jamás — ni siquiera cifrado.
+Cada venture conecta su propia tienda Etsy de forma independiente — `secret_values` tiene `UNIQUE(definition_id, venture_id)`, así que el venture 1 y el venture 2 tienen filas separadas, cifradas por separado. **Renovación**: `getDynamic` comprueba `expires_at`; si venció, usa el `refresh_token` para pedir uno nuevo y llama a `setDynamic` con el resultado — transparente para el Tool.
 
 #### 5. Validación
 
-Cada `SecretDefinition` declara un `validate()` opcional: una llamada de solo lectura mínima al proveedor (OpenRouter: comprobar créditos; Etsy: `getUser()`; GitHub: `GET /user`). `POST /api/secrets/:id/validate` (requireAdmin) la ejecuta y persiste `last_validated_at`/`last_validation_ok` en `secret_definitions` — es lo que enciende el botón "✓ Conectado" en el Wizard.
+`validate(ctx?)` en cada `SecretDefinition` — para las `scope='venture'` recibe `{ ventureId }`. `POST /api/secrets/:id/validate?venture_id=N` (requireAdmin) la ejecuta y persiste el resultado junto al valor (en `secret_values` si es de venture, en `secret_definitions` si es de instalación).
 
 #### 6. API expuesta (toda `requireAdmin` salvo el callback)
 
 ```
-GET  /api/secrets                     → [{ id, label, kind, required, present, last_validated_at, last_validation_ok }]
-                                          (present = booleano; JAMÁS un valor)
-POST /api/secrets/:id/validate        → dispara validate()
-GET  /api/secrets/:id/oauth/start     → redirect al proveedor (solo kind='oauth2')
-GET  /api/secrets/:id/oauth/callback  → recibe el `code`, intercambia, cifra, guarda (público — lo llama el proveedor, no Jorge; protegido por el `state` de OAuth, no por ADMIN_TOKEN)
+GET  /api/secrets?venture_id=N          → estado de todas las definiciones aplicables
+                                            (globales siempre + las de venture si se pasa venture_id)
+                                            { id, label, capability, kind, scope, present, last_validated_at, last_validation_ok }
+                                            — JAMÁS un valor
+POST /api/secrets/:id/validate?venture_id=N
+GET  /api/secrets/:id/oauth/start?venture_id=N    (solo kind='oauth2')
+GET  /api/secrets/:id/oauth/callback              (público — lo llama el proveedor; protegido por `state`, no por ADMIN_TOKEN)
 ```
 
-`GET /api/secrets` es la fuente real detrás de lo que §12.1 (System Profile) ya prometía ("variables de entorno presentes, sin exponer valores") — ahora con estado de validación, no solo presencia.
+Sigue siendo la fuente real detrás de §12.1 (System Profile): ahora con `capability`, `scope` y venture opcional.
 
 #### 7. Desarrollo local vs VPS/producción
 
-Estructuralmente idéntico — la única diferencia es cómo llega el fichero:
-
-| | Local | VPS |
-|---|---|---|
-| Dónde vive `.env` | `backend/.env`, gitignored | `.env` en el servidor, nunca en el repo, copiado por Jorge (`scp`/editor SSH) |
-| Cómo se aplica un cambio | Reiniciar `tsx` a mano | `pm2 restart hokage-backend` (§11.3) |
-| `oauth_tokens` | Misma tabla SQLite, mismo fichero `.db` | Igual — viaja con el resto de la BD, ya cifrada en reposo |
-| `OAUTH_ENCRYPTION_KEY` | Una en `.env` local (puede diferir de producción sin problema — son bases de datos distintas) | Una en `.env` del VPS, generada una vez, nunca reutilizada entre entornos |
-
-**Regla dura:** `.env` nunca se commitea, nunca viaja por HTTP, nunca lo genera el Wizard — se mantiene un `.env.example` (sin valores, solo nombres + comentario, regenerado desde `secret_definitions` para que nunca quede desactualizado) como única ayuda automatizada.
+Sin cambios respecto a la v1: `.env` nunca se commitea, nunca viaja por HTTP, nunca lo genera el Wizard. `secret_values` viaja con el resto de la BD SQLite (ya cifrada en reposo). `OAUTH_ENCRYPTION_KEY` es distinta por entorno, generada una vez, nunca reutilizada. Aplicar un cambio en `.env`: reinicio manual en local, `pm2 restart hokage-backend` en VPS (§11.3). Se mantiene `.env.example` regenerado desde `secret_definitions` (solo las `scope='installation'`, nunca las de venture — esas no tienen entrada en `.env`).
 
 #### Consecuencias a 2-3 años
 
-Añadir una integración nueva (un Business Module completo, §8.4) es: declarar su `SecretDefinition` junto a su `Tool`, y listo — aparece sola en `GET /api/secrets`, el Wizard la detecta sin cambios propios. Si algún día se adopta MCP (§8.5), un servidor MCP que necesite credenciales usa exactamente el mismo mecanismo — no hace falta un tercer sistema. El único coste real que se paga por adelantado es la tabla `oauth_tokens` cifrada — pequeña, acotada, justificada por un problema real (rotación automática) y no por "cifrar por si acaso".
+Una integración nueva declara su `Capability` + `SecretDefinition` junto a su `Tool` — aparece sola en `GET /api/secrets`, ningún Tool existente cambia. Sustituir el backend de secretos (Vault, AWS Secrets Manager) es escribir una clase nueva que implemente `SecretProvider` — cero cambios en `CapabilityResolver`, Tools o rutas. Un segundo, tercer o vigésimo venture conecta su propia Etsy/Shopify sin coordinación entre ellos — cada uno con sus propias filas cifradas, sin que el código sepa ni le importe cuántos hay. El único límite que el diseño no resuelve — un secreto estático de-venture — es exactamente el tipo de problema que no existe todavía: el día que aparezca (una integración sin OAuth2 que necesite credenciales distintas por negocio), la señal de disparo es clara y ya está anotada aquí, no descubierta a medio construir.
 
 ### 11.3 VPS y despliegue
 
@@ -520,7 +543,7 @@ Dado que este es exactamente el punto que quedó abierto antes de este documento
 **El Wizard son dos flujos separados que comparten infraestructura, no uno solo:**
 
 1. **Fresh Install Wizard** — se dispara la primera vez que arranca un Hokage OS sin `founder_profile` poblado. Pide: nombre, objetivo económico inicial (alimenta el primer `Objective` del Goal System), confirmación de los 8 agentes por defecto (nombre/modelo se pueden dejar por defecto o tocar ahí mismo — reutiliza `ConfigView`, no construye nada nuevo). Termina creando el primer `venture`.
-2. **New Venture Wizard** — disponible en cualquier momento desde `ConfigView` o el menú principal. Crea un `venture` nuevo, opcionalmente un `Objective` con `venture_id` (requiere §3 resuelto), y pregunta si algún canal (§8.4) necesita configurarse.
+2. **New Venture Wizard** — disponible en cualquier momento desde `ConfigView` o el menú principal. Crea un `venture` nuevo, opcionalmente un `Objective` con `venture_id` (requiere §3 resuelto), y pregunta si algún canal (§8.4) necesita configurarse — para canales OAuth2 (Etsy, Shopify), esto es literalmente el botón "conectar" de §11.2 con `venture_id` ya fijado al del venture recién creado, cada uno con sus propias credenciales sin pisar las de otro venture.
 
 **Bloqueante explícito antes de construir el flujo 2: §3 debe estar resuelto** (los 3 puntos de implementación mínima) — si no, "crear un segundo venture" crea una fila huérfana que ningún agente sabrá usar, exactamente el riesgo que motivó este documento entero.
 
@@ -605,16 +628,16 @@ Ver §8.4 — es composición de lo anterior (canal + Tool + Automations por def
 
 ### Congelado sin más discusión (🔒)
 
-Arquitectura en capas del Core · Runtime/Scheduler/Event Bus · Contrato de Tool como sistema de plugins · Diseño de plugins visuales del mapa · Papel exclusivo de Hermes para ejecución de sistema · Modelo de economía (agent_costs/agent_budgets/ventures) · VPS y despliegue · Diseño del World Engine y las 7 vistas · **Modelo multi-venture, implementado y verificado** (§3) · **Sistema de permisos single-owner sin hardcode** (§11.1, implementado) · **Arquitectura de gestión de secretos** (§11.2 — estáticos en `.env` nunca escritos por la app, OAuth2 en tabla cifrada escrita solo por el propio backend).
+Arquitectura en capas del Core · Runtime/Scheduler/Event Bus · Contrato de Tool como sistema de plugins · Diseño de plugins visuales del mapa · Papel exclusivo de Hermes para ejecución de sistema · Modelo de economía (agent_costs/agent_budgets/ventures) · VPS y despliegue · Diseño del World Engine y las 7 vistas · **Modelo multi-venture, implementado y verificado** (§3) · **Sistema de permisos single-owner sin hardcode** (§11.1, implementado) · **Arquitectura de gestión de secretos v2** (§11.2 — `SecretProvider` como interfaz sustituible, capacidades en vez de secretos concretos, scope instalación/venture; estáticos en `.env` nunca escritos por la app, OAuth2 en tabla cifrada por venture escrita solo por el propio backend).
 
 ### Decidido aquí por primera vez (🆕)
 
-Definición de Business Module (composición, no mecanismo nuevo) · Postura sobre MCP (no adoptar en v1, dejar la puerta abierta — sus credenciales usarían el mismo mecanismo de §11.2 el día que se adopte) · Founder Profile y System Profile (qué son, cómo se construyen) · Alcance definitivo del Setup Wizard (dos flujos: Fresh Install + New Venture) · Postura sobre Knowledge System (diseño C, no construir todavía) · Arquitectura completa de Secret Management (definiciones como código sincronizadas a BD, estáticos vs OAuth2, la excepción legítima del callback OAuth explicada).
+Definición de Business Module (composición, no mecanismo nuevo) · Postura sobre MCP (no adoptar en v1, dejar la puerta abierta — sus credenciales usarían el mismo mecanismo de §11.2 el día que se adopte) · Founder Profile y System Profile (qué son, cómo se construyen) · Alcance definitivo del Setup Wizard (dos flujos: Fresh Install + New Venture) · Postura sobre Knowledge System (diseño C, no construir todavía) · Arquitectura completa de Secret Management reforzada con 3 principios de crecimiento a petición de Jorge — `SecretProvider`, capacidades, scope por venture — con el límite honesto de que solo OAuth2 puede ser de-venture, anotado explícitamente en vez de disimulado.
 
 ### Ya no queda ninguna decisión ⚠️ pendiente de confirmación
 
-Las tres del cierre anterior — multi-venture, permisos, secretos — están confirmadas y las dos primeras ya implementadas. Secretos queda especificado pero **no implementado todavía** (este documento es solo el diseño, tal como se pidió).
+Las tres del cierre anterior — multi-venture, permisos, secretos — están confirmadas; las dos primeras ya implementadas. Secretos queda especificado en su forma definitiva pero **no implementado todavía** (este documento es solo el diseño, tal como se pidió dos veces).
 
 ### Bloqueante real para el Setup Wizard
 
-El **Fresh Install Wizard** se puede diseñar y construir ya. El **New Venture Wizard** ya no está bloqueado por el modelo multi-venture (§3, resuelto) — el único trabajo previo real que le queda es implementar §11.2 (`secret_definitions`, `oauth_tokens`, las rutas de `/api/secrets`) si el primer venture nuevo necesita conectar un canal con credenciales propias.
+El **Fresh Install Wizard** se puede diseñar y construir ya. El **New Venture Wizard** ya no está bloqueado por el modelo multi-venture (§3, resuelto) — el único trabajo previo real que le queda es implementar §11.2 (`secret_definitions`, `secret_values`, `CapabilityResolver`, `SecretProvider`, las rutas de `/api/secrets`) si el primer venture nuevo necesita conectar un canal con credenciales propias.
