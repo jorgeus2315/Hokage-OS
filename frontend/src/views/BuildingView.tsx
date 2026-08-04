@@ -7,6 +7,7 @@ import { ChatPanel } from '../panels/ChatPanel';
 import { LiveFeedPanel } from '../panels/LiveFeedPanel';
 import { StatsPanel } from '../panels/StatsPanel';
 import { PipelinePanel } from '../panels/PipelinePanel';
+import { OutputsPanel } from '../panels/OutputsPanel';
 import { AlertsPanel } from '../panels/AlertsPanel';
 import { api } from '../shared/api';
 
@@ -23,6 +24,7 @@ const OPENROUTER_MODELS = [
 
 const SECTIONS: Array<{ id: BuildingSection; label: string }> = [
   { id: 'chat', label: 'Chat' },
+  { id: 'outputs', label: 'Outputs' },
   { id: 'feed', label: 'Live Feed' },
   { id: 'stats', label: 'Stats' },
   { id: 'pipeline', label: 'Pipeline' },
@@ -234,6 +236,7 @@ export function BuildingView({
               onSend={onSendChat}
             />
           )}
+          {section === 'outputs' && <OutputsPanel agentId={agent?.id} />}
           {section === 'feed' && <LiveFeedPanel events={agentEvents} />}
           {section === 'stats' && <StatsPanel agentId={agent?.id} />}
           {section === 'pipeline' && <PipelinePanel agentId={agent?.id} />}

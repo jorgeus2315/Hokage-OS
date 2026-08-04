@@ -3,6 +3,8 @@ import { askAgent, writeAgentMemory } from '../services/aiService.js';
 import { listAgents } from '../services/agentService.js';
 import { createDecision } from '../services/decisionService.js';
 import { createMessage } from '../services/messageService.js';
+import { createContent } from '../services/contentService.js';
+import { createMarket } from '../services/marketService.js';
 import { get, run, all } from '../db/init.js';
 
 // ═══════════════════════════════════════════════════════
@@ -207,11 +209,17 @@ INSTRUCCIONES DE FORMATO:
         await writeAgentMemory(task.agentId, match[1].trim().toLowerCase(), match[2].trim());
       }
 
-      // Contenido listo del Escritor → dispara pipeline Tráfico
+      // Contenido listo del Escritor → persiste como output real + dispara pipeline Tráfico
       const contenidoMatches = [...response.matchAll(/\[CONTENIDO:\s*([^|]{2,60})\|([^\]]{5,120})\]/gi)];
       for (const match of contenidoMatches.slice(0, 2)) {
         const keyword = match[1].trim();
         const summary = match[2].trim();
+        await createContent({
+          agent_id: task.agentId,
+          platform: 'seo',
+          body: `${keyword} — ${summary}`,
+          status: 'draft',
+        }).catch((err) => console.error('[PIPELINE] Error guardando content:', err.message));
         bus.publish({
           type: 'content.created',
           from: task.agentName,
@@ -220,11 +228,17 @@ INSTRUCCIONES DE FORMATO:
         console.log(`[PIPELINE] content.created → ${keyword}`);
       }
 
-      // Tendencias detectadas por el Explorador → dispara pipeline Escritor
+      // Tendencias detectadas por el Explorador → persiste como output real + dispara pipeline Escritor
       const tendenciaMatches = [...response.matchAll(/\[TENDENCIA:\s*([^|]{2,60})\|([^\]]{5,120})\]/gi)];
       for (const match of tendenciaMatches.slice(0, 3)) {
         const keyword = match[1].trim();
         const description = match[2].trim();
+        await createMarket({
+          agent_id: task.agentId,
+          keyword,
+          source: 'agent',
+          payload: JSON.stringify({ description }),
+        }).catch((err) => console.error('[PIPELINE] Error guardando market:', err.message));
         bus.publish({
           type: 'trend.detected',
           from: task.agentName,

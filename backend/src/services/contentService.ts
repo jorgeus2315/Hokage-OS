@@ -3,7 +3,10 @@ import type { ContentItem, ContentCreatePayload } from '../types/index.js';
 
 const SELECT = 'SELECT id, agent_id, business_id, platform, body, media_url, schedule_at, status, created_at FROM content';
 
-export async function listContent(): Promise<ContentItem[]> {
+export async function listContent(agentId?: number): Promise<ContentItem[]> {
+  if (agentId != null) {
+    return all<ContentItem>(`${SELECT} WHERE agent_id = ? ORDER BY id DESC LIMIT 20`, [agentId]);
+  }
   return all<ContentItem>(`${SELECT} ORDER BY id DESC`);
 }
 

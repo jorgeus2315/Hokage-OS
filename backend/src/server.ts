@@ -41,6 +41,8 @@ import { createBusiness, listBusinesses } from './services/businessService.js';
 import { approveDecision, rejectDecision, createDecision, listDecisions } from './services/decisionService.js';
 import { createMessage, listMessages } from './services/messageService.js';
 import { askAgent, callAIJson } from './services/aiService.js';
+import { listContent } from './services/contentService.js';
+import { listMarket } from './services/marketService.js';
 import progressRouter from './routes/progress.js';
 import { runtime } from './config/agentRuntime.js';
 import bus from './config/eventBus.js';
@@ -380,6 +382,18 @@ app.get('/api/agents/:id/stats', async (req, res) => {
       },
     });
   } catch (e: any) { sendError(res, 500, e, 'Error calculando stats del agente'); }
+});
+
+// Outputs reales del agente: contenido creado + tendencias detectadas
+app.get('/api/agents/:id/outputs', async (req, res) => {
+  try {
+    const agentId = Number(req.params.id);
+    const [content, market] = await Promise.all([
+      listContent(agentId),
+      listMarket(agentId),
+    ]);
+    res.json({ ok: true, data: { content, market } });
+  } catch (e: any) { sendError(res, 500, e, 'Error listando outputs del agente'); }
 });
 
 app.get('/api/events', requireAdmin, (_req, res) => {

@@ -179,6 +179,16 @@ export function IconPipeline({ className }: IconProps) {
   );
 }
 
+export function IconOutput({ className }: IconProps) {
+  return (
+    <svg {...base} className={className}>
+      <path d="M6 3h9l3 3v15H6V3Z" />
+      <path d="M15 3v3h3" />
+      <path d="M9 12h6M9 15.5h6M9 8.5h3" />
+    </svg>
+  );
+}
+
 // ── Estados / acciones ──
 
 export function IconCheck({ className }: IconProps) {
@@ -262,6 +272,7 @@ const SECTION_ICONS: Record<string, (p: IconProps) => JSX.Element> = {
   feed: IconFeed,
   stats: IconStats,
   pipeline: IconPipeline,
+  outputs: IconOutput,
   alerts: IconAlert,
   config: IconConfig,
 };

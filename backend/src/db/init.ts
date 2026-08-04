@@ -101,6 +101,11 @@ async function runMigrations(): Promise<void> {
     await run(`ALTER TABLE decisions ADD COLUMN venture_id INTEGER REFERENCES ventures(id)`);
   }
 
+  // Columna nueva en market — vincula cada tendencia al agente que la detectó
+  if (!(await columnExists('market', 'agent_id'))) {
+    await run(`ALTER TABLE market ADD COLUMN agent_id INTEGER REFERENCES agents(id)`);
+  }
+
   // Columna nueva en work_items
   if (!(await columnExists('work_items', 'venture_id'))) {
     await run(`ALTER TABLE work_items ADD COLUMN venture_id INTEGER REFERENCES ventures(id)`);

@@ -155,7 +155,30 @@ export interface Objective {
   plan?: ObjPlan;
 }
 
-export type BuildingSection = 'chat' | 'feed' | 'stats' | 'pipeline' | 'alerts' | 'config';
+export type BuildingSection = 'chat' | 'feed' | 'stats' | 'pipeline' | 'outputs' | 'alerts' | 'config';
+
+// ═══════════ OUTPUTS REALES ══════════════════════════════════════════════════
+export interface ContentItem {
+  id: number;
+  agent_id: number | null;
+  business_id: number | null;
+  platform: string;
+  body: string | null;
+  media_url: string | null;
+  schedule_at: string | null;
+  status: string;
+  created_at: string;
+}
+
+export interface MarketItem {
+  id: number;
+  agent_id: number | null;
+  keyword: string;
+  source: string;
+  score: number | null;
+  payload: string;
+  created_at: string;
+}
 
 // Un color por departamento — se usa tanto en CSS (DOM) como en el renderer
 // PixiJS del mapa (WorldCanvas.tsx replica esta paleta en hex numérico).

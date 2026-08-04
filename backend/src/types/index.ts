@@ -121,6 +121,7 @@ export interface ContentCreatePayload {
 
 export interface MarketItem {
   id: number;
+  agent_id: number | null;
   keyword: string;
   source: string;
   score: number | null;
@@ -129,6 +130,7 @@ export interface MarketItem {
 }
 
 export interface MarketCreatePayload {
+  agent_id?: number | null;
   keyword: string;
   source?: string;
   score?: number | null;
