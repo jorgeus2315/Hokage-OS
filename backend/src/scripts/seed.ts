@@ -44,45 +44,6 @@ PRIORIDAD ABSOLUTA: ayudar a Jorge a alcanzar sus objetivos económicos reales. 
     );
   }
 
-  // Tools
-  const tools = [
-    ['EtsyAPI', 'marketplace', 0],
-    ['PrintifyAPI', 'production', 0],
-    ['GoogleTrends', 'research', 0],
-    ['WebBrowser', 'research', 0],
-    ['OpenRouter', 'ai', 0],
-  ];
-  for (const [name, category, enabled] of tools) {
-    await run(
-      'INSERT OR IGNORE INTO tools (name, category, enabled) VALUES (?, ?, ?)',
-      [name, category, enabled]
-    );
-  }
-
-  // Achievements
-  const achievements = [
-    ['first_sale', 'Primera venta', 'Consigue tu primera venta', 'sales', 500, '1', '🎉'],
-    ['ten_sales', '10 ventas', 'Llega a 10 ventas totales', 'sales', 1000, '10', '🔥'],
-    ['first_product', 'Primer producto', 'Publica tu primer producto', 'products', 300, '1', '📦'],
-    ['ten_products', '10 productos', 'Publica 10 productos', 'products', 800, '10', '🏭'],
-    ['first_business', 'Primer negocio', 'Crea tu primer negocio', 'businesses', 200, '1', '🏢'],
-    ['revenue_100', '$100 ingresos', 'Genera $100 en ingresos', 'revenue', 1000, '100', '💰'],
-    ['revenue_1000', '$1000 ingresos', 'Genera $1000 en ingresos', 'revenue', 5000, '1000', '🏆'],
-  ];
-
-  for (const [code, title, description, condition_type, xp_reward, condition_value, icon] of achievements) {
-    await run(
-      'INSERT OR IGNORE INTO achievements (code, title, description, category, xp_reward, condition_type, condition_value, icon) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      [code, title, description, condition_type, xp_reward, condition_type, condition_value, icon]
-    );
-  }
-
-  // Progress nivel inicial Jorge
-  await run(
-    'INSERT OR IGNORE INTO agent_progress (entity_type, entity_id, xp, level) VALUES (?, ?, ?, ?)',
-    ['user', 1, 0, 1]
-  );
-
   console.log('Seed ejecutado correctamente');
 }
 

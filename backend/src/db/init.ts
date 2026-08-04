@@ -180,28 +180,6 @@ export async function initSchema(): Promise<void> {
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
 
-  await run(`CREATE TABLE IF NOT EXISTS businesses (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    channel TEXT NOT NULL DEFAULT 'etsy',
-    category TEXT,
-    status TEXT NOT NULL DEFAULT 'draft',
-    target_revenue REAL DEFAULT 0,
-    current_revenue REAL DEFAULT 0,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-  )`);
-
-  await run(`CREATE TABLE IF NOT EXISTS products (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    business_id INTEGER NOT NULL,
-    title TEXT NOT NULL,
-    price REAL NOT NULL,
-    stock INTEGER DEFAULT 0,
-    status TEXT NOT NULL DEFAULT 'draft',
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-  )`);
-
   await run(`CREATE TABLE IF NOT EXISTS decisions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     agent_id INTEGER,
@@ -243,16 +221,6 @@ export async function initSchema(): Promise<void> {
     source TEXT NOT NULL DEFAULT 'etsy',
     score INTEGER,
     payload TEXT NOT NULL DEFAULT '{}',
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-  )`);
-
-  await run(`CREATE TABLE IF NOT EXISTS finance (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    business_id INTEGER,
-    direction TEXT NOT NULL DEFAULT 'in',
-    amount REAL NOT NULL,
-    currency TEXT NOT NULL DEFAULT 'EUR',
-    source TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
 
@@ -310,16 +278,6 @@ export async function initSchema(): Promise<void> {
     comment TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (agent_id) REFERENCES agents(id)
-  )`);
-
-  await run(`CREATE TABLE IF NOT EXISTS events (
-    id TEXT PRIMARY KEY,
-    type TEXT NOT NULL,
-    source TEXT NOT NULL,
-    entity_id INTEGER,
-    payload TEXT NOT NULL,
-    timestamp TEXT NOT NULL,
-    correlation_id TEXT
   )`);
 
   await run(`CREATE TABLE IF NOT EXISTS agent_schedules (
@@ -423,19 +381,6 @@ export async function initSchema(): Promise<void> {
   )`);
 
   // ═══════════ REVENUE_STREAMS — cómo genera dinero un Venture ══════════════════
-  await run(`CREATE TABLE IF NOT EXISTS revenue_streams (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    venture_id INTEGER REFERENCES ventures(id),
-    asset_id INTEGER REFERENCES assets(id),
-    type TEXT NOT NULL DEFAULT 'one_time',
-    platform TEXT NOT NULL DEFAULT 'etsy',
-    status TEXT NOT NULL DEFAULT 'active',
-    mrr_usd REAL DEFAULT 0,
-    total_earned_usd REAL DEFAULT 0,
-    last_synced_at TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-  )`);
-
   // ═══════════ AUTOMATIONS — pipeline como dato, no como código ════════════════
   await run(`CREATE TABLE IF NOT EXISTS automations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
