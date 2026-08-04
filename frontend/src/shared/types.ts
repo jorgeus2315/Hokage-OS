@@ -131,6 +131,7 @@ export interface Objective {
   deadline: string | null;
   priority: number;
   status: ObjectiveStatus;
+  venture_id: number | null;
   created_at: string;
   plan?: ObjPlan;
 }

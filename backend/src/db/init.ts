@@ -106,6 +106,11 @@ async function runMigrations(): Promise<void> {
     await run(`ALTER TABLE market ADD COLUMN agent_id INTEGER REFERENCES agents(id)`);
   }
 
+  // Columna nueva en objectives — HOKAGE_CORE_SPECIFICATION_v1.md §3 (modelo multi-venture)
+  if (!(await columnExists('objectives', 'venture_id'))) {
+    await run(`ALTER TABLE objectives ADD COLUMN venture_id INTEGER REFERENCES ventures(id)`);
+  }
+
   // Columna nueva en work_items
   if (!(await columnExists('work_items', 'venture_id'))) {
     await run(`ALTER TABLE work_items ADD COLUMN venture_id INTEGER REFERENCES ventures(id)`);

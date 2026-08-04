@@ -34,8 +34,8 @@ export async function closeMilestoneOnResult(milestoneId: number, ok: boolean): 
 
   await run(`UPDATE obj_plans SET status = 'completed' WHERE id = ?`, [milestone.plan_id]);
 
-  const objective = await get<{ title: string; success_criteria: string | null }>(
-    'SELECT title, success_criteria FROM objectives WHERE id = ?', [milestone.objective_id]
+  const objective = await get<{ title: string; success_criteria: string | null; venture_id: number | null }>(
+    'SELECT title, success_criteria, venture_id FROM objectives WHERE id = ?', [milestone.objective_id]
   );
 
   if (objective && isRevenueObjective(objective.title, objective.success_criteria)) {
@@ -46,6 +46,7 @@ export async function closeMilestoneOnResult(milestoneId: number, ok: boolean): 
     await createDecision({
       entity_type: 'objective',
       entity_id: milestone.objective_id,
+      venture_id: objective.venture_id,
       title: `Confirmar objetivo alcanzado — ${objective.title}`,
       description: 'Todos los milestones del plan se completaron, pero este objetivo depende de ingresos reales que HOKAGE OS todavía no puede verificar automáticamente (sin integración de ventas). Confirma manualmente si se alcanzó de verdad.',
       reasoning: 'Los milestones completados por los agentes no garantizan ingresos reales — verificación humana requerida antes de cerrar el objetivo.',

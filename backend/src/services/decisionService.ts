@@ -42,11 +42,12 @@ export async function createDecision(payload: DecisionCreatePayload): Promise<De
 
   const category = inferCategory(payload.title, payload.amount);
   const result = await run(
-    'INSERT INTO decisions (agent_id, entity_type, entity_id, title, description, reasoning, amount, risk_level, status, category) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    'INSERT INTO decisions (agent_id, entity_type, entity_id, venture_id, title, description, reasoning, amount, risk_level, status, category) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     [
       payload.agent_id ?? null,
       payload.entity_type ?? null,
       payload.entity_id ?? null,
+      payload.venture_id ?? null,
       payload.title,
       payload.description ?? null,
       payload.reasoning ?? null,

@@ -672,12 +672,12 @@ Reglas: 2-4 fases, 2-3 milestones por fase. confidence entre 0-100 refleja cuán
 
 app.post('/api/objectives', requireAdmin, async (req, res) => {
   try {
-    const { title } = req.body as { title?: string };
+    const { title, venture_id = null } = req.body as { title?: string; venture_id?: number | null };
     if (!title?.trim()) return res.status(400).json({ ok: false, error: 'Falta el título del objetivo' });
 
     const objResult = await run(
-      `INSERT INTO objectives (title, status) VALUES (?, 'planning')`,
-      [title.trim()]
+      `INSERT INTO objectives (title, status, venture_id) VALUES (?, 'planning', ?)`,
+      [title.trim(), venture_id]
     );
     const objectiveId = objResult.lastID;
 
@@ -727,6 +727,8 @@ app.put('/api/objectives/:id/plan/approve', requireAdmin, async (req, res) => {
     await run(`UPDATE obj_plans SET status = 'approved' WHERE id = ?`, [plan.id]);
     await run(`UPDATE objectives SET status = 'active' WHERE id = ?`, [objectiveId]);
 
+    const objective = await get<{ venture_id: number | null }>('SELECT venture_id FROM objectives WHERE id = ?', [objectiveId]);
+
     // Crear work_items para cada milestone
     const milestones = await all<{ id: number; assigned_agent_role: string | null; title: string; description: string | null }>(
       'SELECT id, assigned_agent_role, title, description FROM obj_milestones WHERE plan_id = ? ORDER BY phase_index ASC, created_at ASC',
@@ -741,8 +743,8 @@ app.put('/api/objectives/:id/plan/approve', requireAdmin, async (req, res) => {
 
       const context = `[OBJETIVO] ${m.title}${m.description ? ': ' + m.description : ''}. Ejecuta esta tarea de forma concreta y reporta el resultado.`;
       const wiResult = await run(
-        `INSERT INTO work_items (agent_id, type, priority, status, context, milestone_id) VALUES (?, 'event_triggered', 8, 'pending', ?, ?)`,
-        [agent.id, context, m.id]
+        `INSERT INTO work_items (agent_id, venture_id, type, priority, status, context, milestone_id) VALUES (?, ?, 'event_triggered', 8, 'pending', ?, ?)`,
+        [agent.id, objective?.venture_id ?? null, context, m.id]
       );
       await run(`UPDATE obj_milestones SET status = 'in_progress' WHERE id = ?`, [m.id]);
       console.log(`[GOAL] Milestone ${m.id} → work_item ${wiResult.lastID} para ${agent.name}`);

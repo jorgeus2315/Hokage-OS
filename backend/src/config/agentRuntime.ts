@@ -119,15 +119,15 @@ async function loadDueAgents(): Promise<Array<{ id: number; name: string; role: 
 // Crear work_item en la cola
 async function createWorkItem(params: {
   agentId: number;
-  businessId?: number;
+  ventureId?: number | null;
   type: 'autonomous_run' | 'event_triggered' | 'decision_execution';
   priority?: number;
   context?: string;
 }): Promise<number> {
   const result = await run(
-    `INSERT INTO work_items (agent_id, business_id, type, priority, status, context)
+    `INSERT INTO work_items (agent_id, venture_id, type, priority, status, context)
      VALUES (?, ?, ?, ?, 'pending', ?)`,
-    [params.agentId, params.businessId ?? null, params.type, params.priority ?? 6, params.context ?? null]
+    [params.agentId, params.ventureId ?? null, params.type, params.priority ?? 6, params.context ?? null]
   );
   return result.lastID;
 }
@@ -415,8 +415,8 @@ INSTRUCCIONES DE FORMATO:
 
   // Etapa 3: ejecutar work_items in_progress (+ Etapa 5 inline: guardar resultado)
   private async stage3_executeAgents(): Promise<void> {
-    const inProgress = await all<{ id: number; agent_id: number; type: string; context: string | null; milestone_id: number | null }>(
-      `SELECT w.id, w.agent_id, w.type, w.context, w.milestone_id
+    const inProgress = await all<{ id: number; agent_id: number; type: string; context: string | null; milestone_id: number | null; venture_id: number | null }>(
+      `SELECT w.id, w.agent_id, w.type, w.context, w.milestone_id, w.venture_id
        FROM work_items w
        WHERE w.status = 'in_progress'
        ORDER BY w.priority DESC, w.created_at ASC
@@ -446,6 +446,13 @@ INSTRUCCIONES DE FORMATO:
             }
           }
         } catch {}
+      }
+
+      // Declara explícitamente para qué venture trabaja, cuando aplica —
+      // ver HOKAGE_CORE_SPECIFICATION_v1.md §3, mismo patrón que [OBJETIVO].
+      if (item.venture_id) {
+        const venture = await get<{ name: string }>('SELECT name FROM ventures WHERE id = ?', [item.venture_id]);
+        if (venture) taskContext = `[VENTURE: ${venture.name}] ${taskContext}`;
       }
 
       const result = await this.runAgent({
@@ -492,8 +499,8 @@ INSTRUCCIONES DE FORMATO:
 
   // Etapa 7: decisiones aprobadas sin work_item de ejecucion → crear P9
   private async stage7_closeDecisionLoop(): Promise<void> {
-    const orphaned = await all<{ id: number; agent_id: number }>(
-      `SELECT d.id, d.agent_id FROM decisions d
+    const orphaned = await all<{ id: number; agent_id: number; venture_id: number | null }>(
+      `SELECT d.id, d.agent_id, d.venture_id FROM decisions d
        WHERE d.status = 'approved'
        AND d.agent_id IS NOT NULL
        AND NOT EXISTS (
@@ -508,6 +515,7 @@ INSTRUCCIONES DE FORMATO:
     for (const decision of orphaned) {
       await createWorkItem({
         agentId: decision.agent_id,
+        ventureId: decision.venture_id,
         type: 'decision_execution',
         priority: 9,
         context: JSON.stringify({ decision_id: decision.id }),

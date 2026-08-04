@@ -37,6 +37,7 @@ export interface DecisionCreatePayload {
   agent_id?: number | null;
   entity_type?: string | null;
   entity_id?: number | null;
+  venture_id?: number | null;
   title: string;
   description?: string | null;
   reasoning?: string | null;
