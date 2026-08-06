@@ -1,58 +1,13 @@
 import { useEffect, useRef } from 'react';
 import * as PIXI from 'pixi.js';
-import { WorldEngine } from './WorldEngine';
+import { WorldEngine } from './WorldEngineBridge';
+import { CameraSystem } from './systems/CameraSystem';
+import { COLOR, hashOffset } from './visuals';
 import type { HubDescriptor, RoomDescriptor, TokenDescriptor, RippleEvent } from './types';
 
-const COLOR = {
-  void: 0x0a0b0d,
-  panel: 0x12141a,
-  line: 0x1e2229,
-  ember: 0xe8432d,
-  emberDim: 0x7a2418,
-  signal: 0x4fd1c5,
-  amber: 0xf0a93b,
-  good: 0x3ecf6a,
-  ink: 0xe8e6e1,
-  inkFaint: 0x4a4d53,
-  inkDim: 0x8a8d93,
-  minimapBg: 0x0d0e11,
-  minimapViewport: 0x4fd1c5,
-};
-
-const ZOOM_MIN = 0.25;
-const ZOOM_MAX = 2.5;
-const ZOOM_STEP = 0.1;
 const MINIMAP_W = 150;
 const MINIMAP_H = 110;
 const MINIMAP_PAD = 12;
-
-// Room dimensions — rectangulares, más grandes
-const RW = 154, RH = 104;
-
-function makeText(text: string, style: Partial<PIXI.TextStyleOptions>): PIXI.Text {
-  return new PIXI.Text({
-    text,
-    style: { fontFamily: 'IBM Plex Mono, monospace', fontSize: 11, fill: COLOR.ink, ...style },
-  });
-}
-
-function withClick(container: PIXI.Container): PIXI.Container {
-  container.eventMode = 'static';
-  container.cursor = 'pointer';
-  container.on('pointertap', () => {
-    (container as unknown as { __onClick?: () => void }).__onClick?.();
-  });
-  return container;
-}
-
-function octPoly(r: number): number[] {
-  const pts: number[] = [];
-  for (let i = 0; i < 8; i++) {
-    const angle = (i * 45 + 22.5) * (Math.PI / 180);
-    pts.push(Math.cos(angle) * r, Math.sin(angle) * r);
-  }
-  return pts;
-}
 
 function buildGrid(cx: number, cy: number): PIXI.Graphics {
   const g = new PIXI.Graphics();
@@ -75,220 +30,16 @@ function buildGrid(cx: number, cy: number): PIXI.Graphics {
   return g;
 }
 
-function buildHub(): PIXI.Container {
-  const container = withClick(new PIXI.Container());
-  container.label = 'hub';
-  container.hitArea = new PIXI.Circle(0, 0, 72);
-
-  const glow = new PIXI.Graphics()
-    .poly(octPoly(90))
-    .stroke({ width: 18, color: COLOR.ember, alpha: 0.12 });
-
-  const outerRing = new PIXI.Graphics()
-    .poly(octPoly(76))
-    .stroke({ width: 1, color: COLOR.emberDim, alpha: 0.6 });
-
-  const crosshair = new PIXI.Graphics()
-    .moveTo(-100, 0).lineTo(100, 0).stroke({ width: 0.5, color: COLOR.ember, alpha: 0.15 })
-    .moveTo(0, -100).lineTo(0, 100).stroke({ width: 0.5, color: COLOR.ember, alpha: 0.15 });
-
-  const main = new PIXI.Graphics()
-    .poly(octPoly(62))
-    .fill(COLOR.panel)
-    .stroke({ width: 2, color: COLOR.ember });
-
-  const innerRing = new PIXI.Graphics()
-    .poly(octPoly(50))
-    .stroke({ width: 0.5, color: COLOR.ember, alpha: 0.35 });
-
-  // Interior grid lines
-  const interiorGrid = new PIXI.Graphics();
-  for (let i = -40; i <= 40; i += 14) {
-    interiorGrid.moveTo(-55, i).lineTo(55, i).stroke({ width: 0.4, color: COLOR.ember, alpha: 0.12 });
-  }
-
-  const label = makeText('', { fontSize: 12, fontWeight: '700', letterSpacing: 2.5, fill: COLOR.ink });
-  label.anchor.set(0.5);
-  label.position.set(0, -8);
-
-  const sublabel = makeText('', { fontSize: 7.5, fill: COLOR.inkFaint, letterSpacing: 1.8 });
-  sublabel.anchor.set(0.5);
-  sublabel.position.set(0, 10);
-
-  container.addChild(glow, crosshair, outerRing, main, innerRing, interiorGrid, label, sublabel);
-  Object.assign(container, { __label: label, __sublabel: sublabel, __glow: glow });
-  return container;
+// Refs de cada tipo visual — sustituyen a los WithSlots<{...}> del legacy.
+// Fase 2 del Plan de Migración ECS: los refs vienen del VisualKindHandle
+// que crea/actualiza RenderSyncSystem, ya no de Object.assign directo.
+// HubRefs/RoomRefs ya no hacen falta aquí (Fase 3): su animación vive en
+// engine.animate(), que resuelve los refs internamente por `kind`.
+interface TokenRefs {
+  ring: PIXI.Graphics; ringOuter: PIXI.Graphics; diamond: PIXI.Graphics;
+  label: PIXI.Text; tip: PIXI.Text; bubble: PIXI.Graphics;
+  nameText: PIXI.Text; nameBg: PIXI.Graphics;
 }
-
-function buildRoom(color: number): {
-  container: PIXI.Container;
-  alertDot: PIXI.Graphics;
-  pulseRing: PIXI.Graphics;
-  activeDot: PIXI.Graphics;
-} {
-  const container = withClick(new PIXI.Container());
-  container.label = 'room';
-  container.hitArea = new PIXI.Rectangle(-RW / 2, -RH / 2, RW, RH);
-
-  // Outer ambient glow
-  const glowOuter = new PIXI.Graphics()
-    .roundRect(-RW / 2 - 12, -RH / 2 - 12, RW + 24, RH + 24, 8)
-    .stroke({ width: 12, color, alpha: 0.07 });
-
-  // Interior colored fill
-  const interiorFill = new PIXI.Graphics()
-    .roundRect(-RW / 2 + 2, -RH / 2 + 8, RW - 4, RH - 10, 3)
-    .fill({ color, alpha: 0.06 });
-
-  // Interior horizontal grid lines
-  const gridLines = new PIXI.Graphics();
-  for (let y = -RH / 2 + 22; y < RH / 2 - 12; y += 14) {
-    gridLines.moveTo(-RW / 2 + 6, y).lineTo(RW / 2 - 6, y)
-      .stroke({ width: 0.5, color, alpha: 0.14 });
-  }
-
-  // Main body
-  const main = new PIXI.Graphics()
-    .roundRect(-RW / 2, -RH / 2, RW, RH, 4)
-    .fill({ color: COLOR.panel, alpha: 0.96 })
-    .stroke({ width: 1.5, color, alpha: 0.82 });
-
-  // Top accent bar (solid color strip)
-  const accentBar = new PIXI.Graphics()
-    .roundRect(-RW / 2 + 2, -RH / 2 + 2, RW - 4, 4, 2)
-    .fill({ color, alpha: 0.9 });
-
-  // Corner accent marks (L-brackets)
-  const corners = new PIXI.Graphics();
-  const cLen = 11;
-  const cx2 = RW / 2 - 7, cy2 = RH / 2 - 7;
-  corners
-    .moveTo(-cx2 - cLen, -cy2).lineTo(-cx2, -cy2).lineTo(-cx2, -cy2 - cLen)
-    .stroke({ width: 1, color, alpha: 0.45 })
-    .moveTo(cx2 + cLen, -cy2).lineTo(cx2, -cy2).lineTo(cx2, -cy2 - cLen)
-    .stroke({ width: 1, color, alpha: 0.45 })
-    .moveTo(-cx2 - cLen, cy2).lineTo(-cx2, cy2).lineTo(-cx2, cy2 + cLen)
-    .stroke({ width: 1, color, alpha: 0.45 })
-    .moveTo(cx2 + cLen, cy2).lineTo(cx2, cy2).lineTo(cx2, cy2 + cLen)
-    .stroke({ width: 1, color, alpha: 0.45 });
-
-  // Bottom activity bar background
-  const bottomBarBg = new PIXI.Graphics()
-    .roundRect(-RW / 2 + 5, RH / 2 - 9, RW - 10, 3, 1)
-    .fill({ color: 0x000000, alpha: 0.5 });
-
-  // Bottom activity bar fill (drawn per-frame)
-  const bottomBar = new PIXI.Graphics();
-
-  // Pulse ring for pending decisions
-  const pulseRing = new PIXI.Graphics();
-
-  // Labels
-  const label = makeText('', { fontSize: 10.5, fontWeight: '700', letterSpacing: 1.4, fill: COLOR.ink });
-  label.anchor.set(0.5);
-  label.position.set(0, -10);
-
-  const sublabel = makeText('', { fontSize: 8, fill: COLOR.inkDim, letterSpacing: 0.3 });
-  sublabel.anchor.set(0.5);
-  sublabel.position.set(0, 8);
-
-  // Alert dot — ember, top right
-  const alertDot = new PIXI.Graphics().circle(0, 0, 5).fill(COLOR.ember);
-  alertDot.position.set(RW / 2 - 10, -RH / 2 + 10);
-  alertDot.visible = false;
-
-  // Active dot — signal, top left
-  const activeDot = new PIXI.Graphics().circle(0, 0, 3.5).fill(COLOR.signal);
-  activeDot.position.set(-RW / 2 + 10, -RH / 2 + 10);
-  activeDot.visible = false;
-
-  container.addChild(
-    glowOuter, interiorFill, gridLines, main, accentBar, corners,
-    bottomBarBg, bottomBar, pulseRing, label, sublabel, alertDot, activeDot,
-  );
-
-  Object.assign(container, {
-    __label: label,
-    __sublabel: sublabel,
-    __accentBar: accentBar,
-    __glowOuter: glowOuter,
-    __interiorFill: interiorFill,
-    __bottomBar: bottomBar,
-  });
-
-  return { container, alertDot, pulseRing, activeDot };
-}
-
-function buildToken(): PIXI.Container {
-  const container = withClick(new PIXI.Container());
-  container.label = 'token';
-  const sz = 13;
-  container.hitArea = new PIXI.Circle(0, 0, sz * 2.2);
-
-  // Outer aura (justActed)
-  const ringOuter = new PIXI.Graphics()
-    .circle(0, 0, sz * 2.4)
-    .stroke({ width: 1, color: 0xffffff });
-  ringOuter.alpha = 0;
-
-  // Inner pulsing ring (working)
-  const ring = new PIXI.Graphics()
-    .circle(0, 0, sz * 1.7)
-    .stroke({ width: 1.5, color: 0xffffff });
-  ring.alpha = 0;
-
-  // Main circle body
-  const diamond = new PIXI.Graphics()  // named diamond for backward compat
-    .circle(0, 0, sz)
-    .fill(0xffffff);
-
-  // Inner depth dot
-  const innerDot = new PIXI.Graphics()
-    .circle(0, 0, sz * 0.38)
-    .fill({ color: 0x000000, alpha: 0.4 });
-
-  // Initial letter
-  const label = makeText('', { fontSize: 9, fontWeight: '700', fill: 0x060809 });
-  label.anchor.set(0.5);
-
-  // Name badge background (pill shape)
-  const nameBg = new PIXI.Graphics();
-
-  // Name text above
-  const nameText = makeText('', { fontSize: 7.5, fontWeight: '600', fill: COLOR.ink });
-  nameText.anchor.set(0.5);
-  nameText.position.set(0, -sz - 12);
-
-  // Action text + bubble below
-  const tip = makeText('', { fontSize: 7, fill: COLOR.inkDim });
-  tip.anchor.set(0.5);
-  tip.position.set(0, sz + 10);
-
-  const bubble = new PIXI.Graphics();
-  bubble.visible = false;
-
-  container.addChild(ringOuter, ring, diamond, innerDot, label, nameBg, nameText, bubble, tip);
-  Object.assign(container, {
-    __ring: ring,
-    __ringOuter: ringOuter,
-    __diamond: diamond,
-    __label: label,
-    __tip: tip,
-    __bubble: bubble,
-    __nameText: nameText,
-    __nameBg: nameBg,
-  });
-  return container;
-}
-
-function hashOffset(id: string): number {
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 1000;
-  return h / 1000;
-}
-
-type WithSlots<T> = PIXI.Container & T;
-type Ripple = { x: number; y: number; startMs: number; color: number };
 
 export function WorldCanvas({
   hub,
@@ -310,65 +61,29 @@ export function WorldCanvas({
     if (!host) return;
     let destroyed = false;
     const app = new PIXI.Application();
-    const engine = new WorldEngine();
-    const roomGfx = new Map<string, {
-      container: PIXI.Container;
-      alertDot: PIXI.Graphics;
-      pulseRing: PIXI.Graphics;
-      activeDot: PIXI.Graphics;
-      color: number;
-    }>();
-    const tokenGfx = new Map<string, PIXI.Container>();
+    // Ids de sala conocidos entre frames — sustituye a la Map roomGfx del
+    // legacy (que guardaba objetos Pixi localmente); ahora el bridge/ECS
+    // los guarda, aquí solo hace falta saber "qué ids vimos la vez
+    // anterior" para poder destruir los que ya no están.
+    const knownRoomIds = new Set<string>();
     const seenEventIds = new Set<string>();
-    const ripples: Ripple[] = [];
 
-    const PAN_THRESHOLD = 4;
-    let panState: 'idle' | 'pending' | 'panning' = 'idle';
-    let dragStart = { x: 0, y: 0 };
-    let worldStart = { x: 0, y: 0 };
-    let pendingPointerId = -1;
-    let worldRef: PIXI.Container | null = null;
+    // El motor se construye dentro del IIFE async (necesita `world`, que
+    // no existe todavía aquí) pero el cleanup de fuera necesita poder
+    // llamar a clear() al desmontar — mismo patrón que camera.
+    let engineRef: WorldEngine | null = null;
 
-    const onPointerDown = (e: PointerEvent) => {
-      if (e.button !== 0) return;
-      panState = 'pending';
-      pendingPointerId = e.pointerId;
-      dragStart = { x: e.clientX, y: e.clientY };
-      worldStart = { x: worldRef?.position.x ?? 0, y: worldRef?.position.y ?? 0 };
-    };
-    const onPointerMove = (e: PointerEvent) => {
-      if (panState === 'idle' || !worldRef) return;
-      const dx = e.clientX - dragStart.x;
-      const dy = e.clientY - dragStart.y;
-      if (panState === 'pending') {
-        if (Math.abs(dx) < PAN_THRESHOLD && Math.abs(dy) < PAN_THRESHOLD) return;
-        panState = 'panning';
-        host.setPointerCapture(pendingPointerId);
-      }
-      worldRef.position.set(worldStart.x + dx, worldStart.y + dy);
-    };
-    const onPointerUp = () => { panState = 'idle'; };
+    // La cámara se construye aquí, no dentro del IIFE — igual que antes
+    // (Fase 5), sus listeners deben engancharse de forma síncrona al
+    // montar. camera.world se fija más abajo, después de app.init(), vía
+    // setWorld(); hasta entonces los handlers no-opean con seguridad (ver
+    // CameraSystem).
+    const camera = new CameraSystem(host);
 
-    const onWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      if (!worldRef) return;
-      const direction = e.deltaY < 0 ? 1 : -1;
-      const oldScale = worldRef.scale.x;
-      const newScale = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, oldScale + direction * ZOOM_STEP * oldScale));
-      if (newScale === oldScale) return;
-      const rect = host.getBoundingClientRect();
-      const mouseX = e.clientX - rect.left;
-      const mouseY = e.clientY - rect.top;
-      const wx = (mouseX - worldRef.position.x) / oldScale;
-      const wy = (mouseY - worldRef.position.y) / oldScale;
-      worldRef.scale.set(newScale);
-      worldRef.position.set(mouseX - wx * newScale, mouseY - wy * newScale);
-    };
-
-    host.addEventListener('pointerdown', onPointerDown);
-    host.addEventListener('pointermove', onPointerMove);
-    host.addEventListener('pointerup', onPointerUp);
-    host.addEventListener('wheel', onWheel, { passive: false });
+    host.addEventListener('pointerdown', camera.onPointerDown);
+    host.addEventListener('pointermove', camera.onPointerMove);
+    host.addEventListener('pointerup', camera.onPointerUp);
+    host.addEventListener('wheel', camera.onWheel, { passive: false });
 
     (async () => {
       await app.init({
@@ -384,6 +99,11 @@ export function WorldCanvas({
       const world = new PIXI.Container();
       world.label = 'world';
       world.eventMode = 'passive';
+      // zIndex explícito (Fase 2) — hub/sala/token declaran su zIndex al
+      // crearse (ver RenderSyncSystem). El resto de capas de abajo se
+      // quedan en el zIndex 0 implícito, así que mantienen su orden
+      // relativo de siempre y siguen por debajo de las entidades.
+      world.sortableChildren = true;
       app.stage.addChild(world);
 
       const gridGfx = buildGrid(1000, 1000);
@@ -392,31 +112,22 @@ export function WorldCanvas({
       const rippleGfx = new PIXI.Graphics();
       const orbit = new PIXI.Graphics();
       const spokes = new PIXI.Graphics();
-      const hubContainer = buildHub() as WithSlots<{ __label: PIXI.Text; __sublabel: PIXI.Text; __glow: PIXI.Graphics }>;
-      world.addChild(gridGfx, trailGfx, scanGfx, rippleGfx, orbit, spokes, hubContainer);
-      worldRef = world;
+      world.addChild(gridGfx, trailGfx, scanGfx, rippleGfx, orbit, spokes);
+      camera.setWorld(world);
 
-      function fitScene() {
-        const { hub, rooms } = propsRef.current;
-        const sw = app.screen.width;
-        const sh = app.screen.height;
-        if (sw === 0 || sh === 0) return;
-        const allX = [hub.x, ...rooms.map((r) => r.x)];
-        const allY = [hub.y, ...rooms.map((r) => r.y)];
-        const margin = 140;
-        const minX = Math.min(...allX) - margin;
-        const maxX = Math.max(...allX) + margin;
-        const minY = Math.min(...allY) - margin;
-        const maxY = Math.max(...allY) + margin;
-        const sceneW = maxX - minX;
-        const sceneH = maxY - minY;
-        const scale = Math.min(sw / sceneW, sh / sceneH, 1.4);
-        const cx = (minX + maxX) / 2;
-        const cy = (minY + maxY) / 2;
-        world.scale.set(scale);
-        world.position.set(sw / 2 - cx * scale, sh / 2 - cy * scale);
-      }
-      fitScene();
+      // El motor se construye aquí, no antes — RenderSyncSystem (Fase 2)
+      // necesita el container `world` ya creado para poder añadirle hijos;
+      // ParticleSystem (Fase 4) dibuja sobre `rippleGfx`, creado y
+      // posicionado arriba por WorldCanvas.tsx (no por el motor) para
+      // conservar exactamente su orden de addChild/z-order.
+      const engine = new WorldEngine(world, rippleGfx);
+      engineRef = engine;
+
+      // fitScene lee propsRef.current (no `hub`/`rooms` del scope del
+      // componente) por el mismo motivo que antes: evitar un closure
+      // obsoleto si React re-renderiza mientras app.init() todavía no
+      // resuelve.
+      camera.fitScene(propsRef.current.hub, propsRef.current.rooms, app.screen.width, app.screen.height);
 
       const minimapContainer = new PIXI.Container();
       minimapContainer.label = 'minimap';
@@ -439,17 +150,16 @@ export function WorldCanvas({
           tokenState.set(tk.id, { working: tk.working, justActed: tk.justActed ?? false, action: tk.action });
         }
 
-        // Hub
+        // Hub — ensureVisual crea/actualiza el container Pixi de forma
+        // síncrona (Fase 2); engine.animate() aplica el glow (Fase 3).
         const orbitRx = 420, orbitRy = 400;
         orbit.clear()
           .ellipse(hub.x, hub.y, orbitRx, orbitRy)
           .stroke({ width: 0.8, color: COLOR.line, alpha: 0.8 });
 
-        hubContainer.position.set(hub.x, hub.y);
-        hubContainer.__label.text = hub.label;
-        hubContainer.__sublabel.text = hub.sublabel;
-        hubContainer.__glow.alpha = 0.45 + 0.55 * Math.sin(t * 1.3);
-        Object.assign(hubContainer, { __onClick: hub.onClick });
+        engine.ensureVisual('hub', 'hub', { x: hub.x, y: hub.y }, COLOR.ember, hub.label, hub.sublabel);
+        engine.setSelectable('hub', hub.onClick);
+        engine.animate('hub', {}, t);
 
         // Spokes + data pulses
         spokes.clear();
@@ -472,97 +182,37 @@ export function WorldCanvas({
           }
         }
 
-        // Rooms
+        // Rooms — ensureVisual sustituye a "buscar en roomGfx o buildRoom +
+        // addChild" (Fase 2). engine.animate() aplica alert/active dot,
+        // glow, fill, barra y pulse ring (Fase 3) — misma fórmula, ahora en
+        // roomAnimation (visuals/room.ts).
         const seenRooms = new Set<string>();
         for (const r of rooms) {
           seenRooms.add(r.id);
-          let entry = roomGfx.get(r.id);
-          if (!entry) {
-            entry = { ...buildRoom(r.color), color: r.color };
-            world.addChild(entry.container);
-            roomGfx.set(r.id, entry);
-          }
-          const c = entry.container as WithSlots<{
-            __label: PIXI.Text;
-            __sublabel: PIXI.Text;
-            __accentBar: PIXI.Graphics;
-            __glowOuter: PIXI.Graphics;
-            __interiorFill: PIXI.Graphics;
-            __bottomBar: PIXI.Graphics;
-          }>;
-          c.position.set(r.x, r.y);
-          c.__label.text = r.label;
-          c.__sublabel.text = r.sublabel;
-          Object.assign(c, { __onClick: r.onClick });
+          knownRoomIds.add(r.id);
 
-          // Color efectivo — ámbar si hay error, color base si no
-          const effectColor = r.hasError ? COLOR.amber : r.color;
-
-          // Alert dot
-          entry.alertDot.visible = r.pending;
-          if (r.pending) entry.alertDot.alpha = 0.6 + 0.4 * Math.sin(t * 5);
-
-          // Active dot
-          entry.activeDot.visible = r.active;
-          if (r.active) entry.activeDot.alpha = 0.6 + 0.4 * Math.sin(t * 4 + 1);
-
-          // Outer glow — intensidad escalada por activityLevel
-          const al = r.activityLevel ?? (r.active ? 1 : 0.06);
-          if (r.active) {
-            c.__glowOuter.alpha = al * (0.55 + 0.45 * Math.sin(t * 1.8));
-          } else if (r.hasError) {
-            c.__glowOuter.alpha = 0.3 + 0.2 * Math.sin(t * 4);
-          } else if (r.pending) {
-            c.__glowOuter.alpha = 0.35 + 0.25 * Math.sin(t * 2.5);
-          } else {
-            // salas idle: dim proporcional a actividad pasada
-            c.__glowOuter.alpha = Math.max(0.04, al * 0.6);
-          }
-
-          // Color del glow outer si hay error
-          if (r.hasError) {
-            (c.__glowOuter as PIXI.Graphics).tint = COLOR.amber;
-          } else {
-            (c.__glowOuter as PIXI.Graphics).tint = 0xffffff;
-          }
-
-          // Interior fill — respira según actividad
-          c.__interiorFill.alpha = r.active
-            ? 0.7 + 0.3 * Math.sin(t * 2.2)
-            : Math.max(0.02, al * 0.5);
-
-          // Bottom activity bar — se llena con activityLevel base + pulso si activo
-          c.__bottomBar.clear();
-          if (al > 0.05) {
-            const barW = RW - 10;
-            const fillFraction = r.active
-              ? 0.3 + 0.7 * Math.abs(Math.sin(t * 0.4 + hashOffset(r.id) * Math.PI))
-              : al;
-            const fillW = barW * fillFraction;
-            c.__bottomBar
-              .roundRect(-barW / 2, RH / 2 - 9, fillW, 3, 1)
-              .fill({ color: effectColor, alpha: r.active ? 0.85 : 0.45 });
-          }
-
-          // Pulse ring para pending o error
-          entry.pulseRing.clear();
-          if (r.pending || r.hasError) {
-            const pulseColor = r.hasError ? COLOR.amber : COLOR.ember;
-            const s = 1 + Math.sin(t * 2.8) * 0.02;
-            entry.pulseRing
-              .roundRect(-RW * s / 2, -RH * s / 2, RW * s, RH * s, 4)
-              .stroke({ width: 1.5, color: pulseColor, alpha: 0.28 + 0.18 * Math.sin(t * 2.8) });
-          }
+          engine.ensureVisual(r.id, 'room', { x: r.x, y: r.y }, r.color, r.label, r.sublabel);
+          engine.setSelectable(r.id, r.onClick);
+          engine.animate(r.id, {
+            id: r.id,
+            color: r.color,
+            pending: r.pending,
+            active: r.active,
+            hasError: r.hasError,
+            activityLevel: r.activityLevel,
+          }, t);
         }
-        for (const [id, entry] of roomGfx) {
+        for (const id of knownRoomIds) {
           if (!seenRooms.has(id)) {
-            world.removeChild(entry.container);
-            entry.container.destroy({ children: true });
-            roomGfx.delete(id);
+            engine.removeVisual(id);
+            knownRoomIds.delete(id);
           }
         }
 
-        // Tokens
+        // Tokens — upsert/setTarget (Fase 1, intactos) siguen fijando el
+        // movimiento. ensureTokenVisual (Fase 2) crea/actualiza SOLO el
+        // container Pixi + color/label — la posición final se fija después
+        // de engine.tick(), igual que antes.
         const seenTokens = new Set<string>();
         for (const tk of tokens) {
           seenTokens.add(tk.id);
@@ -575,20 +225,12 @@ export function WorldCanvas({
             node.color = color;
             node.label = tk.label;
           }
-          let gfx = tokenGfx.get(tk.id);
-          if (!gfx) {
-            gfx = buildToken();
-            world.addChild(gfx);
-            tokenGfx.set(tk.id, gfx);
-          }
-          Object.assign(gfx, { __onClick: tk.onClick });
+          engine.ensureTokenVisual(tk.id, color, tk.label);
+          engine.setSelectable(tk.id, tk.onClick);
         }
-        for (const [id, gfx] of tokenGfx) {
-          if (!seenTokens.has(id)) {
-            world.removeChild(gfx);
-            gfx.destroy({ children: true });
-            tokenGfx.delete(id);
-            engine.remove(id);
+        for (const node of engine.all()) {
+          if (!seenTokens.has(node.id)) {
+            engine.remove(node.id);
           }
         }
 
@@ -605,29 +247,24 @@ export function WorldCanvas({
           }
         }
 
-        // Token visuals
+        // Token visuals — mismo bucle de siempre, leyendo el handle del
+        // bridge en vez de la Map tokenGfx local. La animación
+        // (ring/ringOuter, burbuja de acción) ahora vive en engine.animate()
+        // (Fase 3), ver más abajo.
         for (const node of engine.all()) {
-          const gfx = tokenGfx.get(node.id) as WithSlots<{
-            __ring: PIXI.Graphics;
-            __ringOuter: PIXI.Graphics;
-            __diamond: PIXI.Graphics;
-            __label: PIXI.Text;
-            __tip: PIXI.Text;
-            __bubble: PIXI.Graphics;
-            __nameText: PIXI.Text;
-            __nameBg: PIXI.Graphics;
-          }> | undefined;
-          if (!gfx) continue;
+          const handle = engine.getVisualHandle(node.id);
+          if (!handle) continue;
+          const refs = handle.refs as unknown as TokenRefs;
 
-          gfx.position.set(node.pos.x, node.pos.y);
-          gfx.__diamond.tint = node.color;
-          gfx.__label.text = node.label[0]?.toUpperCase() || '';
+          handle.container.position.set(node.pos.x, node.pos.y);
+          refs.diamond.tint = node.color;
+          refs.label.text = node.label[0]?.toUpperCase() || '';
 
           // Name badge
-          gfx.__nameText.text = node.label;
-          gfx.__nameBg.clear();
+          refs.nameText.text = node.label;
+          refs.nameBg.clear();
           const nw = node.label.length * 5 + 12;
-          gfx.__nameBg
+          refs.nameBg
             .roundRect(-nw / 2, -14 - 12, nw, 12, 3)
             .fill({ color: COLOR.panel, alpha: 0.85 })
             .stroke({ width: 0.5, color: node.color, alpha: 0.5 });
@@ -636,42 +273,9 @@ export function WorldCanvas({
           const isWorking = state?.working ?? false;
           const isJustActed = state?.justActed ?? false;
 
-          // Action bubble
-          const actionText = (isWorking || isJustActed) ? (state?.action || '') : '';
-          if (actionText) {
-            const truncated = actionText.length > 20 ? actionText.slice(0, 20) + '…' : actionText;
-            gfx.__tip.text = truncated;
-            gfx.__tip.style.fill = isJustActed ? COLOR.amber : COLOR.signal;
-            const bw = Math.min(truncated.length * 5.2 + 14, 140);
-            gfx.__bubble.clear()
-              .roundRect(-bw / 2, 17, bw, 12, 3)
-              .fill({ color: COLOR.panel, alpha: 0.88 })
-              .stroke({ width: 0.5, color: isJustActed ? COLOR.amber : COLOR.signal, alpha: 0.55 });
-            gfx.__bubble.visible = true;
-          } else {
-            gfx.__tip.text = '';
-            gfx.__bubble.visible = false;
-          }
-
-          if (isJustActed) {
-            const fp = 0.5 + 0.5 * Math.sin(t * 9);
-            gfx.__ring.alpha = 0.5 + 0.4 * fp;
-            gfx.__ring.scale.set(0.85 + 0.3 * fp);
-            gfx.__ring.tint = COLOR.amber;
-            gfx.__ringOuter.alpha = 0.2 + 0.25 * (1 - fp);
-            gfx.__ringOuter.scale.set(0.9 + 0.18 * fp);
-            gfx.__ringOuter.tint = COLOR.ember;
-            gfx.__diamond.rotation = Math.sin(t * 6) * 0.0;
-          } else if (isWorking) {
-            const sp = 0.5 + 0.5 * Math.sin(t * 3.2);
-            gfx.__ring.alpha = 0.2 + 0.28 * sp;
-            gfx.__ring.scale.set(0.88 + 0.18 * sp);
-            gfx.__ring.tint = COLOR.ember;
-            gfx.__ringOuter.alpha = 0;
-          } else {
-            gfx.__ring.alpha = 0;
-            gfx.__ringOuter.alpha = 0;
-          }
+          // Ring/ringOuter de pulso + burbuja de acción — Fase 3, ahora en
+          // tokenAnimation (visuals/token.ts).
+          engine.animate(node.id, { working: isWorking, justActed: isJustActed, action: state?.action }, t);
         }
 
         // Scan line
@@ -686,7 +290,10 @@ export function WorldCanvas({
           .moveTo(scanX - 80, hub.y - 700).lineTo(scanX + 80, hub.y + 700)
           .stroke({ width: 1, color: COLOR.signal, alpha: 0.045 });
 
-        // Ripples from events
+        // Ripples from events — spawnParticle crea la entidad ECS (Fase 4);
+        // TTLSystem la expira sola y ParticleSystem la redibuja cada frame
+        // (visuals/particles.ts: rippleEffect), ver engine.syncParticles()
+        // más abajo.
         const { events } = propsRef.current;
         for (const ev of events) {
           if (!seenEventIds.has(ev.id)) {
@@ -698,27 +305,11 @@ export function WorldCanvas({
                 : ev.type.includes('done')
                   ? COLOR.signal
                   : COLOR.amber;
-              ripples.push({ x: room.x, y: room.y, startMs: performance.now(), color: rippleColor });
+              engine.spawnParticle('ripple', { x: room.x, y: room.y }, rippleColor, 1800);
             }
           }
         }
-
-        const now = performance.now();
-        rippleGfx.clear();
-        for (let i = ripples.length - 1; i >= 0; i--) {
-          const r = ripples[i];
-          const age = (now - r.startMs) / 1800;
-          if (age >= 1) { ripples.splice(i, 1); continue; }
-          for (let ring = 0; ring < 2; ring++) {
-            const ringAge = Math.min(1, age + ring * 0.28);
-            if (ringAge >= 1) continue;
-            const scale = 1 + ringAge * 2.6;
-            const alpha = (1 - ringAge) * (ring === 0 ? 0.55 : 0.22);
-            rippleGfx
-              .roundRect(r.x - (RW * scale) / 2, r.y - (RH * scale) / 2, RW * scale, RH * scale, 4 * scale)
-              .stroke({ width: ring === 0 ? 1.5 : 0.8, color: r.color, alpha });
-          }
-        }
+        engine.syncParticles();
 
         // Minimap
         const allX = [hub.x, ...rooms.map((r) => r.x)];
@@ -769,14 +360,13 @@ export function WorldCanvas({
 
     return () => {
       destroyed = true;
-      host.removeEventListener('pointerdown', onPointerDown);
-      host.removeEventListener('pointermove', onPointerMove);
-      host.removeEventListener('pointerup', onPointerUp);
-      host.removeEventListener('wheel', onWheel);
+      host.removeEventListener('pointerdown', camera.onPointerDown);
+      host.removeEventListener('pointermove', camera.onPointerMove);
+      host.removeEventListener('pointerup', camera.onPointerUp);
+      host.removeEventListener('wheel', camera.onWheel);
       try { app.destroy(true, { children: true }); } catch { /* ya destruido */ }
-      roomGfx.clear();
-      tokenGfx.clear();
-      engine.clear();
+      knownRoomIds.clear();
+      engineRef?.clear();
     };
   }, []);
 

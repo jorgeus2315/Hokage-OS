@@ -75,6 +75,10 @@ export interface Building {
   pos_x?: number;
   pos_y?: number;
   is_hub?: boolean;
+  // Fase 8 del Plan de Migración ECS: el backend ya enviaba este campo
+  // (columna `position_locked` en `departments`) — el frontend lo
+  // ignoraba en silencio hasta conectarlo a WorldLayoutEngine.
+  position_locked?: boolean;
 }
 
 export interface WorkItem {

@@ -2,9 +2,10 @@ import { useState, useEffect, useRef } from 'react';
 import type { Agent, AgentRun, Building, Decision, WsEvent } from '../shared/types';
 import { BUILDINGS } from '../shared/constants';
 import type { HubDescriptor, RoomDescriptor, TokenDescriptor, RippleEvent } from '../world/types';
+import { adaptEvents, commandsToRippleEvents } from '../world/events';
+import { computeLayout } from '../world/layoutEngine';
 
 const WORLD_CENTER = { x: 1000, y: 1000 };
-const ROOM_RADIUS = 400;
 const TOKEN_ORBIT = 220;
 const RECENT_MS = 5 * 60 * 1000;
 const JUST_ACTED_MS = 30_000;
@@ -38,18 +39,17 @@ export function useWorldState({
   const HUB = allDepts.find((b) => b.is_hub || b.id === 'hokage') ?? allDepts[0];
   const ROOMS = allDepts.filter((b) => !b.is_hub && b.id !== 'hokage');
 
+  // Fase 8 del Plan de Migración ECS: la posición de cada sala ya no se
+  // calcula inline aquí — pasa por WorldLayoutEngine (world/layoutEngine.ts),
+  // que conecta position_locked (antes ignorado por el frontend, ver
+  // shared/api.ts) y el modelo de anillos congelado en "Crecimiento de la
+  // Ciudad - World Engine". Con los 7 departamentos reales de hoy (todos
+  // con pos_x/pos_y ya guardados), el resultado es idéntico al cálculo
+  // anterior — el motor solo entra en juego para salas sin posición.
   const ROOM_POS: Record<string, { x: number; y: number }> = {};
-  ROOMS.forEach((room, i) => {
-    if (room.pos_x !== undefined && room.pos_y !== undefined) {
-      ROOM_POS[room.id] = { x: room.pos_x, y: room.pos_y };
-    } else {
-      const angle = (-90 + (360 / ROOMS.length) * i) * (Math.PI / 180);
-      ROOM_POS[room.id] = {
-        x: WORLD_CENTER.x + ROOM_RADIUS * Math.cos(angle),
-        y: WORLD_CENTER.y + ROOM_RADIUS * Math.sin(angle),
-      };
-    }
-  });
+  for (const node of computeLayout(ROOMS)) {
+    ROOM_POS[node.departmentId] = { x: node.x, y: node.y };
+  }
 
   const lastRunFor = (agentId: number) => runs.find((r) => r.agent_id === agentId);
   const isWorking = (agentId: number) => {
@@ -75,6 +75,15 @@ export function useWorldState({
     return !!last && (last.status === 'error' || last.status === 'failed');
   };
 
+  // DEUDA CONOCIDA, MANTENIDA A PROPÓSITO (ver Plan de Migración ECS, Fase 0,
+  // 2026-08-05): atHub/roomWander usan un setInterval independiente POR
+  // AGENTE — el mismo antipatrón de scheduling que el backend ya rechazó una
+  // vez para AgentRuntime (§2, "timer independiente por agente... se
+  // abandonó porque no daba visibilidad de cola"). No se sustituye en esta
+  // fase — la migración ECS empieza por Fase 0 (scaffolding inerte) y este
+  // comportamiento se mantiene por compatibilidad hasta que MovementSystem
+  // (o un futuro sistema de comportamiento/scheduler centralizado) lo
+  // absorba explícitamente en una fase posterior, no como efecto colateral.
   const [atHub, setAtHub] = useState<Record<number, boolean>>({});
   const runsRef = useRef(runs);
   runsRef.current = runs;
@@ -109,18 +118,14 @@ export function useWorldState({
     return () => timers.forEach(clearInterval);
   }, [agents]);
 
-  const rippleEvents: RippleEvent[] = liveEvents
-    .slice(0, 30)
-    .map((e) => {
-      const agent = agents.find((a) => a.name === e.from);
-      const room = agent ? ROOMS.find((b) => b.role === agent.role) : undefined;
-      return {
-        id: e._cid ?? `${e.type}-${e.from ?? ''}-${e.timestamp ?? ''}`,
-        type: e.type ?? '',
-        roomId: room?.id,
-      };
-    })
-    .filter((e): e is RippleEvent & { roomId: string } => !!e.roomId);
+  // Fase 7 del Plan de Migración ECS: la traducción WsEvent → RippleEvent ya
+  // no vive inline aquí — pasa por el vocabulario cerrado WorldCommand
+  // (adaptEvents) y su mapeo de vuelta al contrato público (commandsToRippleEvents).
+  // Misma lógica exacta (agente→rol→sala, descarta sin sala), ahora en
+  // world/events/, reutilizable si mañana existe una segunda fuente de
+  // comandos. La forma de salida hacia WorldCanvas no cambia: sigue siendo
+  // RippleEvent[].
+  const rippleEvents: RippleEvent[] = commandsToRippleEvents(adaptEvents(liveEvents, agents, ROOMS));
 
   const hub: HubDescriptor = {
     label: 'HOKAGE',
