@@ -1,6 +1,6 @@
 # Hokage OS — Mapa de la bóveda
 
-MOC (Map of Content) de Hokage Knowledge. Auditoría de arquitecto completa el 2026-08-05 — ver nota final. La documentación queda congelada; a partir de aquí, solo desarrollo de producto salvo hallazgo crítico real.
+MOC (Map of Content) de Hokage Knowledge. Auditoría de arquitecto completa el 2026-08-05 — ver nota final. La documentación quedó congelada tras esa auditoría, pero se reabrió el 2026-08-06 por dos hallazgos reales: una nueva [[Auditoría de Arquitectura - 2026-08-06|auditoría de arquitectura]] (deuda técnica y bugs reales encontrados en backend/frontend) y una [[Redefinición de Principios Fundamentales - 2026-08-06|redefinición de principios fundamentales]] (Hermes como Runtime, Hokage como única interfaz, contexto por capas, biblioteca de referencias). Ninguna implementada todavía — son análisis de impacto, no cambios de código.
 
 ## 00_Inbox
 
@@ -8,8 +8,11 @@ MOC (Map of Content) de Hokage Knowledge. Auditoría de arquitecto completa el 2
 
 ## Pilares (01_Arquitectura)
 
+- [[Especificación Funcional de Producto - v1]] — documento de mayor nivel del proyecto: filosofía, sesión de usuario completa, contratos de Hokage/Hermes/Agentes, conocimiento, memoria multinivel, herramientas, interfaz/escritorio, departamentos, automatización 24/7, escalabilidad, filosofía de configuración — 8 mejoras propuestas justificadas. Nada implementado 🆕
 - [[Núcleo - Arquitectura del Core]] — §0+§1 de la especificación, congelado ✅
-- [[VISION]] — documento fundacional de producto ✅
+- [[VISION]] — documento fundacional de producto (extendido por la Especificación Funcional de arriba) ✅
+- [[Redefinición de Principios Fundamentales - 2026-08-06]] — Hermes deja de ser agente (es el Runtime), Hokage como única interfaz conversacional, agentes dejan de ser chatbots, contexto por capas, biblioteca de referencias, todo declarativo/configurable/editable (generalizar el patrón Registry del ECS) — filtro permanente "¿esto acerca a sistema operativo o a dashboard?" 🆕
+- [[Auditoría de Arquitectura - 2026-08-06]] — nota: 6.5/10, bugs reales encontrados en backend, deuda de diseño real en frontend, 2 huecos de seguridad de bajo coste 🆕
 - [[ARCHITECTURE (legacy)]] — versión anterior, superada, conservada como histórico (citada activamente por 7+ notas como "el porqué del cambio") ✅
 - [[Prompts Históricos - INIT_PROMPT]] — snapshot de sesión superado, mismo tratamiento que ARCHITECTURE legacy ✅
 
@@ -34,6 +37,8 @@ Clúster acoplado del mapa/frontend vivo: 4 notas que se citan constantemente en
 - [[Frontend World Engine]] (spec v1.0) ✅
 - [[Frontend - Decisiones v2]] (§13, congelado — v3, 2026-08-05) ✅
 - [[Crecimiento de la Ciudad - World Engine]] (noveno sistema de diseño, 2026-08-05) ✅
+- [[Plan de Migración ECS]] — **completo, Fases 0-9 implementadas (2026-08-06).** Fase 1 y 2 con validación visual confirmada por Jorge; Fases 3-9 con implementación ✅ pero validación visual manual todavía ⏳ pendiente (corrección honesta: una nota anterior de este índice decía "Fase 3 validada" sin base real — nunca se confirmó, corregido aquí). `WorldEngine.ts` legacy eliminado, patrón `Object.assign(container,{__x})` retirado también de `visuals/`, `EventAdapter`/`WorldLayoutEngine` conectados. Sesión de humo completa en navegador (Fase 9) sigue pendiente — sin herramienta de navegador disponible en esta sesión 🟢
+- [[Baseline de Comportamiento - World Engine]] (referencia numérica para validar cada fase, 2026-08-05) ✅
 - [[Ciclo Día-Noche - World Engine]] (décimo sistema de diseño, 2026-08-05) ✅
 
 ## 03_Agentes
@@ -73,11 +78,12 @@ Alcance: solo investigación técnica que informa decisiones de arquitectura (mo
 
 **Propósito:** no espeja `memory_entries` (vive en SQLite, se consulta en vivo cuando Memory System se implemente). Es un destilado curado de retrospectivas y lecciones del uso real de Hokage OS — prosa humana, no filas de tabla. Vacía por diseño hasta que exista una lección real que preservar así — ver [[Propósito de esta carpeta]].
 
-## 09_Roadmap — Fase 8 completa (2026-08-05)
+## 09_Roadmap — plan de trabajo vigente
 
 **Propósito:** roadmap de producto y handoffs históricos entre sesiones — distinto de las fases de esta migración documental.
 
-- [[Roadmap - Snapshot 2026-08-02]] — histórico, predata la congelación de arquitectura; numeración de fases (1-6) no coincide con la de `CLAUDE.md` (0-10), inconsistencia heredada y anotada, no resuelta ✅
+- [[Master Roadmap - v1]] — **plan vigente, 2026-08-06.** Secuencia las 3 fuentes (ADRs congelados, auditoría de arquitectura, redefinición de principios) en 7 fases (A-Consolidación → B-Runtime → C-IA → D-Sistema Operativo → E-Personalización → F-Plugins → G-Escalabilidad), cada una con entregas pequeñas verificables. Resuelve explícitamente el único choque real encontrado (§9.1 Hermes-agente vs principio "Hermes-kernel"). Marca v1.0 vs v2.0 por iniciativa. Cualquier funcionalidad nueva debe encajar aquí antes de implementarse 🆕
+- [[Roadmap - Snapshot 2026-08-02]] — histórico, sustituido por el de arriba; se conserva porque su Fase 4 (Etsy) y Fase 5 (VPS) siguen vigentes, ya incorporadas al nuevo roadmap ✅
 - [[Handoff Histórico - 2026-08-03]] — log de sesión, vigente solo en que Etsy/VPS seguían sin conectar entonces y siguen sin conectar hoy ✅
 
 ## 99_Templates
