@@ -84,8 +84,31 @@ app.use('/api/agents', generalLimiter);
 app.use('/api/agents/:id/ask', askLimiter);
 app.use('/api/runtime', runtimeLimiter);
 
-// WebSocket para actualizaciones en tiempo real
-const wss = new WebSocketServer({ server: httpServer });
+// WebSocket para actualizaciones en tiempo real — A.2: exige el mismo ADMIN_TOKEN
+// que las mutaciones REST, transportado en el header Sec-WebSocket-Protocol (no en
+// la URL: evita que el token quede en logs de acceso/Referer/historial del navegador).
+function extractWsToken(req: import('http').IncomingMessage): string | undefined {
+  const proto = req.headers['sec-websocket-protocol'];
+  return proto?.split(',')[0]?.trim();
+}
+
+const wss = new WebSocketServer({
+  server: httpServer,
+  verifyClient: (info, callback) => {
+    const token = extractWsToken(info.req);
+    if (!token || token !== ADMIN_TOKEN) {
+      callback(false, 401, 'Token inválido o faltante');
+      return;
+    }
+    callback(true);
+  },
+  handleProtocols: (protocols) => {
+    // El subprotocolo ofrecido es el token en sí, no un protocolo de aplicación —
+    // se confirma el primero para completar el handshake, ya validado en verifyClient.
+    const first = protocols.values().next().value;
+    return first ?? false;
+  },
+});
 const clients = new Set<WebSocket>();
 
 wss.on('connection', async (ws, _req) => {
@@ -214,7 +237,7 @@ app.post('/api/agents/:id/ask', requireAdmin, async (req, res) => {
 });
 
 // Ejecutar agente de forma autonoma (manual trigger)
-app.post('/api/agents/:id/run', async (req, res) => {
+app.post('/api/agents/:id/run', requireAdmin, async (req, res) => {
   try {
     const agentId = Number(req.params.id);
     const agents = await listAgents();
@@ -854,7 +877,7 @@ console.time('[BOOT] initSchema');
 initSchema().then(() => {
   console.timeEnd('[BOOT] initSchema');
   console.time('[BOOT] listen');
-  httpServer.listen(PORT, () => {
+  httpServer.listen(PORT, '127.0.0.1', () => {
     console.timeEnd('[BOOT] listen');
     console.log(`[SERVER] HOKAGE OS backend corriendo en http://localhost:${PORT}`);
     console.log(`[SERVER] WebSocket activo en ws://localhost:${PORT}`);

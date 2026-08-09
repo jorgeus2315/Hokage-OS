@@ -8,7 +8,9 @@ declare global {
   }
 }
 
-const ADMIN_TOKEN = (typeof window !== 'undefined' ? import.meta.env?.VITE_ADMIN_TOKEN : undefined) || '';
+// Exportado para reutilizar el mismo valor en el handshake del WebSocket (useWebSocket.ts)
+// — una sola lectura de VITE_ADMIN_TOKEN, nunca una segunda fuente de configuración.
+export const ADMIN_TOKEN = (typeof window !== 'undefined' ? import.meta.env?.VITE_ADMIN_TOKEN : undefined) || '';
 
 function adminHeaders(): Record<string, string> {
   return ADMIN_TOKEN ? { 'x-admin-token': ADMIN_TOKEN } : {};
