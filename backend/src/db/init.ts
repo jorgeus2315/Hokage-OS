@@ -546,6 +546,20 @@ export async function initSchema(): Promise<void> {
   )`);
   await run(`CREATE INDEX IF NOT EXISTS idx_exec_runs_created ON exec_runs(created_at DESC)`);
 
+  // ═══════════ EVENT_LOG — persistencia del Event Bus (Fase 2, UI Implementation
+  // Plan.md). Log de auditoría en paralelo: HokageBus sigue sin persistir nada por
+  // sí mismo (ADR-003) — esta tabla solo recibe lo que ya emite publish() vía un
+  // suscriptor aparte en config/eventBus.ts. ═══════════════════════════════════
+  await run(`CREATE TABLE IF NOT EXISTS event_log (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    type       TEXT NOT NULL,
+    from_actor TEXT NOT NULL,
+    to_actor   TEXT,
+    payload    TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_event_log_created ON event_log(created_at DESC)`);
+
   const deptCount = await get<{ count: number }>('SELECT COUNT(*) as count FROM departments');
   if (!deptCount || deptCount.count === 0) await seedDepartments();
 

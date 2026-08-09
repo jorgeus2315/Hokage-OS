@@ -1,4 +1,5 @@
 import { EventEmitter } from 'events';
+import { run } from '../db/init.js';
 
 // ═══════════════════════════════════════════════════════
 // EVENT BUS — Comunicacion entre agentes en tiempo real
@@ -69,5 +70,24 @@ class HokageBus extends EventEmitter {
 // Instancia global unica
 export const bus = new HokageBus();
 bus.setMaxListeners(50);
+
+// Persistencia en event_log — Fase 2 de UI Implementation Plan.md. Suscriptor
+// independiente, no forma parte del contrato de HokageBus: publish()/subscribe()/
+// getHistory() no cambian, esto es un consumidor más de la misma API pública,
+// igual que server.ts ya hace para el WebSocket. Async + try/catch a propósito:
+// una excepción síncrona dentro de un listener de EventEmitter se propagaría a
+// través de publish() y rompería a quien lo llame (agentRuntime.ts, tools, rutas
+// de server.ts) — declarar el handler async evita eso, y el catch evita incluso
+// el warning de unhandledRejection si la escritura falla.
+bus.subscribe('*', async (event) => {
+  try {
+    await run(
+      'INSERT INTO event_log (type, from_actor, to_actor, payload) VALUES (?, ?, ?, ?)',
+      [event.type, event.from, event.to ?? null, JSON.stringify(event.payload)]
+    );
+  } catch (err: any) {
+    console.error('[EVENT_LOG] Error persistiendo evento:', err.message);
+  }
+});
 
 export default bus;
