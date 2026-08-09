@@ -65,7 +65,7 @@ function toolToOpenRouterSchema(tool: ReturnType<typeof registry.get>) {
   };
 }
 
-export async function askAgent(agentId: number, userMessage: string): Promise<AskResult> {
+export async function askAgent(agentId: number, userMessage: string, ventureId?: number | null): Promise<AskResult> {
   try {
     const [promptRow, agentRow, masterRow] = await Promise.all([
       get<{ content: string }>('SELECT content FROM agent_prompts WHERE agent_id = ? AND active = 1 ORDER BY version DESC LIMIT 1', [agentId]),
@@ -153,7 +153,7 @@ export async function askAgent(agentId: number, userMessage: string): Promise<As
         try {
           const args    = JSON.parse(call.function.arguments || '{}');
           const toolId  = fromFnName(call.function.name);
-          const outcome = await registry.execute(toolId, args, { agentId });
+          const outcome = await registry.execute(toolId, args, { agentId, ventureId: ventureId ?? undefined });
           toolResult    = JSON.stringify(outcome.ok ? outcome.data : { error: outcome.error });
         } catch (err: any) {
           toolResult = JSON.stringify({ error: err.message });

@@ -9,7 +9,7 @@ export interface ToolPermission {
 export interface ToolContext {
   agentId?: number;
   userId?: number;
-  businessId?: number;
+  ventureId?: number;
   requestId?: string;
 }
 

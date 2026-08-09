@@ -19,6 +19,10 @@ export interface AgentTask {
   agentRole: string;
   taskType: string;
   context?: string;
+  // Opcional (no requerido) para no romper a los llamadores existentes sin venture
+  // (p. ej. server.ts en /api/agents/:id/run) — mismo principio de compatibilidad
+  // hacia atrás que askAgent() en aiService.ts.
+  ventureId?: number | null;
 }
 
 export interface TaskResult {
@@ -219,7 +223,7 @@ class AgentRuntime {
 INSTRUCCIONES DE FORMATO:
 ${formatLines.join('\n')}`;
 
-      const result = await askAgent(task.agentId, taskPrompt);
+      const result = await askAgent(task.agentId, taskPrompt, task.ventureId);
 
       if (!result.ok) {
         bus.publish({ type: 'agent.task.error', from: task.agentName, payload: { error: result.error } });
@@ -478,19 +482,15 @@ ${formatLines.join('\n')}`;
         } catch {}
       }
 
-      // Declara explícitamente para qué venture trabaja, cuando aplica —
-      // ver HOKAGE_CORE_SPECIFICATION_v1.md §3, mismo patrón que [OBJETIVO].
-      if (item.venture_id) {
-        const venture = await get<{ name: string }>('SELECT name FROM ventures WHERE id = ?', [item.venture_id]);
-        if (venture) taskContext = `[VENTURE: ${venture.name}] ${taskContext}`;
-      }
-
+      // venture_id viaja estructural (Fase 3, UI Implementation Plan.md) — ya no se
+      // antepone como texto al contexto; llega a askAgent()/ToolContext tal cual.
       const result = await this.runAgent({
         agentId: agent.id,
         agentName: agent.name,
         agentRole: agent.role,
         taskType: item.type,
         context: taskContext,
+        ventureId: item.venture_id,
       });
 
       // Etapa 5 inline: persistir resultado
