@@ -27,6 +27,28 @@
   --ink-dim: #8a8d93;
   --ink-faint: #4a4d53;
 
+  /* Colores por rol de agente que no coinciden con ningún tono de arriba —
+     ceo/investigador/trafico/finanzas ya usan --ember/--signal/--amber/--good.
+     Antes duplicados en design/tokens.ts (retirado, Fase 1 de UI Implementation
+     Plan.md) y en ObjectivesView.tsx; consolidados aquí. */
+  --role-contenido: #c77dff;
+  --role-operaciones: #4f8cff;
+  --role-soporte: #a0aec0;
+
+  /* Paleta "legacy" — en uso hoy en ObjectivesView.tsx (tarjetas/bordes/glows) y
+     como fallback ya escrito en StatsPanel.tsx (var(--signal-faint, #00ccff11), etc.).
+     No es la familia --signal/--amber/--ember (valores distintos a propósito) —
+     se preserva byte a byte para no repintar nada en la Fase 1 de consolidación
+     de diseño (ver UI Implementation Plan.md). */
+  --legacy-card: #12121a;
+  --legacy-border: #1a1a2e;
+  --legacy-pending-glow: #ffcc0022;
+  --legacy-pending-glow-strong: #ffcc0033;
+  --legacy-focus-glow: #00ccff22;
+  --signal-faint: #00ccff11;
+  --amber-faint: #ffcc0011;
+  --ember-faint: #e74c3c11;
+
   --font-display: 'Chakra Petch', sans-serif;
   --font-body: 'IBM Plex Sans', sans-serif;
   --font-mono: 'IBM Plex Mono', monospace;

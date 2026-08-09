@@ -2,6 +2,10 @@ import { useState } from 'react';
 import type { Objective, ObjMilestone, ObjPlan } from '../shared/types';
 import { api } from '../shared';
 
+// Se mantienen como hex literal a propósito (no var(--x)): más abajo se concatena
+// `${roleColor}33` para el borde translúcido — un var() no admite esa concatenación
+// de alfa. Fase 1 de UI Implementation Plan.md: consolidar fuentes sin cambiar
+// comportamiento — tocar esto rompería el borde de cada rol.
 const ROLE_COLOR: Record<string, string> = {
   investigador: '#4fd1c5',
   contenido: '#c77dff',
@@ -49,7 +53,7 @@ function MilestoneRow({ m }: { m: ObjMilestone }) {
   const roleColor = m.assigned_agent_role ? (ROLE_COLOR[m.assigned_agent_role] ?? '#555') : '#555';
   return (
     <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '5px 0',
-      borderBottom: '1px solid #12121a', opacity: m.status === 'skipped' ? 0.4 : 1 }}>
+      borderBottom: '1px solid var(--legacy-card)', opacity: m.status === 'skipped' ? 0.4 : 1 }}>
       <MilestoneDot status={m.status} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: m.status === 'done' ? '#555' : 'var(--ink)', lineHeight: 1.4,
@@ -105,9 +109,9 @@ function ObjectiveCard({
   const phaseIndices = Object.keys(groupedByPhase).map(Number).sort((a, b) => a - b);
 
   return (
-    <div style={{ background: 'var(--surface)', border: `1px solid ${isProposed ? 'var(--amber)' : '#1a1a2e'}`,
+    <div style={{ background: 'var(--surface)', border: `1px solid ${isProposed ? 'var(--amber)' : 'var(--legacy-border)'}`,
       borderRadius: 4, overflow: 'hidden',
-      boxShadow: isProposed ? '0 0 12px #ffcc0022' : 'none',
+      boxShadow: isProposed ? '0 0 12px var(--legacy-pending-glow)' : 'none',
       transition: 'border-color 0.2s' }}>
 
       {/* Cabecera */}
@@ -132,7 +136,7 @@ function ObjectiveCard({
 
       {/* Barra de progreso */}
       {plan && total > 0 && (
-        <div style={{ height: 2, background: '#1a1a2e', margin: '0 16px' }}>
+        <div style={{ height: 2, background: 'var(--legacy-border)', margin: '0 16px' }}>
           <div style={{ height: '100%', width: `${progress}%`, background: progress === 100 ? 'var(--good)' : 'var(--signal)',
             transition: 'width 0.4s', boxShadow: `0 0 6px var(--signal)` }} />
         </div>
@@ -140,7 +144,7 @@ function ObjectiveCard({
 
       {/* Panel expandido */}
       {expanded && (
-        <div style={{ padding: '12px 16px', borderTop: '1px solid #1a1a2e' }}>
+        <div style={{ padding: '12px 16px', borderTop: '1px solid var(--legacy-border)' }}>
 
           {/* Goal estructurado */}
           {obj.goal && (
@@ -163,7 +167,7 @@ function ObjectiveCard({
               <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--ink-faint)', letterSpacing: '0.1em' }}>
                 CONFIANZA HOKAGE
               </span>
-              <div style={{ flex: 1, height: 3, background: '#1a1a2e', borderRadius: 2 }}>
+              <div style={{ flex: 1, height: 3, background: 'var(--legacy-border)', borderRadius: 2 }}>
                 <div style={{ height: '100%', width: `${plan.confidence}%`, borderRadius: 2,
                   background: plan.confidence >= 75 ? 'var(--good)' : plan.confidence >= 50 ? 'var(--amber)' : 'var(--ember)',
                   transition: 'width 0.4s' }} />
@@ -213,7 +217,7 @@ function ObjectiveCard({
                 style={{ fontFamily: 'var(--font-mono)', fontSize: 11, letterSpacing: '0.1em',
                   padding: '7px 14px', border: '1px solid var(--amber)', background: 'transparent',
                   color: 'var(--amber)', cursor: isApproving ? 'wait' : 'pointer', borderRadius: 2,
-                  boxShadow: isApproving ? 'none' : '0 0 8px #ffcc0033',
+                  boxShadow: isApproving ? 'none' : '0 0 8px var(--legacy-pending-glow-strong)',
                   opacity: isApproving ? 0.6 : 1, transition: 'all 0.15s' }}>
                 {isApproving ? 'ACTIVANDO...' : '[ APROBAR PLAN ]'}
               </button>
@@ -295,14 +299,14 @@ export function ObjectivesView({
 
       {/* Cabecera */}
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, paddingBottom: 12,
-        borderBottom: '1px solid #1a1a2e' }}>
+        borderBottom: '1px solid var(--legacy-border)' }}>
         <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, letterSpacing: '0.1em', color: 'var(--ink)' }}>
           OBJETIVOS
         </div>
         {proposed.length > 0 && (
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--amber)',
             border: '1px solid var(--amber)', padding: '2px 6px', borderRadius: 2,
-            boxShadow: '0 0 6px #ffcc0033' }}>
+            boxShadow: '0 0 6px var(--legacy-pending-glow-strong)' }}>
             {proposed.length} PLAN{proposed.length > 1 ? 'ES' : ''} SIN APROBAR
           </span>
         )}
@@ -315,9 +319,9 @@ export function ObjectivesView({
       {/* Input de objetivo */}
       <form onSubmit={handleCreate}>
         <div style={{ position: 'relative', display: 'flex', alignItems: 'center',
-          border: `1px solid ${focused ? 'var(--signal)' : '#1a1a2e'}`, borderRadius: 3,
+          border: `1px solid ${focused ? 'var(--signal)' : 'var(--legacy-border)'}`, borderRadius: 3,
           background: 'var(--surface)', transition: 'border-color 0.15s',
-          boxShadow: focused ? '0 0 10px #00ccff22' : 'none' }}>
+          boxShadow: focused ? '0 0 10px var(--legacy-focus-glow)' : 'none' }}>
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, color: creating ? 'var(--amber)' : 'var(--signal)',
             padding: '0 12px', userSelect: 'none', flexShrink: 0 }}>
             {creating ? '○' : '>'}
@@ -337,7 +341,7 @@ export function ObjectivesView({
             type="submit"
             disabled={!input.trim() || creating}
             style={{ fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.12em',
-              padding: '0 16px', height: '100%', border: 'none', borderLeft: '1px solid #1a1a2e',
+              padding: '0 16px', height: '100%', border: 'none', borderLeft: '1px solid var(--legacy-border)',
               background: 'transparent', color: input.trim() && !creating ? 'var(--signal)' : '#333',
               cursor: input.trim() && !creating ? 'pointer' : 'default', transition: 'color 0.15s',
               flexShrink: 0 }}>

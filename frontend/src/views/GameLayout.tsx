@@ -178,7 +178,7 @@ export function GameLayout() {
                 const building = allDepts.find((b) => b.role === a.role);
                 const last = runs.find((r) => r.agent_id === a.id);
                 const working = isWorking(a.id);
-                const color = building?.color || '#4fd1c5';
+                const color = building?.color || 'var(--signal)';
                 let timeAgo = '';
                 if (last) {
                   const mins = Math.round(

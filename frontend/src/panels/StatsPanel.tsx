@@ -63,17 +63,17 @@ export function StatsPanel({ agentId }: { agentId: number | undefined }) {
 
       <div style={{ marginTop: 16, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         {stats.active_work_items > 0 && (
-          <div style={{ padding: '6px 10px', background: 'var(--signal-faint, #00ccff11)', border: '1px solid var(--signal)', borderRadius: 4, fontSize: 11, color: 'var(--signal)', fontFamily: 'IBM Plex Mono, monospace' }}>
+          <div style={{ padding: '6px 10px', background: 'var(--signal-faint)', border: '1px solid var(--signal)', borderRadius: 4, fontSize: 11, color: 'var(--signal)', fontFamily: 'IBM Plex Mono, monospace' }}>
             {stats.active_work_items} tarea{stats.active_work_items > 1 ? 's' : ''} activa{stats.active_work_items > 1 ? 's' : ''}
           </div>
         )}
         {stats.pending_work_items > 0 && (
-          <div style={{ padding: '6px 10px', background: 'var(--amber-faint, #ffcc0011)', border: '1px solid var(--amber)', borderRadius: 4, fontSize: 11, color: 'var(--amber)', fontFamily: 'IBM Plex Mono, monospace' }}>
+          <div style={{ padding: '6px 10px', background: 'var(--amber-faint)', border: '1px solid var(--amber)', borderRadius: 4, fontSize: 11, color: 'var(--amber)', fontFamily: 'IBM Plex Mono, monospace' }}>
             {stats.pending_work_items} en cola
           </div>
         )}
         {stats.pending_decisions > 0 && (
-          <div style={{ padding: '6px 10px', background: 'var(--ember-faint, #e74c3c11)', border: '1px solid var(--ember)', borderRadius: 4, fontSize: 11, color: 'var(--ember)', fontFamily: 'IBM Plex Mono, monospace' }}>
+          <div style={{ padding: '6px 10px', background: 'var(--ember-faint)', border: '1px solid var(--ember)', borderRadius: 4, fontSize: 11, color: 'var(--ember)', fontFamily: 'IBM Plex Mono, monospace' }}>
             {stats.pending_decisions} decisión{stats.pending_decisions > 1 ? 'es' : ''} pendiente{stats.pending_decisions > 1 ? 's' : ''}
           </div>
         )}
