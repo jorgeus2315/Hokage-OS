@@ -7,6 +7,7 @@ import { writeAgentMemory } from '../services/agentMemoryService.js';
 import { createDecision } from '../services/decisionService.js';
 import { get } from '../db/init.js';
 import bus from '../config/eventBus.js';
+import { safeFetch } from './ssrfGuard.js';
 
 const MEMORY_KEY_PATTERN = /^[a-z_][a-z0-9_]*$/;
 
@@ -292,12 +293,10 @@ export const WebBrowserTool: Tool<WebBrowserInput, WebBrowserOutput> = {
   async estimateCost(_input) { return 0; },
   async execute(input, _ctx) {
     try {
-      const res = await fetch(input.url, {
-        headers: {
-          'User-Agent': TRENDS_UA,
-          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        },
-        redirect: 'follow',
+      // Guard SSRF: solo http/https hacia IPs públicas, redirecciones revalidadas (ver ssrfGuard.ts).
+      const res = await safeFetch(input.url, {
+        'User-Agent': TRENDS_UA,
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
       });
 
       if (!res.ok) {

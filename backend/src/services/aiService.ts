@@ -201,7 +201,7 @@ export async function askAgent(agentId: number, userMessage: string, ventureId?:
 export async function callAIJson<T = unknown>(systemPrompt: string, userMessage: string, model?: string): Promise<T | null> {
   const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
   if (!OPENROUTER_API_KEY) return null;
-  const MODEL = model || 'anthropic/claude-haiku-4-5';
+  const MODEL = model || DEFAULT_MODEL;
   try {
     const res = await withAiTimeout(
       fetch(`${OPENROUTER_BASE}/chat/completions`, {

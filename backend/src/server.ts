@@ -668,7 +668,8 @@ Devuelve este JSON exacto (sin texto extra antes ni después):
 Roles disponibles: investigador, contenido, trafico, finanzas, operaciones, soporte, ceo
 Reglas: 2-4 fases, 2-3 milestones por fase. confidence entre 0-100 refleja cuán predecible es el éxito.`;
 
-  const planData: PlanData = await callAIJson<PlanData>(systemPrompt, userMsg, 'anthropic/claude-haiku-4-5') ?? {};
+  // Modelo omitido a propósito: callAIJson usa DEFAULT_MODEL (haiku 4.5), fuente única en agentModels.ts.
+  const planData: PlanData = await callAIJson<PlanData>(systemPrompt, userMsg) ?? {};
 
   await run(
     `UPDATE objectives SET goal = ?, success_criteria = ? WHERE id = ?`,
