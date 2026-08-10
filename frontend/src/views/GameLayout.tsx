@@ -7,6 +7,7 @@ import { Toast } from '../modals';
 import { useAppData } from '../hooks/useAppData';
 import { useWorldState } from '../hooks/useWorldState';
 import { WorldCanvas } from '../world/WorldCanvas';
+import { PanelRegistry } from '../registries/PanelRegistry';
 import { BuildingView } from './BuildingView';
 import { CommsView } from './CommsView';
 import { CrewView } from './CrewView';
@@ -18,14 +19,13 @@ import { MenuView } from './MenuView';
 
 const RECENT_MS = 5 * 60 * 1000;
 
-const SCREEN_TITLE: Partial<Record<Screen, string>> = {
-  crew: 'Ship Crew',
-  alerts: 'Alertas',
-  comms: 'Ship Comms',
-  ventures: 'Ventures',
-  objetivos: 'Objetivos',
-  config: 'Configuración Global',
-};
+// Overlays uniformes de pantalla completa que dependían de showOverlay — BuildingView
+// y MenuView quedan fuera a propósito (Fase 4, UI Implementation Plan.md): no son
+// estructuralmente equivalentes (BuildingView depende de un objeto seleccionado,
+// MenuView es un overlay-sobre-overlay con su propio booleano). Verificado: setScreen()
+// en todo este archivo, incluida la navegación desde MenuView, nunca usa 'boot' ni
+// 'menu' — estos 6 cubren el 100% de lo que showOverlay puede mostrar en la práctica.
+type OverlayScreen = 'crew' | 'alerts' | 'comms' | 'ventures' | 'objetivos' | 'config';
 
 export function GameLayout() {
   const [screen, setScreen] = useState<Screen>('map');
@@ -140,7 +140,44 @@ export function GameLayout() {
 
   const showBuildingPanel = screen === 'building' && !!activeBuilding;
   const showOverlay = screen !== 'map' && screen !== 'building';
-  const overlayTitle = screen in SCREEN_TITLE ? SCREEN_TITLE[screen] : '';
+
+  const overlayRegistry = new PanelRegistry<OverlayScreen>();
+  overlayRegistry.register('objetivos', {
+    title: 'Objetivos',
+    render: () => <ObjectivesView objectives={objectives} onReload={reload.loadObjectives} />,
+  });
+  overlayRegistry.register('ventures', {
+    title: 'Ventures',
+    render: () => <VenturesView ventures={ventures} agents={agents} />,
+  });
+  overlayRegistry.register('comms', {
+    title: 'Ship Comms',
+    render: () => <CommsView agents={agents} messages={messages} liveEvents={liveEvents} />,
+  });
+  overlayRegistry.register('alerts', {
+    title: 'Alertas',
+    render: () => (
+      <AlertsView
+        pending={pending}
+        agents={agents}
+        buildings={allDepts}
+        onApprove={approve}
+        onReject={reject}
+        onExpireAll={expireAll}
+      />
+    ),
+  });
+  overlayRegistry.register('crew', {
+    title: 'Ship Crew',
+    render: () => <CrewView agents={agents} runs={runs} buildings={allDepts} onEnterBuilding={enterBuilding} />,
+  });
+  overlayRegistry.register('config', {
+    title: 'Configuración Global',
+    render: () => <ConfigView agents={agents} roleColors={roleColors} onAgentUpdated={reload.loadAgents} />,
+  });
+
+  const activeOverlay = showOverlay ? overlayRegistry.get(screen as OverlayScreen) : undefined;
+  const overlayTitle = activeOverlay?.title ?? '';
 
   return (
     <div className="hk-game">
@@ -379,29 +416,7 @@ export function GameLayout() {
               </button>
             </div>
             <div className="hk-game-screen-body">
-              {screen === 'objetivos' && (
-                <ObjectivesView objectives={objectives} onReload={reload.loadObjectives} />
-              )}
-              {screen === 'ventures' && <VenturesView ventures={ventures} agents={agents} />}
-              {screen === 'comms' && (
-                <CommsView agents={agents} messages={messages} liveEvents={liveEvents} />
-              )}
-              {screen === 'alerts' && (
-                <AlertsView
-                  pending={pending}
-                  agents={agents}
-                  buildings={allDepts}
-                  onApprove={approve}
-                  onReject={reject}
-                  onExpireAll={expireAll}
-                />
-              )}
-              {screen === 'crew' && (
-                <CrewView agents={agents} runs={runs} buildings={allDepts} onEnterBuilding={enterBuilding} />
-              )}
-              {screen === 'config' && (
-                <ConfigView agents={agents} roleColors={roleColors} onAgentUpdated={reload.loadAgents} />
-              )}
+              {activeOverlay?.render()}
             </div>
           </div>
         )}
