@@ -560,6 +560,18 @@ export async function initSchema(): Promise<void> {
   )`);
   await run(`CREATE INDEX IF NOT EXISTS idx_event_log_created ON event_log(created_at DESC)`);
 
+  // ═══════════ USER_LAYOUT — persistencia del motor de paneles (Fase 5, UI
+  // Implementation Plan.md). Fila única (id=1): sistema single-owner, sin concepto
+  // de usuario/sesión múltiple — mismo criterio que ADMIN_TOKEN compartido. Solo
+  // persiste qué overlay/sala estaba abierto, no tabs internos ni chat (ninguno de
+  // los dos está en el alcance autorizado de esta fase). ═══════════════════════
+  await run(`CREATE TABLE IF NOT EXISTS user_layout (
+    id                 INTEGER PRIMARY KEY,
+    screen             TEXT NOT NULL DEFAULT 'map',
+    active_building_key TEXT,
+    updated_at         TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+
   const deptCount = await get<{ count: number }>('SELECT COUNT(*) as count FROM departments');
   if (!deptCount || deptCount.count === 0) await seedDepartments();
 

@@ -158,4 +158,13 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content }),
     }),
+
+  // Layout persistido (Fase 5)
+  getLayout: () => req<import('./types').UserLayout>('/layout'),
+  setLayout: (screen: string, buildingKey: string | null) =>
+    req('/layout', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ screen, buildingKey }),
+    }),
 };

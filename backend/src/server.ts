@@ -870,6 +870,30 @@ app.put('/api/config/master-prompt', requireAdmin, async (req, res) => {
   } catch (e: any) { sendError(res, 500, e, 'Error actualizando master prompt'); }
 });
 
+// ═══════════ LAYOUT ═══════════
+// Fila única (id=1) — sistema single-owner, sin sesión multi-usuario.
+app.get('/api/layout', async (_req, res) => {
+  try {
+    const row = await get<{ screen: string; active_building_key: string | null }>(
+      'SELECT screen, active_building_key FROM user_layout WHERE id = 1'
+    );
+    res.json({ ok: true, data: { screen: row?.screen ?? 'map', buildingKey: row?.active_building_key ?? null } });
+  } catch (e: any) { sendError(res, 500, e, 'Error leyendo layout'); }
+});
+
+app.put('/api/layout', requireAdmin, async (req, res) => {
+  try {
+    const { screen, buildingKey } = req.body as { screen?: string; buildingKey?: string | null };
+    if (!screen) return res.status(400).json({ ok: false, error: 'Falta screen' });
+    await run(
+      `INSERT INTO user_layout (id, screen, active_building_key, updated_at) VALUES (1, ?, ?, datetime('now'))
+       ON CONFLICT(id) DO UPDATE SET screen = excluded.screen, active_building_key = excluded.active_building_key, updated_at = excluded.updated_at`,
+      [screen, buildingKey ?? null]
+    );
+    res.json({ ok: true });
+  } catch (e: any) { sendError(res, 400, e, 'Error guardando layout'); }
+});
+
 // ═══════════ ARRANQUE ═══════════
 // ═══════════ ARRANQUE ═══════════
 const PORT = Number(process.env.PORT) || 3000;

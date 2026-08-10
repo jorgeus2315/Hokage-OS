@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import type { Building, BuildingSection, ChatMsg, Screen } from '../shared/types';
 import { api } from '../shared/api';
 import { Led } from '../shared/ui';
@@ -72,6 +72,36 @@ export function GameLayout() {
     liveEvents,
     onEnterBuilding: enterBuilding,
   });
+
+  // Fase 5 — restaurar layout persistido. Se pide una vez al montar; se aplica
+  // en cuanto allDepts contenga la sala real (al principio allDepts puede ser
+  // el fallback BUILDINGS, sin todas las salas — ver useWorldState.ts). Si el
+  // usuario ya navegó manualmente antes de que la restauración esté lista, se
+  // respeta su acción y no se pisa.
+  const [pendingLayout, setPendingLayout] = useState<{ screen: Screen; buildingKey: string | null } | null>(null);
+  const layoutAppliedRef = useRef(false);
+
+  useEffect(() => {
+    api.getLayout().then((data) => { if (data) setPendingLayout(data); });
+  }, []);
+
+  useEffect(() => {
+    if (!pendingLayout || layoutAppliedRef.current) return;
+    if (screen !== 'map') { layoutAppliedRef.current = true; return; }
+    if (pendingLayout.screen === 'building' && pendingLayout.buildingKey) {
+      const building = allDepts.find((b) => b.id === pendingLayout.buildingKey);
+      if (!building) return; // esperar al siguiente render con allDepts real
+      enterBuilding(building);
+    } else if (pendingLayout.screen !== 'map') {
+      setScreen(pendingLayout.screen);
+    }
+    layoutAppliedRef.current = true;
+  }, [pendingLayout, allDepts, screen]);
+
+  useEffect(() => {
+    if (!layoutAppliedRef.current) return; // no persistir el estado inicial antes de restaurar
+    api.setLayout(screen, screen === 'building' ? (activeBuilding?.id ?? null) : null);
+  }, [screen, activeBuilding]);
 
   async function sendChat() {
     if (!chatInput.trim() || !activeBuilding || chatLoading) return;

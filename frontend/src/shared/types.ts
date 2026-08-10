@@ -97,6 +97,13 @@ export interface WorkItem {
 
 export type Screen = 'boot' | 'menu' | 'map' | 'building' | 'crew' | 'alerts' | 'comms' | 'ventures' | 'objetivos' | 'config';
 
+// Fase 5 de UI Implementation Plan.md — solo qué overlay/sala estaba abierto,
+// nada de tabs internos ni chat (fuera del alcance autorizado de esa fase).
+export interface UserLayout {
+  screen: Screen;
+  buildingKey: string | null;
+}
+
 // ═══════════ GOAL SYSTEM ════════════════════════════════════════════════════
 export type ObjectiveStatus = 'planning' | 'active' | 'pending_review' | 'achieved' | 'paused' | 'abandoned';
 export type MilestoneStatus = 'pending' | 'in_progress' | 'done' | 'blocked' | 'skipped';
