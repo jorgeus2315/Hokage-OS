@@ -1,6 +1,7 @@
 import { get, run, all } from '../db/init.js';
 import { modelSupportsTools, DEFAULT_MODEL } from '../config/agentModels.js';
-import { modelFor, toolsFor } from './roleService.js';
+import { modelFor, toolsFor, getRoleDefinition } from './roleService.js';
+import { autonomyAllowsTool } from '../config/rolePolicy.js';
 import * as registry from '../tools/registry.js';
 
 const OPENROUTER_BASE = 'https://openrouter.ai/api/v1';
@@ -77,8 +78,12 @@ export async function askAgent(agentId: number, userMessage: string, ventureId?:
     const masterBlock = masterRow?.content ? `[CONTEXTO GLOBAL DEL SISTEMA]\n${masterRow.content}\n\n` : '';
     const basePrompt = promptRow?.content || `Eres ${agentRow?.name ?? 'un agente'} de HOKAGE OS.`;
     const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-    // Modelo: override del agente > modelo del rol (role_definitions, vía resolver con fallback) > AI_MODEL > default.
-    const roleModel = agentRow?.role ? await modelFor(agentRow.role) : process.env.AI_MODEL;
+    // Definición de rol (modelo + tools + autonomía en una sola lectura). null si el rol no
+    // está en role_definitions todavía → se cae a los resolvers/fallback de siempre.
+    const roleDef = agentRow?.role ? await getRoleDefinition(agentRow.role) : null;
+    const autonomy = roleDef?.default_autonomy ?? 1;
+    // Modelo: override del agente > modelo del rol > AI_MODEL > default.
+    const roleModel = agentRow?.role ? (roleDef?.model ?? await modelFor(agentRow.role)) : process.env.AI_MODEL;
     const MODEL = agentRow?.model || roleModel || DEFAULT_MODEL;
 
     if (!OPENROUTER_API_KEY) return { ok: false, error: 'Falta OPENROUTER_API_KEY en el entorno' };
@@ -93,11 +98,13 @@ export async function askAgent(agentId: number, userMessage: string, ventureId?:
     const systemPrompt = masterBlock + basePrompt + memoryBlock;
 
     // Construir tools disponibles para este agente (solo si el modelo lo soporta).
-    // Tools del rol vía role_definitions (resolver con fallback); modelSupportsTools sigue
-    // siendo capacidad de runtime del MODELO, no del rol — se mantiene en agentModels.
-    const roleTools = await toolsFor(agentRow?.role || '');
+    // Tools del rol vía role_definitions (resolver con fallback); filtradas por la autonomía
+    // (Nivel 0 = solo lectura). La autonomía NUNCA amplía la lista del rol, solo la restringe.
+    // modelSupportsTools sigue siendo capacidad de runtime del MODELO, no del rol.
+    const roleTools = roleDef ? roleDef.tools : await toolsFor(agentRow?.role || '');
+    const allowedTools = roleTools.filter((id) => autonomyAllowsTool(autonomy, id));
     const availableTools = modelSupportsTools(MODEL)
-      ? roleTools
+      ? allowedTools
           .map(id => registry.get(id))
           .filter((t): t is NonNullable<typeof t> => !!t && t.status === 'ready')
           .map(toolToOpenRouterSchema)

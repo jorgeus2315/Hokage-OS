@@ -5,6 +5,7 @@ import { createMarket } from '../services/marketService.js';
 import { createContent } from '../services/contentService.js';
 import { writeAgentMemory } from '../services/agentMemoryService.js';
 import { createDecision } from '../services/decisionService.js';
+import { maybeAutoApprove } from '../services/agentAutonomy.js';
 import { get } from '../db/init.js';
 import bus from '../config/eventBus.js';
 import { safeFetch } from './ssrfGuard.js';
@@ -557,9 +558,12 @@ export const DecisionCreateTool: Tool<DecisionCreateInput, DecisionCreateOutput>
         from: agentName,
         payload: { title: decision.title, agentId: ctx.agentId ?? null },
       });
-      console.log(`[TOOL:decision.create] ${agentName} → decision.created :: ${decision.title} (id=${decision.id})`);
+      // Nivel 2+ de autonomía: auto-aprueba la decisión si no es crítica (reutiliza el mecanismo
+      // de aprobación existente; nunca aprueba gasto, publicación, system.exec ni alto riesgo).
+      const autoApproved = await maybeAutoApprove(decision);
+      console.log(`[TOOL:decision.create] ${agentName} → decision.created :: ${decision.title} (id=${decision.id})${autoApproved ? ' [auto-aprobada]' : ''}`);
 
-      return result<DecisionCreateOutput>(true, { data: { decisionId: decision.id, title: decision.title, status: decision.status }, cost: 0 });
+      return result<DecisionCreateOutput>(true, { data: { decisionId: decision.id, title: decision.title, status: autoApproved ? 'approved' : decision.status }, cost: 0 });
     } catch (err: any) {
       console.error(`[TOOL:decision.create] error:`, err.message);
       return result<DecisionCreateOutput>(false, { error: `DecisionCreate: ${err.message}` });

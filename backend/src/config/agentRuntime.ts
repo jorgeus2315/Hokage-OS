@@ -3,6 +3,7 @@ import { toolsFor, autonomousTaskFor } from '../services/roleService.js';
 import { askAgent, writeAgentMemory } from '../services/aiService.js';
 import { listAgents } from '../services/agentService.js';
 import { createDecision } from '../services/decisionService.js';
+import { autonomyForAgent, maybeAutoApprove } from '../services/agentAutonomy.js';
 import { createMessage } from '../services/messageService.js';
 import { createContent } from '../services/contentService.js';
 import { createMarket } from '../services/marketService.js';
@@ -155,7 +156,12 @@ class AgentRuntime {
       // El regex de agentRuntime.ts se queda como red de seguridad, pero deja de ofrecerse
       // activamente en cuanto el rol tiene el tool real.
       const roleTools = await toolsFor(task.agentRole);
+      // Autonomía del agente (Fase 2): Nivel 0 = observador (sin acciones ni marcadores).
+      const autonomy = await autonomyForAgent(task.agentId);
       const formatLines: string[] = [];
+      if (autonomy <= 0) {
+        formatLines.push('- Estás en modo OBSERVADOR: analiza e informa con claridad, pero NO uses herramientas de acción ni marcadores. No propongas decisiones ni crees contenido.');
+      } else {
       if (!roleTools.includes('trend.report')) {
         formatLines.push('- Si detectas una tendencia de mercado accionable, añade: [TENDENCIA: keyword | descripcion breve]');
       }
@@ -181,6 +187,7 @@ class AgentRuntime {
       if (roleTools.includes('decision.create')) {
         formatLines.push('- Para pedir aprobación de Jorge, llama SIEMPRE a la tool decision.create — nunca uses [DECISION: ...]. Rellena siempre "description" con el porqué, no la dejes vacía.');
       }
+      }
 
       const taskPrompt = `${task.context || task.taskType}
 
@@ -203,6 +210,11 @@ ${formatLines.join('\n')}`;
         channel: 'general',
       });
 
+      // Efectos por marcador gateados por autonomía (Fase 2): Nivel 0 (observador) NO persiste
+      // memoria, contenido, tendencias ni decisiones — solo informa (el createMessage de arriba).
+      // Nivel 1+ los procesa. Esto cubre también a roles tool-capable si el modelo emite un
+      // marcador pese a tener la tool: el regex de red de seguridad queda igualmente gateado.
+      if (autonomy >= 1) {
       const memoryMatches = [...response.matchAll(/\[MEMORIA:\s*([a-z_][a-z0-9_]*)\s*=\s*([^\]]{1,150})\]/gi)];
       for (const match of memoryMatches.slice(0, 3)) {
         await writeAgentMemory(task.agentId, match[1].trim().toLowerCase(), match[2].trim());
@@ -249,7 +261,7 @@ ${formatLines.join('\n')}`;
       const decisionMatch = response.match(/\[DECISION:\s*([^\]]{5,100})\]/i);
       if (decisionMatch) {
         const title = decisionMatch[1].trim();
-        await createDecision({
+        const decision = await createDecision({
           agent_id: task.agentId,
           title,
           description: response.slice(0, 300),
@@ -258,7 +270,9 @@ ${formatLines.join('\n')}`;
           amount: null,
         });
         bus.publish({ type: 'decision.created', from: task.agentName, payload: { title, agentId: task.agentId } });
+        await maybeAutoApprove(decision); // Nivel 2+: auto-aprueba si no es crítica
       }
+      } // fin gate autonomía >= 1
 
       bus.publish({
         type: 'agent.task.done',

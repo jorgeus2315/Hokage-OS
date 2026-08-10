@@ -90,3 +90,59 @@ export function validateRoleConfig(
 
   return { ok: true };
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// NIVELES DE AUTONOMÍA 0–3 (Fase 2)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// La autonomía es una COMPUERTA sobre las capacidades que el rol/tools/política ya
+// conceden — nunca las amplía. No añade tools, no concede system.exec, no sube el
+// presupuesto. Solo puede restringir (Nivel 0) o permitir auto-ejecución de lo que
+// ya está permitido (Nivel 2). Se aplica en los dos puntos de efecto: tool calls
+// (aiService) y marcadores (agentRuntime). No introduce un segundo mecanismo de
+// aprobación — reutiliza approveDecision/resolveDecisionApproval.
+//
+//   0 Observador — solo tools de lectura; sin acciones ni decisiones.
+//   1 Proponente — trabaja (tools operativas) y propone; las decisiones quedan pendientes.
+//   2 Operativo  — como 1, y además auto-aprueba SUS decisiones no críticas (no gasto,
+//                  no publicación/financiero/legal, sin entity_type, riesgo no alto).
+//   3 Autónomo   — reservado a roles de sistema; no concedible por API (cap = 2, Fase 1).
+
+// Clasificación de efecto de cada tool. Desconocida → 'operational' (bloqueada en Nivel 0,
+// permitida en 1+): conservador, nunca clasifica algo nuevo como lectura por error.
+export type ToolEffect = 'read' | 'operational' | 'approval';
+
+export const TOOL_EFFECTS: Record<string, ToolEffect> = {
+  'web.browser':    'read',
+  'google.trends':  'read',
+  'trend.report':   'operational',
+  'content.create': 'operational',
+  'memory.write':   'operational',
+  'decision.create': 'approval',
+  'system.exec':    'approval',
+};
+
+export function toolEffect(toolId: string): ToolEffect {
+  return TOOL_EFFECTS[toolId] ?? 'operational';
+}
+
+// ¿Puede un agente con esta autonomía INVOCAR esta tool? Nunca amplía la lista del rol —
+// el llamador ya interseca con las tools del rol; esto solo puede quitar (Nivel 0).
+export function autonomyAllowsTool(autonomy: number, toolId: string): boolean {
+  if (autonomy <= 0) return toolEffect(toolId) === 'read';
+  return true; // Nivel 1+: puede usar lo que su rol le da (approval crea pendiente)
+}
+
+// ¿Auto-aprueba un agente con esta autonomía una Decision que acaba de crear?
+// Conservador: el Nivel 3 de categorías (gasto, publicación, sistema) SIEMPRE es humano (§3).
+export function autonomyAutoApproves(
+  autonomy: number,
+  d: { amount?: number | null; risk_level?: string | null; category?: string | null; entity_type?: string | null }
+): boolean {
+  if (autonomy < 2) return false;                                  // 0/1: nunca
+  if (d.amount != null && d.amount > 0) return false;              // gasto → humano
+  if (d.entity_type) return false;                                 // system_exec/objective/… → humano
+  if (d.risk_level === 'high') return false;                       // alto riesgo → humano
+  if (d.category && new Set(['PUBLICATION', 'FINANCIAL', 'LEGAL']).has(d.category)) return false;
+  return true;
+}
