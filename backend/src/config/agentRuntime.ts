@@ -1,5 +1,5 @@
 import bus, { AgentEvent } from './eventBus.js';
-import { toolsForRole } from './agentModels.js';
+import { toolsFor, autonomousTaskFor } from '../services/roleService.js';
 import { askAgent, writeAgentMemory } from '../services/aiService.js';
 import { listAgents } from '../services/agentService.js';
 import { createDecision } from '../services/decisionService.js';
@@ -33,45 +33,9 @@ export interface TaskResult {
   error?: string;
 }
 
-// Tareas autonomas por rol de agente
-const AUTONOMOUS_TASKS: Record<string, { task: string; interval: number }> = {
-  investigador: {
-    task: 'Analiza tendencias del mercado de productos digitales (ej: "minimalist wall art", "digital planner", "printable"). PRIORIDAD: usa google.trends. Si falla o devuelve error, usa web.browser para buscar "etsy trending digital products 2024" y extrae keywords manualmente. Elige 1-2 keywords con interés creciente. Para cada tendencia, llama a la tool trend.report con keyword y una descripción breve (menos de 120 caracteres) — no escribas la tendencia como texto libre.',
-    interval: 30 * 60 * 1000,
-  },
-  contenido: {
-    task: 'Revisa tu contexto de trabajo. Si recibes una tendencia del Explorador, crea una descripcion de producto SEO-optimizada (titulo, descripcion, 5 tags). Cuando termines, llama a la tool content.create con el keyword y un resumen de 1 linea. Después llama a la tool decision.create con title="Publicar contenido SEO — keyword" — no escribas ninguna de las dos cosas como texto libre. Si no hay trabajo nuevo, reporta estado brevemente.',
-    interval: 20 * 60 * 1000,
-  },
-  finanzas: {
-    task: 'Genera un reporte breve del estado financiero actual. Incluye: ingresos del dia, gastos, margen y una recomendacion. Formato: INGRESOS | GASTOS | MARGEN | ALERTA.',
-    interval: 60 * 60 * 1000,
-  },
-  operaciones: {
-    task: 'Verifica el estado de todos los sistemas. Reporta si hay errores o problemas. Formato: Sistema | Estado | Accion.',
-    interval: 15 * 60 * 1000,
-  },
-  trafico: {
-    task: 'Analiza oportunidades de visibilidad y SEO para los productos actuales. Propone 1-2 mejoras concretas.',
-    interval: 45 * 60 * 1000,
-  },
-  soporte: {
-    task: 'Revisa si hay dudas o incidencias de clientes pendientes. Propone mejoras basadas en el feedback reciente. Si no hay nada pendiente, reporta que todo esta al dia.',
-    interval: 40 * 60 * 1000,
-  },
-  ceo: {
-    task: `Analiza el estado actual desde una perspectiva estratégica — no operacional.
-Evalúa tres cosas:
-1. ¿Están los agentes trabajando en lo que más mueve los objetivos de Jorge? Si no, identifica el desajuste.
-2. ¿Hay algún patrón en los rechazos, fallos o silencio reciente que señale un problema de fondo?
-3. ¿Existe alguna oportunidad que el equipo no esté persiguiendo activamente?
-
-Si detectas algo relevante, llama a la tool decision.create con una propuesta concreta en menos de 80 caracteres — no lo escribas como texto libre.
-Si todo está alineado con los objetivos, reporta el estado en una sola línea.
-No rellenes si no hay nada que decir.`,
-    interval: 60 * 60 * 1000,
-  },
-};
+// Las tareas autónomas por rol (task + interval) ya no viven aquí — su casa canónica es
+// role_definitions (sembrada desde config/roleSeeds.ts). Se leen vía autonomousTaskFor()
+// (roleService), con fallback a la semilla TS. Fase 1b del Registry de roles.
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -108,7 +72,7 @@ async function loadDueAgents(): Promise<Array<{ id: number; name: string; role: 
 
   const result: Array<{ id: number; name: string; role: string; task: string; interval: number }> = [];
   for (const row of rows) {
-    const config = AUTONOMOUS_TASKS[row.role];
+    const config = await autonomousTaskFor(row.role);
     if (!config) continue;
     result.push({
       id: row.agent_id,
@@ -190,7 +154,7 @@ class AgentRuntime {
       // conviven en el prompt, el modelo tiende a preferir el marcador (verificado en Fase 1).
       // El regex de agentRuntime.ts se queda como red de seguridad, pero deja de ofrecerse
       // activamente en cuanto el rol tiene el tool real.
-      const roleTools = toolsForRole(task.agentRole);
+      const roleTools = await toolsFor(task.agentRole);
       const formatLines: string[] = [];
       if (!roleTools.includes('trend.report')) {
         formatLines.push('- Si detectas una tendencia de mercado accionable, añade: [TENDENCIA: keyword | descripcion breve]');
@@ -389,7 +353,7 @@ ${formatLines.join('\n')}`;
     const agents = await listAgents();
 
     for (const agent of agents) {
-      const config = AUTONOMOUS_TASKS[agent.role];
+      const config = await autonomousTaskFor(agent.role);
       if (config) await ensureSchedule(agent.id, config.interval);
     }
 

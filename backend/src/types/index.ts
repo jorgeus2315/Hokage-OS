@@ -13,6 +13,30 @@ export interface AgentCreatePayload {
   name: string;
   role: string;
   model?: string;
+  venture_id?: number | null;
+}
+
+// Registry de roles (Fase 1, UI Implementation Plan.md). Fuente de verdad en runtime
+// de qué es un especialista: misión, tools, modelo, presupuesto y autonomía por defecto.
+// Los mapas TS (agentModels.ts / AUTONOMOUS_TASKS) pasan a ser semilla + fallback.
+export interface RoleDefinition {
+  key: string;                       // clave de dominio estable = agents.role (L·1)
+  label: string;
+  specialty: string | null;
+  mission: string | null;
+  base_prompt: string | null;        // plantilla de prompt para nuevos agentes de este rol
+  autonomous_task: string | null;    // NULL = sin trabajo autónomo (chat-only)
+  interval_minutes: number | null;
+  model: string;
+  fallback_model: string | null;     // resiliencia (placeholder Fase 2)
+  tools: string[];
+  default_autonomy: number;          // 0-3 (placeholder Fase 2; el motor no lo aplica aún)
+  monthly_budget_usd: number;
+  scope: 'business' | 'system';
+  is_system: boolean;                // rol crítico, protegido de borrado/degradación
+  status: 'active' | 'disabled';
+  created_at: string;
+  updated_at: string;
 }
 
 export interface Decision {

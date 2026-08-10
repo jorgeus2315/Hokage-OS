@@ -32,7 +32,7 @@ const TOOL_CAPABLE_MODELS = new Set([
 // TOOL_CAPABLE_MODELS arriba). operaciones/soporte, en Llama 3.1 8B, se quedan permanentemente
 // en [MEMORIA: k=v] / [DECISION: ...] — no es una omisión temporal, es la realidad del modelo
 // (ver HOKAGE_CORE_SPECIFICATION_v1.md §2).
-const AGENT_TOOLS: Record<string, string[]> = {
+export const AGENT_TOOLS: Record<string, string[]> = {
   ceo:          ['web.browser', 'memory.write', 'decision.create'],
   investigador: ['google.trends', 'web.browser', 'trend.report', 'memory.write', 'decision.create'],
   contenido:    ['web.browser', 'content.create', 'memory.write', 'decision.create'],

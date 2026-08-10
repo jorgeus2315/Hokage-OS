@@ -2,6 +2,7 @@ import * as sqlite3 from 'sqlite3';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { modelForRole } from '../config/agentModels.js';
+import { ROLE_SEEDS } from '../config/roleSeeds.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -193,14 +194,38 @@ async function runMigrations(): Promise<void> {
     console.log('[DB] Migración: departments.position_locked añadida; departamentos no-hub normalizados a active=0 (niebla de La Fundación)');
   }
 
-  // Mantener sincronizado el modelo óptimo de cada agente con la fuente de verdad (agentModels.ts)
-  const agents = await all<{ id: number; role: string; model: string | null }>('SELECT id, role, model FROM agents');
-  for (const agent of agents) {
-    const correctModel = modelForRole(agent.role);
-    if (agent.model !== correctModel) {
-      await run('UPDATE agents SET model = ? WHERE id = ?', [correctModel, agent.id]);
-    }
+  // Fuente de verdad del modelo por rol = role_definitions (Fase 1b). Aquí ya NO se sobrescribe
+  // un modelo elegido por Jorge (bug anterior: se reseteaba en cada arranque) — solo se rellena
+  // el de un agente que no tenga ninguno. Se lee role_definitions directamente (no vía roleService)
+  // para no crear un ciclo de imports con db/init.
+  const agentsSinModelo = await all<{ id: number; role: string }>(
+    "SELECT id, role FROM agents WHERE model IS NULL OR model = ''"
+  );
+  for (const agent of agentsSinModelo) {
+    const def = await get<{ model: string }>('SELECT model FROM role_definitions WHERE key = ?', [agent.role]);
+    await run('UPDATE agents SET model = ? WHERE id = ?', [def?.model ?? modelForRole(agent.role), agent.id]);
   }
+}
+
+// Siembra las definiciones de rol desde ROLE_SEEDS (código = semilla). INSERT OR IGNORE
+// por key: solo rellena roles que falten, nunca sobrescribe una edición en BD. Idempotente.
+async function seedRoleDefinitions(): Promise<void> {
+  let inserted = 0;
+  for (const r of ROLE_SEEDS) {
+    const res = await run(
+      `INSERT OR IGNORE INTO role_definitions
+        (key, label, specialty, mission, base_prompt, autonomous_task, interval_minutes,
+         model, fallback_model, tools, default_autonomy, monthly_budget_usd, scope, is_system, status)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'active')`,
+      [
+        r.key, r.label, r.specialty, r.mission, r.base_prompt, r.autonomous_task, r.interval_minutes,
+        r.model, r.fallback_model, JSON.stringify(r.tools), r.default_autonomy, r.monthly_budget_usd,
+        r.scope, r.is_system ? 1 : 0,
+      ]
+    );
+    inserted += res.changes;
+  }
+  if (inserted > 0) console.log(`[DB] role_definitions sembradas (${inserted} roles nuevos de ${ROLE_SEEDS.length})`);
 }
 
 async function seedDefaultVenture(): Promise<void> {
@@ -572,9 +597,37 @@ export async function initSchema(): Promise<void> {
     updated_at         TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
 
+  // ═══════════ ROLE_DEFINITIONS — Registry de roles como dato (Fase 1, UI
+  // Implementation Plan.md). Fuente de verdad en runtime de qué es un especialista.
+  // key = la clave de dominio estable ya usada en agents.role / automations /
+  // obj_milestones (L·1). Los mapas TS (agentModels.ts / AUTONOMOUS_TASKS) pasan
+  // a ser semilla + fallback — se siembra aquí, no se lee todavía (eso es 1b). ═══
+  await run(`CREATE TABLE IF NOT EXISTS role_definitions (
+    key                TEXT PRIMARY KEY,
+    label              TEXT NOT NULL,
+    specialty          TEXT,
+    mission            TEXT,
+    base_prompt        TEXT,
+    autonomous_task    TEXT,
+    interval_minutes   INTEGER,
+    model              TEXT NOT NULL,
+    fallback_model     TEXT,
+    tools              TEXT NOT NULL DEFAULT '[]',
+    default_autonomy   INTEGER NOT NULL DEFAULT 1,
+    monthly_budget_usd REAL NOT NULL DEFAULT 5.0,
+    scope              TEXT NOT NULL DEFAULT 'business',
+    is_system          INTEGER NOT NULL DEFAULT 0,
+    status             TEXT NOT NULL DEFAULT 'active',
+    created_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at         TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+
   const deptCount = await get<{ count: number }>('SELECT COUNT(*) as count FROM departments');
   if (!deptCount || deptCount.count === 0) await seedDepartments();
 
+  // role_definitions se siembra ANTES de runMigrations: el sync de agents.model dentro de
+  // runMigrations ahora lee de esta tabla (Fase 1b).
+  await seedRoleDefinitions();
   await runMigrations();
   await seedDefaultVenture();
   await seedAutomations();

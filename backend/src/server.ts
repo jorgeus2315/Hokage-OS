@@ -38,6 +38,9 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { run, get, all, initSchema } from './db/init.js';
 import type { Department, DepartmentUpdatePayload } from './types/index.js';
 import { listAgents, createAgent } from './services/agentService.js';
+import {
+  listRoleDefinitions, getRoleDefinition, createRoleDefinition, updateRoleDefinition, setRoleStatus,
+} from './services/roleService.js';
 import { approveDecision, rejectDecision, createDecision, listDecisions } from './services/decisionService.js';
 import { createMessage, listMessages } from './services/messageService.js';
 import { askAgent, callAIJson } from './services/aiService.js';
@@ -262,6 +265,51 @@ app.get('/api/agent-runs', async (req, res) => {
       : await all('SELECT * FROM agent_runs ORDER BY started_at DESC');
     res.json({ ok: true, data: runs });
   } catch (e: any) { sendError(res, 500, e, 'Error listando agent_runs'); }
+});
+
+// ═══════════ ROLES (Registry de roles, Fase 1c) ═══════════
+// Configuración de seguridad → todos requireAdmin, incl. lectura (L·5).
+app.get('/api/roles', requireAdmin, async (_req, res) => {
+  try {
+    const roles = await listRoleDefinitions();
+    res.json({ ok: true, data: roles });
+  } catch (e: any) { sendError(res, 500, e, 'Error listando roles'); }
+});
+
+app.get('/api/roles/:key', requireAdmin, async (req, res) => {
+  try {
+    const role = await getRoleDefinition(req.params.key);
+    if (!role) return res.status(404).json({ ok: false, error: 'Rol no encontrado' });
+    res.json({ ok: true, data: role });
+  } catch (e: any) { sendError(res, 500, e, 'Error leyendo rol'); }
+});
+
+app.post('/api/roles', requireAdmin, async (req, res) => {
+  try {
+    const role = await createRoleDefinition(req.body);
+    res.status(201).json({ ok: true, data: role });
+  } catch (e: any) { sendError(res, 400, e, 'Error creando rol'); }
+});
+
+app.put('/api/roles/:key', requireAdmin, async (req, res) => {
+  try {
+    const role = await updateRoleDefinition(req.params.key, req.body);
+    res.json({ ok: true, data: role });
+  } catch (e: any) { sendError(res, 400, e, 'Error actualizando rol'); }
+});
+
+app.post('/api/roles/:key/enable', requireAdmin, async (req, res) => {
+  try {
+    const role = await setRoleStatus(req.params.key, 'active');
+    res.json({ ok: true, data: role });
+  } catch (e: any) { sendError(res, 400, e, 'Error activando rol'); }
+});
+
+app.post('/api/roles/:key/disable', requireAdmin, async (req, res) => {
+  try {
+    const role = await setRoleStatus(req.params.key, 'disabled');
+    res.json({ ok: true, data: role });
+  } catch (e: any) { sendError(res, 400, e, 'Error desactivando rol'); }
 });
 
 // ═══════════ DECISIONES ═══════════
