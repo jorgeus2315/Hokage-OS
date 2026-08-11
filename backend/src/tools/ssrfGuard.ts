@@ -1,17 +1,19 @@
 import dns from 'node:dns/promises';
+import dnsCb from 'node:dns';
 import net from 'node:net';
+import { Agent, fetch as undiciFetch } from 'undici';
 
 // Guard SSRF para tools que hacen fetch a URLs controladas por un agente (web.browser).
 // Un agente guiado por contenido web atacante (inyección indirecta) podría ser inducido a
 // leer metadata de la nube (169.254.169.254), localhost, o servicios internos. Este módulo
 // solo permite http/https hacia IPs públicas, revalidando en cada redirección.
 //
-// ponytail: techo conocido — DNS rebinding (TOCTOU). Entre assertPublicHost() (lookup) y el
-// getaddrinfo interno de fetch(), el registro DNS podría cambiar a una IP privada. Cerrarlo
-// del todo exige fijar la conexión a la IP validada con un dispatcher custom de undici — es
-// una decisión arquitectónica mayor, deliberadamente no tomada aquí. Para un sistema de un
-// solo operador el vector realista (agente inducido a http://169.254.169.254 / localhost) sí
-// queda cubierto por la resolución + bloqueo de rango.
+// TOCTOU / DNS-rebinding CERRADO (Fase 6): la validación y la conexión usan la MISMA
+// resolución. ssrfLookup() resuelve, exige que TODAS las IPs sean públicas y devuelve la IP
+// validada; undici (dispatcher) conecta a ESA IP sin volver a resolver. Ya no hay ventana
+// entre validar y conectar. La comprobación previa (assertPublicHost) se mantiene para
+// bloquear IP-literales (undici no llama al lookup con un literal) y para fallar antes con un
+// mensaje claro — defensa en profundidad, no la garantía principal.
 
 const MAX_REDIRECTS = 3;
 
@@ -42,11 +44,13 @@ export function ipIsPrivate(ip: string): boolean {
 
 // Lanza si el hostname resuelve (o ya es) una IP privada/local. IP literal → comprobación directa.
 export async function assertPublicHost(hostname: string): Promise<void> {
-  if (net.isIP(hostname)) {
-    if (ipIsPrivate(hostname)) throw new Error(`URL bloqueada: IP privada/local (${hostname})`);
+  // URL.hostname devuelve los IPv6 entre corchetes ([::1]); net.isIP los quiere sin ellos.
+  const host = hostname.replace(/^\[|\]$/g, '');
+  if (net.isIP(host)) {
+    if (ipIsPrivate(host)) throw new Error(`URL bloqueada: IP privada/local (${host})`);
     return;
   }
-  const resolved = await dns.lookup(hostname, { all: true });
+  const resolved = await dns.lookup(host, { all: true });
   if (resolved.length === 0) throw new Error(`URL bloqueada: host no resuelve (${hostname})`);
   for (const r of resolved) {
     if (ipIsPrivate(r.address)) {
@@ -55,17 +59,51 @@ export async function assertPublicHost(hostname: string): Promise<void> {
   }
 }
 
-// fetch con validación SSRF: solo http/https, host público, redirecciones manuales revalidadas.
-export async function safeFetch(rawUrl: string, headers: Record<string, string>): Promise<Response> {
+// Lookup que RESUELVE, valida que TODAS las IPs son públicas y fija la conexión a la IP
+// validada. undici lo llama en el momento de conectar y conecta al resultado devuelto aquí,
+// sin re-resolver → cierra el TOCTOU. Firma de Node net.LookupFunction (callback single).
+function ssrfLookup(
+  hostname: string,
+  options: { family?: number | 'IPv4' | 'IPv6'; hints?: number },
+  callback: (err: NodeJS.ErrnoException | null, address: string, family: number) => void
+): void {
+  const fam = options?.family;
+  const family = fam === 'IPv4' ? 4 : fam === 'IPv6' ? 6 : typeof fam === 'number' ? fam : 0;
+  dnsCb.lookup(hostname, { all: true, family, hints: options?.hints }, (err, addresses) => {
+    if (err) return callback(err, '', 0);
+    const list = Array.isArray(addresses) ? addresses : [addresses];
+    if (list.length === 0) return callback(new Error(`URL bloqueada: host no resuelve (${hostname})`), '', 0);
+    for (const a of list) {
+      if (ipIsPrivate(a.address)) {
+        return callback(new Error(`URL bloqueada: ${hostname} resuelve a IP privada/local (${a.address})`), '', 0);
+      }
+    }
+    const chosen = list[0];
+    callback(null, chosen.address, chosen.family);
+  });
+}
+
+// Dispatcher único con el lookup validador. Reutilizado en cada conexión (pooling de undici).
+const ssrfAgent = new Agent({ connect: { lookup: ssrfLookup } });
+
+export interface SafeResponse {
+  ok: boolean;
+  status: number;
+  headers: { get(name: string): string | null };
+  text(): Promise<string>;
+}
+
+// fetch con validación SSRF: solo http/https, host público, IP fijada, redirecciones revalidadas.
+export async function safeFetch(rawUrl: string, headers: Record<string, string>): Promise<SafeResponse> {
   let url = rawUrl;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     const parsed = new URL(url); // lanza si la URL es inválida
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
       throw new Error(`Esquema no permitido: ${parsed.protocol} (solo http/https)`);
     }
-    await assertPublicHost(parsed.hostname);
+    await assertPublicHost(parsed.hostname); // bloquea IP-literales privadas y pre-valida el host
 
-    const res = await fetch(url, { headers, redirect: 'manual' });
+    const res = await undiciFetch(url, { headers, redirect: 'manual', dispatcher: ssrfAgent });
     const location = res.status >= 300 && res.status < 400 ? res.headers.get('location') : null;
     if (!location) return res;
 

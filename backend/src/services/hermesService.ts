@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import { run, get, all } from '../db/init.js';
 import { createDecision } from './decisionService.js';
 import bus from '../config/eventBus.js';
+import { buildSafeExecEnv } from '../config/security.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -67,7 +68,12 @@ export async function runApprovedExec(execRunId: number): Promise<void> {
   const cwd = execRun.cwd ? path.resolve(REPO_ROOT, execRun.cwd) : REPO_ROOT;
 
   await new Promise<void>((resolve) => {
-    execFile('/bin/sh', ['-c', execRun.command], { cwd, timeout: EXEC_TIMEOUT_MS, maxBuffer: MAX_BUFFER }, async (error, stdout, stderr) => {
+    // env saneado (Fase 6): el comando aprobado NO ve secretos (OPENROUTER_API_KEY, ADMIN_TOKEN…),
+    // así un `env`/`echo $VAR` no los exfiltra. cwd es solo el directorio inicial, no una frontera
+    // real (/bin/sh -c puede `cd` a cualquier sitio). REQUISITO OPERATIVO VPS (D2, aprobado F6):
+    // el proceso que ejecuta Hermes debe correr bajo un usuario Linux DEDICADO SIN privilegios y
+    // SIN sudo genérico. El sandbox fuerte (contenedor/namespace) queda para una fase posterior.
+    execFile('/bin/sh', ['-c', execRun.command], { cwd, timeout: EXEC_TIMEOUT_MS, maxBuffer: MAX_BUFFER, env: buildSafeExecEnv() }, async (error, stdout, stderr) => {
       const exitCode = error && typeof (error as any).code === 'number' ? (error as any).code : error ? 1 : 0;
       await run(
         `UPDATE exec_runs SET status = ?, exit_code = ?, stdout = ?, stderr = ?, executed_at = datetime('now') WHERE id = ?`,

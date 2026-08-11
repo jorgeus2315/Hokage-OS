@@ -5,6 +5,7 @@ dotenv.config();
 
 import { sendError, structuredErrorHandler } from './middleware/errorHandler.js';
 import { OWNER_NAME } from './config/env.js';
+import { constantTimeEqual } from './config/security.js';
 
 const REQUIRED_ENV = ['OPENROUTER_API_KEY', 'ADMIN_TOKEN'];
 const missing = REQUIRED_ENV.filter((key) => !process.env[key]);
@@ -22,9 +23,14 @@ function isTrustedOrigin(origin: string | undefined): boolean {
   return TRUSTED_ORIGINS.has(origin);
 }
 
+// Auth de operador único: token compartido, comparado en tiempo constante. Cubre las
+// MUTACIONES; los GET de lectura no exigen token (el frontend no lo envía). REQUISITO DE
+// DESPLIEGUE (D1, aprobado F6): el backend NUNCA se expone directo a Internet — solo detrás de
+// nginx con auth/IP-allowlist o túnel privado (el bind es 127.0.0.1). La migración a auth de
+// sesión, con el token fuera del bundle del frontend y GET protegidos, es F10.
 function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction): void {
   const token = req.headers['authorization']?.toString().replace('Bearer ', '') || req.headers['x-admin-token']?.toString();
-  if (!token || token !== ADMIN_TOKEN) {
+  if (!constantTimeEqual(token, ADMIN_TOKEN)) {
     res.status(401).json({ ok: false, error: 'Token inválido o faltante' });
     return;
   }
@@ -102,7 +108,7 @@ const wss = new WebSocketServer({
   server: httpServer,
   verifyClient: (info, callback) => {
     const token = extractWsToken(info.req);
-    if (!token || token !== ADMIN_TOKEN) {
+    if (!constantTimeEqual(token, ADMIN_TOKEN)) {
       callback(false, 401, 'Token inválido o faltante');
       return;
     }
