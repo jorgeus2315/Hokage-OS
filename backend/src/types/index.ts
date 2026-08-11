@@ -39,6 +39,21 @@ export interface RoleDefinition {
   updated_at: string;
 }
 
+// Memoria de negocio (Fase 4, CORE SPEC §6). DATO, nunca instrucción. Compartida por venture.
+export type MemoryCategory = 'decision' | 'error' | 'attempt' | 'research' | 'result' | 'learning' | 'context';
+
+export interface MemoryEntry {
+  id: number;
+  venture_id: number | null;      // NULL = memoria de instalación (global)
+  category: MemoryCategory;
+  title: string;
+  content: string;
+  source_agent_id: number | null;
+  related_entity_type: string | null;
+  related_entity_id: number | null;
+  created_at: string;
+}
+
 export interface Decision {
   id: number;
   agent_id: number | null;

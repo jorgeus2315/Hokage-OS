@@ -140,3 +140,16 @@ export interface DecisionCreateOutput {
   title: string;
   status: string;
 }
+
+// Fase 4 — memoria de NEGOCIO (memory_entries). Distinta de memory.write (memoria privada
+// clave-valor del agente). 'decision' y 'result' se excluyen a propósito: solo los escribe
+// la captura automática, para que no compitan dos fuentes de verdad sobre el mismo hecho.
+export interface MemoryRememberInput {
+  category: 'error' | 'attempt' | 'research' | 'learning' | 'context';
+  title: string;
+  content: string;
+}
+
+export interface MemoryRememberOutput {
+  memoryId: number;
+}

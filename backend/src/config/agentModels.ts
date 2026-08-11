@@ -33,14 +33,14 @@ const TOOL_CAPABLE_MODELS = new Set([
 // en [MEMORIA: k=v] / [DECISION: ...] — no es una omisión temporal, es la realidad del modelo
 // (ver HOKAGE_CORE_SPECIFICATION_v1.md §2).
 export const AGENT_TOOLS: Record<string, string[]> = {
-  ceo:          ['web.browser', 'memory.write', 'decision.create'],
-  investigador: ['google.trends', 'web.browser', 'trend.report', 'memory.write', 'decision.create'],
-  contenido:    ['web.browser', 'content.create', 'memory.write', 'decision.create'],
-  trafico:      ['google.trends', 'web.browser', 'memory.write', 'decision.create'],
-  finanzas:     ['memory.write', 'decision.create'],
+  ceo:          ['web.browser', 'memory.write', 'memory.remember', 'decision.create'],
+  investigador: ['google.trends', 'web.browser', 'trend.report', 'memory.write', 'memory.remember', 'decision.create'],
+  contenido:    ['web.browser', 'content.create', 'memory.write', 'memory.remember', 'decision.create'],
+  trafico:      ['google.trends', 'web.browser', 'memory.write', 'memory.remember', 'decision.create'],
+  finanzas:     ['memory.write', 'memory.remember', 'decision.create'],
   operaciones:  [],
   soporte:      [],
-  hermes:       ['system.exec', 'memory.write', 'decision.create'],
+  hermes:       ['system.exec', 'memory.write', 'memory.remember', 'decision.create'],
 };
 
 export function modelForRole(role: string): string {

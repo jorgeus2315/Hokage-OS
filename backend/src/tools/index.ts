@@ -1,11 +1,12 @@
 import type { Tool, ToolContext, ToolResult, ToolStatus, ToolPermission } from './base.js';
-import type { EtsyListingInput, EtsyListingOutput, ShopifyListingInput, ShopifyListingOutput, PrintifyProductInput, PrintifyProductOutput, GoogleTrendsInput, GoogleTrendsOutput, WebBrowserInput, WebBrowserOutput, SystemExecInput, SystemExecOutput, TrendReportInput, TrendReportOutput, ContentCreateInput, ContentCreateOutput, MemoryWriteInput, MemoryWriteOutput, DecisionCreateInput, DecisionCreateOutput } from './types.js';
+import type { EtsyListingInput, EtsyListingOutput, ShopifyListingInput, ShopifyListingOutput, PrintifyProductInput, PrintifyProductOutput, GoogleTrendsInput, GoogleTrendsOutput, WebBrowserInput, WebBrowserOutput, SystemExecInput, SystemExecOutput, TrendReportInput, TrendReportOutput, ContentCreateInput, ContentCreateOutput, MemoryWriteInput, MemoryWriteOutput, DecisionCreateInput, DecisionCreateOutput, MemoryRememberInput, MemoryRememberOutput } from './types.js';
 import { requestExec } from '../services/hermesService.js';
 import { createMarket } from '../services/marketService.js';
 import { createContent } from '../services/contentService.js';
 import { writeAgentMemory } from '../services/agentMemoryService.js';
 import { createDecision } from '../services/decisionService.js';
 import { maybeAutoApprove } from '../services/agentAutonomy.js';
+import { createMemoryEntry } from '../services/memoryService.js';
 import { get } from '../db/init.js';
 import bus from '../config/eventBus.js';
 import { safeFetch } from './ssrfGuard.js';
@@ -567,6 +568,52 @@ export const DecisionCreateTool: Tool<DecisionCreateInput, DecisionCreateOutput>
     } catch (err: any) {
       console.error(`[TOOL:decision.create] error:`, err.message);
       return result<DecisionCreateOutput>(false, { error: `DecisionCreate: ${err.message}` });
+    }
+  },
+};
+
+// Fase 4 — memoria de NEGOCIO. Escribe un aprendizaje compartido del venture (memory_entries),
+// scopeado por ctx.ventureId (la venture de la tarea actual). No es memoria privada (eso es
+// memory.write). Efecto 'operational' → gateado por autonomía (Nivel 0 no la recibe). El
+// contenido se guarda como DATO; el ContextComposer lo enmarca con la nota anti-inyección.
+const MEMORY_REMEMBER_CATEGORIES = ['error', 'attempt', 'research', 'learning', 'context'];
+
+export const MemoryRememberTool: Tool<MemoryRememberInput, MemoryRememberOutput> = {
+  id: 'memory.remember',
+  name: 'Memory Remember',
+  description: 'Registra un aprendizaje del NEGOCIO (error, intento, investigación, aprendizaje o contexto) en la memoria empresarial compartida del venture, para que el equipo lo recuerde en el futuro. No es tu memoria privada (para eso usa memory.write).',
+  category: 'pipeline',
+  status: 'ready',
+  permissions: permission('agent'),
+  requiredApproval: false,
+  inputSchema: stubInputSchema(
+    {
+      category: { type: 'string', description: 'Tipo de recuerdo de negocio', enum: MEMORY_REMEMBER_CATEGORIES },
+      title:    { type: 'string', description: 'Título corto del recuerdo (menos de 120 caracteres)', maxLength: 120 },
+      content:  { type: 'string', description: 'Qué pasó o qué aprendiste (menos de 800 caracteres)', maxLength: 800 },
+    },
+    ['category', 'title', 'content']
+  ),
+  outputSchema: stubOutputSchema({ memoryId: { type: 'integer' } }),
+  async estimateCost(_input) { return 0; },
+  async execute(input, ctx) {
+    try {
+      if (!MEMORY_REMEMBER_CATEGORIES.includes(input.category)) {
+        return result<MemoryRememberOutput>(false, { error: `MemoryRemember: categoría inválida "${input.category}" (usa: ${MEMORY_REMEMBER_CATEGORIES.join(', ')})` });
+      }
+      const { id } = await createMemoryEntry({
+        ventureId: ctx.ventureId ?? null,
+        category: input.category,
+        title: input.title,
+        content: input.content,
+        sourceAgentId: ctx.agentId ?? null,
+      });
+      const agent = ctx.agentId ? await get<{ name: string }>('SELECT name FROM agents WHERE id = ?', [ctx.agentId]) : null;
+      console.log(`[TOOL:memory.remember] ${agent?.name || 'agente'} → memory_entries :: ${input.category}/${input.title.slice(0, 40)} (venture=${ctx.ventureId ?? 'global'})`);
+      return result<MemoryRememberOutput>(true, { data: { memoryId: id }, cost: 0 });
+    } catch (err: any) {
+      console.error(`[TOOL:memory.remember] error:`, err.message);
+      return result<MemoryRememberOutput>(false, { error: `MemoryRemember: ${err.message}` });
     }
   },
 };

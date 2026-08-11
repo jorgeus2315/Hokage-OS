@@ -218,6 +218,21 @@ async function runMigrations(): Promise<void> {
     );
     console.log('[DB] Migración: Master Prompt legacy (agent_prompts id=0) → system_config');
   }
+
+  // Fase 4: concede memory.remember a los 6 roles tool-capable ya sembrados (los seeds usan
+  // INSERT OR IGNORE y no re-actualizan). Idempotente: solo añade la tool si falta. No toca
+  // operaciones/soporte (Llama, sin tool-calling). Respeta la política (memory.remember es
+  // grantable). No modifica autonomía, presupuesto ni scope.
+  for (const key of ['ceo', 'investigador', 'contenido', 'trafico', 'finanzas', 'hermes']) {
+    const row = await get<{ tools: string }>('SELECT tools FROM role_definitions WHERE key = ?', [key]);
+    if (!row) continue;
+    let tools: string[];
+    try { tools = JSON.parse(row.tools); } catch { continue; }
+    if (Array.isArray(tools) && !tools.includes('memory.remember')) {
+      tools.push('memory.remember');
+      await run("UPDATE role_definitions SET tools = ?, updated_at = datetime('now') WHERE key = ?", [JSON.stringify(tools), key]);
+    }
+  }
 }
 
 // Siembra las definiciones de rol desde ROLE_SEEDS (código = semilla). INSERT OR IGNORE
@@ -618,6 +633,26 @@ export async function initSchema(): Promise<void> {
     value      TEXT NOT NULL,
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
+
+  // ═══════════ MEMORY_ENTRIES — memoria de NEGOCIO (Fase 4, CORE SPEC §6). Log append-only,
+  // distinto de agent_memory (privada clave-valor por agente). Compartida por venture:
+  // venture_id NULL = memoria de instalación (global). Es DATO, nunca instrucción. FTS5 se
+  // difiere hasta que exista un panel de búsqueda que lo consuma. Ver memoryService.ts. ═══════
+  // source_agent_id ON DELETE SET NULL: la memoria de negocio SOBREVIVE al borrado de su agente
+  // autor (§6: es memoria del negocio, no del agente; source_agent_id es nullable = "lo escribió
+  // el sistema o un agente ya retirado"). Sin esto, borrar un agente fallaría por la FK.
+  await run(`CREATE TABLE IF NOT EXISTS memory_entries (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    venture_id          INTEGER REFERENCES ventures(id),
+    category            TEXT NOT NULL,
+    title               TEXT NOT NULL,
+    content             TEXT NOT NULL,
+    source_agent_id     INTEGER REFERENCES agents(id) ON DELETE SET NULL,
+    related_entity_type TEXT,
+    related_entity_id   INTEGER,
+    created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_memory_entries_venture ON memory_entries(venture_id, created_at DESC)`);
 
   // ═══════════ ROLE_DEFINITIONS — Registry de roles como dato (Fase 1, UI
   // Implementation Plan.md). Fuente de verdad en runtime de qué es un especialista.

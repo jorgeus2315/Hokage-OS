@@ -42,6 +42,7 @@ import {
   listRoleDefinitions, getRoleDefinition, createRoleDefinition, updateRoleDefinition, setRoleStatus,
 } from './services/roleService.js';
 import { getConfig, setConfig, MASTER_PROMPT_KEY } from './services/systemConfigService.js';
+import { listMemory } from './services/memoryService.js';
 import { approveDecision, rejectDecision, createDecision, listDecisions } from './services/decisionService.js';
 import { createMessage, listMessages } from './services/messageService.js';
 import { askAgent, callAIJson } from './services/aiService.js';
@@ -311,6 +312,20 @@ app.post('/api/roles/:key/disable', requireAdmin, async (req, res) => {
     const role = await setRoleStatus(req.params.key, 'disabled');
     res.json({ ok: true, data: role });
   } catch (e: any) { sendError(res, 400, e, 'Error desactivando rol'); }
+});
+
+// ═══════════ MEMORIA DE NEGOCIO (Fase 4) ═══════════
+// Datos de negocio → requireAdmin. Filtros opcionales: venture_id (o 'null' = global), category.
+app.get('/api/memory', requireAdmin, async (req, res) => {
+  try {
+    const ventureId = req.query.venture_id !== undefined
+      ? (req.query.venture_id === 'null' ? null : Number(req.query.venture_id))
+      : undefined;
+    const category = req.query.category ? String(req.query.category) : undefined;
+    const limit = req.query.limit ? Math.min(Number(req.query.limit), 200) : 50;
+    const data = await listMemory({ ventureId, category, limit });
+    res.json({ ok: true, data });
+  } catch (e: any) { sendError(res, 500, e, 'Error listando memoria'); }
 });
 
 // ═══════════ DECISIONES ═══════════
