@@ -2,8 +2,9 @@ import { run, get, all } from '../db/init.js';
 import type { HokageCommand, HokageTask, HokageCommandStatus, RoleDefinition } from '../types/index.js';
 import { getRoleDefinition, listRoleDefinitions, modelFor } from './roleService.js';
 import { createAgent } from './agentService.js';
-import { callAIJson } from './aiService.js';
+import { callAIJson, estimateTaskCostUsd } from './aiService.js';
 import { createMemoryEntry } from './memoryService.js';
+import { reserveVentureBudget, releaseVentureBudget, ventureOverRealBudget } from './ventureBudget.js';
 import bus from '../config/eventBus.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -137,7 +138,10 @@ Reglas:
 - Cada tarea va a UN rol de la lista. No inventes roles, tools ni permisos.`;
 
   const model = await modelFor('ceo');
-  return callAIJson<RawPlan>(systemPrompt, userMsg, model);
+  // Atribución de coste del planner a la venture (Fase 7): el actor es el agente ceo (Hokage).
+  // callAIJson registra en agent_costs con venture_id, sin tocar agent_budgets.
+  const ceo = await get<{ id: number }>("SELECT id FROM agents WHERE role = 'ceo' AND venture_id IS NULL LIMIT 1");
+  return callAIJson<RawPlan>(systemPrompt, userMsg, model, ceo ? { ventureId, agentId: ceo.id } : undefined);
 }
 
 // ── Selección / creación de especialista desde el Role Registry (Fase 1) ──────
@@ -179,7 +183,7 @@ async function budgetBlocked(agentId: number): Promise<{ blocked: boolean; pct: 
 
 // ── Persistencia auxiliar ─────────────────────────────────────────────────────
 const CMD_SELECT = 'SELECT id, venture_id, text, status, plan_summary, result_summary, idempotency_key, replan_count, created_at, updated_at FROM hokage_commands';
-const TASK_SELECT = 'SELECT id, command_id, phase, role, agent_id, title, prompt, status, work_item_id, result, error, created_at, updated_at FROM hokage_tasks';
+const TASK_SELECT = 'SELECT id, command_id, phase, role, agent_id, title, prompt, status, work_item_id, result, error, reserved_usd, created_at, updated_at FROM hokage_tasks';
 
 async function getCommandRow(id: number): Promise<HokageCommand | undefined> {
   return get<HokageCommand>(`${CMD_SELECT} WHERE id = ?`, [id]);
@@ -231,19 +235,49 @@ async function dispatchPhase(cmd: HokageCommand, phase: number): Promise<number>
       continue;
     }
 
+    // Reserva de presupuesto de VENTURE (Fase 7): comprometer el coste estimado ANTES de
+    // ejecutar (chequeo antes del gasto). Atómico → concurrency-safe. null = sobre presupuesto.
+    const est = estimateTaskCostUsd(def.model);
+    const reserved = await reserveVentureBudget(cmd.venture_id, est);
+    if (reserved === null) {
+      await run(`UPDATE hokage_tasks SET status = 'blocked', agent_id = ?, error = ?, updated_at = datetime('now') WHERE id = ? AND status = 'pending'`,
+        [agentId, 'presupuesto de la venture agotado', t.id]);
+      continue;
+    }
+
     // Un único camino de ejecución: work_item de tipo 'hokage_task'. stage3 lo ejecuta con
     // askAgent() (tools por rol + autonomía + contexto + memoria), venture_id incluido.
     const wi = await run(
       `INSERT INTO work_items (agent_id, venture_id, type, priority, status, context) VALUES (?, ?, 'hokage_task', 8, 'pending', ?)`,
       [agentId, cmd.venture_id, priorBlock + t.prompt]
     );
-    await run(`UPDATE hokage_tasks SET status = 'dispatched', agent_id = ?, work_item_id = ?, updated_at = datetime('now') WHERE id = ? AND status = 'pending'`,
-      [agentId, wi.lastID, t.id]);
+    const upd = await run(`UPDATE hokage_tasks SET status = 'dispatched', agent_id = ?, work_item_id = ?, reserved_usd = ?, updated_at = datetime('now') WHERE id = ? AND status = 'pending'`,
+      [agentId, wi.lastID, reserved, t.id]);
+    if (upd.changes !== 1) {
+      // No debería ocurrir en este flujo secuencial; si ocurre, no dejar la reserva colgada.
+      await releaseVentureBudget(cmd.venture_id, reserved);
+      continue;
+    }
 
     bus.publish({ type: 'hokage.task.dispatched', from: 'Hokage', payload: { commandId: cmd.id, taskId: t.id, role: t.role, agentId } });
     dispatched++;
   }
   return dispatched;
+}
+
+// Libera la reserva de presupuesto de una tarea de forma IDEMPOTENTE: solo el primero que pone
+// reserved_usd a 0 decrementa el comprometido de la venture. Seguro ante múltiples llamadas
+// (hook de completado, cancelación de comando, cancelación desde stage2). El coste REAL ya está
+// en agent_costs; al liberar, la contabilidad pasa de "reservado" (estimación) a "real".
+async function releaseTaskReservation(taskId: number): Promise<void> {
+  const t = await get<{ command_id: number; reserved_usd: number }>(
+    'SELECT command_id, reserved_usd FROM hokage_tasks WHERE id = ?', [taskId]
+  );
+  if (!t || t.reserved_usd <= 0) return;
+  const z = await run("UPDATE hokage_tasks SET reserved_usd = 0 WHERE id = ? AND reserved_usd > 0", [taskId]);
+  if (z.changes !== 1) return; // otro llamador ya liberó
+  const cmd = await getCommandRow(t.command_id);
+  await releaseVentureBudget(cmd?.venture_id ?? null, t.reserved_usd);
 }
 
 // ── Avance del DAG: se llama cuando una tarea termina (hook desde stage3) ──────
@@ -257,6 +291,21 @@ export async function onHokageTaskCompleted(workItemId: number, ok: boolean, res
     `UPDATE hokage_tasks SET status = ?, result = ?, error = ?, updated_at = datetime('now') WHERE id = ?`,
     [ok ? 'completed' : 'failed', ok ? resultText.slice(0, RESULT_MAX) : null, ok ? null : (resultText.slice(0, RESULT_MAX) || 'fallo'), task.id]
   );
+  await releaseTaskReservation(task.id); // el coste real ya quedó en agent_costs
+  await advanceCommand(task.command_id, task.phase);
+}
+
+// Hook desde stage2 cuando cancela un work_item (presupuesto por-agente / pausa / TTL): si era
+// una tarea de Hokage, marcarla blocked, liberar su reserva y avanzar el comando (evita que la
+// orden quede colgada y que la reserva se filtre). No-op si el work_item no es de Hokage.
+export async function onHokageWorkItemCancelled(workItemId: number): Promise<void> {
+  const task = await get<HokageTask>(`${TASK_SELECT} WHERE work_item_id = ?`, [workItemId]);
+  if (!task || task.status !== 'dispatched') return;
+  await run(
+    `UPDATE hokage_tasks SET status = 'blocked', error = COALESCE(error, 'work_item cancelado (presupuesto/TTL)'), updated_at = datetime('now') WHERE id = ?`,
+    [task.id]
+  );
+  await releaseTaskReservation(task.id);
   await advanceCommand(task.command_id, task.phase);
 }
 
@@ -305,6 +354,7 @@ export async function attemptReplan(
   const cmd = await getCommandRow(commandId);
   if (!cmd || TERMINAL_CMD.includes(cmd.status)) return false;
   if (cmd.replan_count >= MAX_REPLANS) return false; // tope determinista
+  if (await ventureOverRealBudget(cmd.venture_id)) return false; // un replan NO elude el presupuesto
 
   const failed = await all<{ role: string; title: string; error: string | null }>(
     "SELECT role, title, error FROM hokage_tasks WHERE command_id = ? AND status IN ('failed','blocked')",
@@ -341,7 +391,9 @@ async function finalizeCommand(commandId: number): Promise<void> {
   const tasks = await tasksOf(commandId);
   const completed = tasks.filter((t) => t.status === 'completed').length;
   const unfinished = tasks.filter((t) => t.status === 'failed' || t.status === 'blocked' || t.status === 'cancelled').length;
-  const status: HokageCommandStatus = unfinished === 0 ? 'completed' : completed > 0 ? 'partial' : 'failed';
+  // 0 tareas = no se planificó/ejecutó nada (plan vacío o presupuesto agotado) → failed, no completed.
+  const status: HokageCommandStatus =
+    tasks.length === 0 ? 'failed' : unfinished === 0 ? 'completed' : completed > 0 ? 'partial' : 'failed';
 
   const summary = synthesize(cmd, tasks, status);
   await run(`UPDATE hokage_commands SET status = ?, result_summary = ?, updated_at = datetime('now') WHERE id = ?`, [status, summary, commandId]);
@@ -429,8 +481,11 @@ export async function createCommand(
   );
   const commandId = insert.lastID;
 
+  // Chequeo de presupuesto ANTES de gastar en el planner (Fase 7): si la venture ya superó su
+  // presupuesto REAL, no se planifica (no se gasta) — el comando cierra como fallo.
+  const overBudget = await ventureOverRealBudget(ventureId);
   // Descomponer (LLM) → validar (determinista) → persistir tareas.
-  const raw = await decomposeFn(text, ventureId);
+  const raw = overBudget ? null : await decomposeFn(text, ventureId);
   const allowed = await allowedRoleKeySet();
   const { tasks: validTasks, rejected } = validatePlan(raw, allowed);
 
@@ -438,6 +493,7 @@ export async function createCommand(
     phases: Math.max(0, ...validTasks.map((t) => t.phase + 1), 0),
     tasks: validTasks.length,
     rejected: rejected.length,
+    ...(overBudget ? { budget: 'exhausted' } : {}),
   });
   await run(`UPDATE hokage_commands SET plan_summary = ?, updated_at = datetime('now') WHERE id = ?`, [planSummary, commandId]);
 
@@ -491,6 +547,7 @@ export async function cancelCommand(commandId: number): Promise<CommandResult | 
       await run("UPDATE work_items SET status = 'cancelled', resolved_at = datetime('now') WHERE id = ? AND status IN ('pending','in_progress')", [t.work_item_id]);
     }
     await run(`UPDATE hokage_tasks SET status = 'cancelled', updated_at = datetime('now') WHERE id = ?`, [t.id]);
+    await releaseTaskReservation(t.id); // devolver el presupuesto reservado de la tarea cancelada
   }
   await run(`UPDATE hokage_commands SET status = 'cancelled', updated_at = datetime('now') WHERE id = ?`, [commandId]);
   bus.publish({ type: 'hokage.command.completed', from: 'Hokage', payload: { commandId, status: 'cancelled' } });

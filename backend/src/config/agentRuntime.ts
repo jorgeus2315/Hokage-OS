@@ -8,7 +8,7 @@ import { createMessage } from '../services/messageService.js';
 import { createContent } from '../services/contentService.js';
 import { createMarket } from '../services/marketService.js';
 import { closeMilestoneOnResult } from '../services/objectiveService.js';
-import { onHokageTaskCompleted } from '../services/hokageOrchestrator.js';
+import { onHokageTaskCompleted, onHokageWorkItemCancelled } from '../services/hokageOrchestrator.js';
 import { get, run, all } from '../db/init.js';
 
 // ═══════════════════════════════════════════════════════
@@ -411,6 +411,8 @@ ${formatLines.join('\n')}`;
         if (budget.status === 'paused' || pct >= 1.0) {
           console.warn(`[STAGE2] Agente ${item.agent_id} bloqueado por presupuesto (${(pct * 100).toFixed(0)}%)`);
           await run(`UPDATE work_items SET status = 'cancelled', resolved_at = datetime('now') WHERE id = ?`, [item.id]);
+          // Si era una tarea de Hokage: libera su reserva de venture y avanza el comando (Fase 7).
+          await onHokageWorkItemCancelled(item.id).catch((err) => console.error('[HOKAGE] Error liberando reserva:', err.message));
           continue;
         }
         if (pct >= 0.8) {

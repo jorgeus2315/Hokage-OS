@@ -3,6 +3,7 @@ import { modelSupportsTools, DEFAULT_MODEL } from '../config/agentModels.js';
 import { modelFor, toolsFor, getRoleDefinition } from './roleService.js';
 import { autonomyAllowsTool } from '../config/rolePolicy.js';
 import { composeSystemContext } from './contextComposer.js';
+import { ventureOverRealBudget } from './ventureBudget.js';
 import * as registry from '../tools/registry.js';
 
 const OPENROUTER_BASE = 'https://openrouter.ai/api/v1';
@@ -23,6 +24,22 @@ const DEFAULT_PRICE = { in: 1.00, out: 5.00 }; // fallback conservador
 function calcCostUsd(model: string, tokensIn: number, tokensOut: number): number {
   const price = MODEL_PRICES[model] ?? DEFAULT_PRICE;
   return (tokensIn * price.in + tokensOut * price.out) / 1_000_000;
+}
+
+// Estimación CONSERVADORA de coste (Fase 7) — NO es coste real, solo lo que una reserva
+// compromete por adelantado. Fuente de precios única (MODEL_PRICES). Redondeo a microdólar.
+const EST_INPUT_TOKENS = 6000;
+const EST_OUTPUT_TOKENS = 2000; // = max_tokens por llamada
+function round6(n: number): number { return Math.round(n * 1e6) / 1e6; }
+
+// Coste estimado de UNA llamada al modelo (planner/replanner de Hokage).
+export function estimateCallCostUsd(model: string): number {
+  return round6(calcCostUsd(model, EST_INPUT_TOKENS, EST_OUTPUT_TOKENS));
+}
+
+// Coste estimado de UNA tarea de especialista: hasta MAX_TOOL_TURNS+1 llamadas (loop de tools).
+export function estimateTaskCostUsd(model: string): number {
+  return round6(calcCostUsd(model, EST_INPUT_TOKENS, EST_OUTPUT_TOKENS) * (MAX_TOOL_TURNS + 1));
 }
 
 function openRouterHeaders(apiKey: string): Record<string, string> {
@@ -84,6 +101,12 @@ export async function askAgent(agentId: number, userMessage: string, ventureId?:
     const MODEL = agentRow?.model || roleModel || DEFAULT_MODEL;
 
     if (!OPENROUTER_API_KEY) return { ok: false, error: 'Falta OPENROUTER_API_KEY en el entorno' };
+
+    // Defensa en profundidad (Fase 7): ninguna llamada a IA si la venture ya consumió su
+    // presupuesto REAL. Cubre CUALQUIER ruta (orquestador, autónomo, /ask), no solo el despacho.
+    if (await ventureOverRealBudget(ventureId)) {
+      return { ok: false, error: 'Presupuesto de la venture agotado' };
+    }
 
     // Mensaje de SISTEMA por capas de confianza (Fase 3): Global → Rol → Venture → Memoria.
     // El contexto temporal + la instrucción viajan en userMessage; los resultados de tools
@@ -186,10 +209,10 @@ export async function askAgent(agentId: number, userMessage: string, ventureId?:
       [agentId, 'ask', 'completed', totalTokens, costUsd]
     );
 
-    // Registrar coste en agent_costs
+    // Registrar coste en agent_costs — con venture_id (Fase 7) para el techo por venture.
     await run(
-      'INSERT INTO agent_costs (agent_id, tokens_in, tokens_out, llm_cost_usd) VALUES (?, ?, ?, ?)',
-      [agentId, tokensIn, tokensOut, costUsd]
+      'INSERT INTO agent_costs (agent_id, venture_id, tokens_in, tokens_out, llm_cost_usd) VALUES (?, ?, ?, ?, ?)',
+      [agentId, ventureId ?? null, tokensIn, tokensOut, costUsd]
     ).catch(() => {});
 
     // Actualizar gasto mensual en agent_budgets (upsert — crea la fila si no existe)
@@ -208,7 +231,15 @@ export async function askAgent(agentId: number, userMessage: string, ventureId?:
 
 // Llamada directa a la IA para obtener JSON estructurado sin el sistema prompt del agente.
 // Usar solo para tareas internas del sistema (no conversaciones con el usuario).
-export async function callAIJson<T = unknown>(systemPrompt: string, userMessage: string, model?: string): Promise<T | null> {
+// costCtx (Fase 7, opcional): atribuye el coste real de esta llamada a una venture (planner/
+// replanner de Hokage). Registra en agent_costs (agent_id = actor, p.ej. el agente ceo) sin
+// tocar agent_budgets — la semántica del límite por-rol no cambia. Sin costCtx → como antes.
+export async function callAIJson<T = unknown>(
+  systemPrompt: string,
+  userMessage: string,
+  model?: string,
+  costCtx?: { ventureId?: number | null; agentId: number },
+): Promise<T | null> {
   const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
   if (!OPENROUTER_API_KEY) return null;
   const MODEL = model || DEFAULT_MODEL;
@@ -229,6 +260,18 @@ export async function callAIJson<T = unknown>(systemPrompt: string, userMessage:
     );
     if (!res.ok) return null;
     const data = (await res.json()) as any;
+
+    // Atribución de coste del planner/replanner a la venture (Fase 7).
+    if (costCtx) {
+      const usage = data?.usage || {};
+      const tin = usage.prompt_tokens ?? 0;
+      const tout = usage.completion_tokens ?? 0;
+      await run(
+        'INSERT INTO agent_costs (agent_id, venture_id, tokens_in, tokens_out, llm_cost_usd) VALUES (?, ?, ?, ?, ?)',
+        [costCtx.agentId, costCtx.ventureId ?? null, tin, tout, calcCostUsd(MODEL, tin, tout)]
+      ).catch(() => {});
+    }
+
     const raw: string = data?.choices?.[0]?.message?.content || '';
     const jsonStart = raw.indexOf('{');
     const jsonEnd = raw.lastIndexOf('}');

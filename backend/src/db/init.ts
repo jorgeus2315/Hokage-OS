@@ -241,6 +241,18 @@ async function runMigrations(): Promise<void> {
   if (!(await columnExists('hokage_commands', 'replan_count'))) {
     await run(`ALTER TABLE hokage_commands ADD COLUMN replan_count INTEGER NOT NULL DEFAULT 0`);
   }
+
+  // Fase 7: coste real atribuible por venture. agent_costs.venture_id lo puebla askAgent
+  // (y callAIJson para el planner). Fuente única de coste real; no se toca agent_budgets.
+  if (!(await columnExists('agent_costs', 'venture_id'))) {
+    await run(`ALTER TABLE agent_costs ADD COLUMN venture_id INTEGER REFERENCES ventures(id)`);
+  }
+  await run(`CREATE INDEX IF NOT EXISTS idx_agent_costs_venture ON agent_costs(venture_id)`);
+
+  // Fase 7: reserva por tarea del orquestador (importe comprometido, para liberar al terminar).
+  if (!(await columnExists('hokage_tasks', 'reserved_usd'))) {
+    await run(`ALTER TABLE hokage_tasks ADD COLUMN reserved_usd REAL NOT NULL DEFAULT 0`);
+  }
 }
 
 // Siembra las definiciones de rol desde ROLE_SEEDS (código = semilla). INSERT OR IGNORE
@@ -720,6 +732,7 @@ export async function initSchema(): Promise<void> {
     work_item_id INTEGER REFERENCES work_items(id),
     result       TEXT,
     error        TEXT,
+    reserved_usd REAL NOT NULL DEFAULT 0,
     created_at   TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
   )`);

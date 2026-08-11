@@ -57,6 +57,7 @@ import { listMarket } from './services/marketService.js';
 import { listExecRuns } from './services/hermesService.js';
 import { resolveDecisionApproval, resolveDecisionRejection } from './services/decisionResolvers.js';
 import { createCommand, getCommand, cancelCommand } from './services/hokageOrchestrator.js';
+import { getVentureBudget } from './services/ventureBudget.js';
 import { runtime } from './config/agentRuntime.js';
 import bus from './config/eventBus.js';
 
@@ -585,6 +586,16 @@ app.get('/api/ventures', async (_req, res) => {
     const ventures = await all('SELECT * FROM ventures ORDER BY created_at DESC');
     res.json({ ok: true, data: ventures });
   } catch (e: any) { sendError(res, 500, e, 'Error listando ventures'); }
+});
+
+// Presupuesto por venture (Fase 7): asignado / reservado / real / disponible. Dato financiero
+// sensible → requireAdmin (aún sin consumidor de UI; F10 decidirá su superficie).
+app.get('/api/ventures/:id/budget', requireAdmin, async (req, res) => {
+  try {
+    const budget = await getVentureBudget(Number(req.params.id));
+    if (!budget) return res.status(404).json({ ok: false, error: 'Venture no encontrada' });
+    res.json({ ok: true, data: budget });
+  } catch (e: any) { sendError(res, 500, e, 'Error leyendo presupuesto de la venture'); }
 });
 
 app.post('/api/ventures', requireAdmin, async (req, res) => {

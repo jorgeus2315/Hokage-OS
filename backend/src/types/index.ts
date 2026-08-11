@@ -117,6 +117,7 @@ export interface HokageTask {
   work_item_id: number | null;
   result: string | null;
   error: string | null;
+  reserved_usd: number;        // importe de presupuesto de venture reservado para esta tarea (Fase 7)
   created_at: string;
   updated_at: string;
 }
