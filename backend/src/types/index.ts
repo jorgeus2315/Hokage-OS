@@ -84,6 +84,43 @@ export interface DecisionCreatePayload {
   risk_level?: string;
 }
 
+// ═══════════ HOKAGE ORCHESTRATOR (Fase 5) ═══════════════════════════════════════
+// Ledger propio del orquestador. NO duplica work_items/decisions/roles: es la capa de
+// coordinación que no existía. Una orden (command) se descompone en tareas (task) con
+// fases; cada tarea se despacha como un work_item que ejecuta el agentRuntime existente.
+// La salida del LLM NUNCA entra aquí sin pasar por validatePlan() (validación determinista).
+export type HokageCommandStatus = 'planning' | 'active' | 'completed' | 'partial' | 'failed' | 'cancelled';
+export type HokageTaskStatus = 'pending' | 'dispatched' | 'completed' | 'failed' | 'blocked' | 'cancelled';
+
+export interface HokageCommand {
+  id: number;
+  venture_id: number | null;
+  text: string;
+  status: HokageCommandStatus;
+  plan_summary: string | null;
+  result_summary: string | null;
+  idempotency_key: string | null;
+  replan_count: number;        // replanificaciones ya usadas — tope determinista (sin bucles)
+  created_at: string;
+  updated_at: string;
+}
+
+export interface HokageTask {
+  id: number;
+  command_id: number;
+  phase: number;               // fase de dependencia: la fase N solo se despacha cuando la N-1 terminó OK
+  role: string;                // clave de rol de negocio (role_definitions.key)
+  agent_id: number | null;     // especialista seleccionado/creado al despachar
+  title: string;
+  prompt: string;              // instrucción de la tarea — es DATO (viaja como mensaje de usuario)
+  status: HokageTaskStatus;
+  work_item_id: number | null;
+  result: string | null;
+  error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Message {
   id: number;
   sender_id: number | null;

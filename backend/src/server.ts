@@ -50,6 +50,7 @@ import { listContent } from './services/contentService.js';
 import { listMarket } from './services/marketService.js';
 import { listExecRuns } from './services/hermesService.js';
 import { resolveDecisionApproval, resolveDecisionRejection } from './services/decisionResolvers.js';
+import { createCommand, getCommand, cancelCommand } from './services/hokageOrchestrator.js';
 import { runtime } from './config/agentRuntime.js';
 import bus from './config/eventBus.js';
 
@@ -372,6 +373,36 @@ app.get('/api/hermes/runs', async (_req, res) => {
     const runs = await listExecRuns(30);
     res.json({ ok: true, data: runs });
   } catch (e: any) { sendError(res, 500, e, 'Error listando ejecuciones de Hermes'); }
+});
+
+// ═══════════ HOKAGE ORCHESTRATOR (Fase 5) ═══════════
+// Recibe una orden de alto nivel, la descompone en tareas para especialistas y las
+// despacha por el motor de work_items existente. askLimiter: cada orden hace 1 llamada IA.
+app.post('/api/hokage/command', requireAdmin, askLimiter, async (req, res) => {
+  try {
+    const { text, venture_id = null, idempotency_key = null } = req.body as { text?: string; venture_id?: number | null; idempotency_key?: string | null };
+    if (!text?.trim()) return res.status(400).json({ ok: false, error: 'Falta el texto de la orden' });
+    const result = await createCommand({ text: String(text), ventureId: venture_id, idempotencyKey: idempotency_key });
+    broadcast('hokage.command', result.command);
+    res.status(201).json({ ok: true, data: result });
+  } catch (e: any) { sendError(res, 500, e, 'Error procesando la orden de Hokage'); }
+});
+
+app.get('/api/hokage/commands/:id', requireAdmin, async (req, res) => {
+  try {
+    const result = await getCommand(Number(req.params.id));
+    if (!result) return res.status(404).json({ ok: false, error: 'Orden no encontrada' });
+    res.json({ ok: true, data: result });
+  } catch (e: any) { sendError(res, 500, e, 'Error leyendo la orden'); }
+});
+
+app.post('/api/hokage/commands/:id/cancel', requireAdmin, async (req, res) => {
+  try {
+    const result = await cancelCommand(Number(req.params.id));
+    if (!result) return res.status(404).json({ ok: false, error: 'Orden no encontrada' });
+    broadcast('hokage.command', result.command);
+    res.json({ ok: true, data: result });
+  } catch (e: any) { sendError(res, 500, e, 'Error cancelando la orden'); }
 });
 
 // ═══════════ MENSAJES ═══════════

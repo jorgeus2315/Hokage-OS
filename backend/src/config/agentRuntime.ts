@@ -8,6 +8,7 @@ import { createMessage } from '../services/messageService.js';
 import { createContent } from '../services/contentService.js';
 import { createMarket } from '../services/marketService.js';
 import { closeMilestoneOnResult } from '../services/objectiveService.js';
+import { onHokageTaskCompleted } from '../services/hokageOrchestrator.js';
 import { get, run, all } from '../db/init.js';
 
 // ═══════════════════════════════════════════════════════
@@ -481,6 +482,13 @@ ${formatLines.join('\n')}`;
       // Cerrar milestone si este work_item estaba vinculado a uno
       if (item.milestone_id) {
         await closeMilestoneOnResult(item.milestone_id, result.ok);
+      }
+
+      // Avanzar el plan del orquestador si este work_item era una tarea de Hokage (Fase 5).
+      // Aditivo y gateado por tipo: no afecta a ningún work_item existente.
+      if (item.type === 'hokage_task') {
+        await onHokageTaskCompleted(item.id, result.ok, result.response ?? result.error ?? '')
+          .catch((err) => console.error('[HOKAGE] Error avanzando comando:', err.message));
       }
     }
   }

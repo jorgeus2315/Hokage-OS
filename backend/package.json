@@ -5,7 +5,8 @@
     "dev": "tsx src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
-    "db:init": "tsx src/scripts/init-db.ts"
+    "db:init": "tsx src/scripts/init-db.ts",
+    "test": "rm -f data/test-fase5.db data/test-fase5.db-shm data/test-fase5.db-wal && HOKAGE_DB_PATH=data/test-fase5.db tsx --test src/services/hokageOrchestrator.pure.test.ts src/services/hokageOrchestrator.db.test.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",

@@ -21,7 +21,12 @@ export type AgentEventType =
   | 'system.error'        // Error critico del sistema
   | 'objective.created'   // Jorge crea un nuevo objetivo
   | 'objective.approved'  // Jorge aprueba el plan de un objetivo
-  | 'objective.achieved'; // Todos los milestones de un objetivo completados
+  | 'objective.achieved'  // Todos los milestones de un objetivo completados
+  | 'hokage.command.created'   // Orden recibida y descompuesta en un plan
+  | 'hokage.task.dispatched'   // Tarea de Hokage convertida en work_item
+  | 'hokage.phase.completed'   // Todas las tareas de una fase terminaron OK
+  | 'hokage.command.replanned' // Supervisor generó un plan alternativo tras un fallo
+  | 'hokage.command.completed'; // Orden finalizada (completed/partial/failed)
 
 export interface AgentEvent {
   type: AgentEventType;

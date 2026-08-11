@@ -6,7 +6,9 @@ import { ROLE_SEEDS } from '../config/roleSeeds.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const dbPath = path.resolve(__dirname, '../../data/hokage-os.db');
+// HOKAGE_DB_PATH permite apuntar a un SQLite aislado (tests de Fase 5). En producción no se
+// define → mismo fichero de siempre. Cambio aditivo, comportamiento por defecto idéntico.
+const dbPath = process.env.HOKAGE_DB_PATH || path.resolve(__dirname, '../../data/hokage-os.db');
 
 export const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE, (err) => {
   if (err) console.error('[DB] Error al abrir SQLite:', err.message);
@@ -232,6 +234,12 @@ async function runMigrations(): Promise<void> {
       tools.push('memory.remember');
       await run("UPDATE role_definitions SET tools = ?, updated_at = datetime('now') WHERE key = ?", [JSON.stringify(tools), key]);
     }
+  }
+
+  // Fase 5: replan_count en hokage_commands para el tope de replanificaciones del orquestador.
+  // Aditivo — solo para una BD que ya hubiera creado la tabla sin esta columna.
+  if (!(await columnExists('hokage_commands', 'replan_count'))) {
+    await run(`ALTER TABLE hokage_commands ADD COLUMN replan_count INTEGER NOT NULL DEFAULT 0`);
   }
 }
 
@@ -678,6 +686,45 @@ export async function initSchema(): Promise<void> {
     created_at         TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at         TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
+
+  // ═══════════ HOKAGE ORCHESTRATOR — Fase 5. Ledger propio del orquestador: una orden
+  // se descompone en tareas con fases y cada tarea se despacha como un work_item que el
+  // agentRuntime ya sabe ejecutar. No duplica work_items/decisions/roles — es la capa de
+  // coordinación que faltaba. Ver services/hokageOrchestrator.ts. ════════════════════════
+  await run(`CREATE TABLE IF NOT EXISTS hokage_commands (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    venture_id      INTEGER REFERENCES ventures(id),
+    text            TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'planning',
+    plan_summary    TEXT,
+    result_summary  TEXT,
+    idempotency_key TEXT,
+    replan_count    INTEGER NOT NULL DEFAULT 0,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_hokage_commands_status ON hokage_commands(status, created_at DESC)`);
+  // Idempotencia a prueba de carreras: dos POST concurrentes con la misma clave no pueden
+  // crear dos comandos. SQLite trata cada NULL como distinto → las órdenes sin clave no chocan.
+  await run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_hokage_commands_idem ON hokage_commands(idempotency_key)`);
+
+  await run(`CREATE TABLE IF NOT EXISTS hokage_tasks (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    command_id   INTEGER NOT NULL REFERENCES hokage_commands(id) ON DELETE CASCADE,
+    phase        INTEGER NOT NULL DEFAULT 0,
+    role         TEXT NOT NULL,
+    agent_id     INTEGER REFERENCES agents(id),
+    title        TEXT NOT NULL,
+    prompt       TEXT NOT NULL,
+    status       TEXT NOT NULL DEFAULT 'pending',
+    work_item_id INTEGER REFERENCES work_items(id),
+    result       TEXT,
+    error        TEXT,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_hokage_tasks_command ON hokage_tasks(command_id, phase)`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_hokage_tasks_workitem ON hokage_tasks(work_item_id)`);
 
   const deptCount = await get<{ count: number }>('SELECT COUNT(*) as count FROM departments');
   if (!deptCount || deptCount.count === 0) await seedDepartments();
