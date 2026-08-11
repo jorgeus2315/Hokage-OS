@@ -41,6 +41,7 @@ import { listAgents, createAgent } from './services/agentService.js';
 import {
   listRoleDefinitions, getRoleDefinition, createRoleDefinition, updateRoleDefinition, setRoleStatus,
 } from './services/roleService.js';
+import { getConfig, setConfig, MASTER_PROMPT_KEY } from './services/systemConfigService.js';
 import { approveDecision, rejectDecision, createDecision, listDecisions } from './services/decisionService.js';
 import { createMessage, listMessages } from './services/messageService.js';
 import { askAgent, callAIJson } from './services/aiService.js';
@@ -890,31 +891,20 @@ app.put('/api/agents/:id/prompt', requireAdmin, async (req, res) => {
   } catch (e: any) { sendError(res, 500, e, 'Error actualizando prompt'); }
 });
 
-// Leer prompt maestro global (agent_id = 0)
+// Leer prompt maestro global (system_config — Fase 3)
 app.get('/api/config/master-prompt', async (_req, res) => {
   try {
-    const row = await get<{ content: string }>(
-      'SELECT content FROM agent_prompts WHERE agent_id = 0 AND prompt_type = ? AND active = 1 ORDER BY version DESC LIMIT 1',
-      ['master'],
-    );
-    res.json({ ok: true, data: { content: row?.content ?? '' } });
+    const content = await getConfig(MASTER_PROMPT_KEY);
+    res.json({ ok: true, data: { content: content ?? '' } });
   } catch (e: any) { sendError(res, 500, e, 'Error leyendo master prompt'); }
 });
 
-// Actualizar prompt maestro global
+// Actualizar prompt maestro global (system_config — Fase 3, sin FK a agents)
 app.put('/api/config/master-prompt', requireAdmin, async (req, res) => {
   try {
     const { content } = req.body as { content: string };
     if (content === undefined) return res.status(400).json({ ok: false, error: 'content requerido' });
-    await run('UPDATE agent_prompts SET active = 0 WHERE agent_id = 0 AND prompt_type = ?', ['master']);
-    const ver = await get<{ v: number }>(
-      'SELECT COALESCE(MAX(version), 0) + 1 AS v FROM agent_prompts WHERE agent_id = 0 AND prompt_type = ?',
-      ['master'],
-    );
-    await run(
-      'INSERT INTO agent_prompts (agent_id, prompt_type, content, version, active) VALUES (0, ?, ?, ?, 1)',
-      ['master', content.trim(), ver?.v ?? 1],
-    );
+    await setConfig(MASTER_PROMPT_KEY, content.trim());
     res.json({ ok: true });
   } catch (e: any) { sendError(res, 500, e, 'Error actualizando master prompt'); }
 });

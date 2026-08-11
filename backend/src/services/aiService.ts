@@ -1,7 +1,8 @@
-import { get, run, all } from '../db/init.js';
+import { get, run } from '../db/init.js';
 import { modelSupportsTools, DEFAULT_MODEL } from '../config/agentModels.js';
 import { modelFor, toolsFor, getRoleDefinition } from './roleService.js';
 import { autonomyAllowsTool } from '../config/rolePolicy.js';
+import { composeSystemContext } from './contextComposer.js';
 import * as registry from '../tools/registry.js';
 
 const OPENROUTER_BASE = 'https://openrouter.ai/api/v1';
@@ -69,14 +70,10 @@ function toolToOpenRouterSchema(tool: ReturnType<typeof registry.get>) {
 
 export async function askAgent(agentId: number, userMessage: string, ventureId?: number | null): Promise<AskResult> {
   try {
-    const [promptRow, agentRow, masterRow] = await Promise.all([
-      get<{ content: string }>('SELECT content FROM agent_prompts WHERE agent_id = ? AND active = 1 ORDER BY version DESC LIMIT 1', [agentId]),
-      get<{ role: string; model: string | null; name: string }>('SELECT role, model, name FROM agents WHERE id = ?', [agentId]),
-      get<{ content: string }>('SELECT content FROM agent_prompts WHERE agent_id = 0 AND prompt_type = ? AND active = 1 ORDER BY version DESC LIMIT 1', ['master']),
-    ]);
+    const agentRow = await get<{ role: string; model: string | null; name: string }>(
+      'SELECT role, model, name FROM agents WHERE id = ?', [agentId]
+    );
 
-    const masterBlock = masterRow?.content ? `[CONTEXTO GLOBAL DEL SISTEMA]\n${masterRow.content}\n\n` : '';
-    const basePrompt = promptRow?.content || `Eres ${agentRow?.name ?? 'un agente'} de HOKAGE OS.`;
     const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
     // Definición de rol (modelo + tools + autonomía en una sola lectura). null si el rol no
     // está en role_definitions todavía → se cae a los resolvers/fallback de siempre.
@@ -88,14 +85,14 @@ export async function askAgent(agentId: number, userMessage: string, ventureId?:
 
     if (!OPENROUTER_API_KEY) return { ok: false, error: 'Falta OPENROUTER_API_KEY en el entorno' };
 
-    const memoryRows = await all<{ key: string; value: string }>(
-      `SELECT key, value FROM agent_memory WHERE agent_id = ? AND category = 'fact' ORDER BY updated_at DESC LIMIT 10`,
-      [agentId]
-    );
-    const memoryBlock = memoryRows.length > 0
-      ? '\n\n[LO QUE SÉ]\n' + memoryRows.map(m => `- ${m.key}: ${m.value}`).join('\n')
-      : '';
-    const systemPrompt = masterBlock + basePrompt + memoryBlock;
+    // Mensaje de SISTEMA por capas de confianza (Fase 3): Global → Rol → Venture → Memoria.
+    // El contexto temporal + la instrucción viajan en userMessage; los resultados de tools
+    // entran como mensajes 'tool'. El composer solo produce texto — no altera tools/autonomía.
+    const systemPrompt = await composeSystemContext({
+      agentId,
+      agentName: agentRow?.name ?? null,
+      ventureId,
+    });
 
     // Construir tools disponibles para este agente (solo si el modelo lo soporta).
     // Tools del rol vía role_definitions (resolver con fallback); filtradas por la autonomía

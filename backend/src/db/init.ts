@@ -205,6 +205,19 @@ async function runMigrations(): Promise<void> {
     const def = await get<{ model: string }>('SELECT model FROM role_definitions WHERE key = ?', [agent.role]);
     await run('UPDATE agents SET model = ? WHERE id = ?', [def?.model ?? modelForRole(agent.role), agent.id]);
   }
+
+  // Migración one-time del Master Prompt: si algún entorno lo tenía en agent_prompts (agent_id=0),
+  // se copia a system_config sin sobrescribir un valor ya presente. No-op si no existe (caso actual).
+  const legacyMaster = await get<{ content: string }>(
+    "SELECT content FROM agent_prompts WHERE agent_id = 0 AND prompt_type = 'master' AND active = 1 ORDER BY version DESC LIMIT 1"
+  );
+  if (legacyMaster?.content) {
+    await run(
+      `INSERT OR IGNORE INTO system_config (key, value) VALUES ('master_prompt', ?)`,
+      [legacyMaster.content]
+    );
+    console.log('[DB] Migración: Master Prompt legacy (agent_prompts id=0) → system_config');
+  }
 }
 
 // Siembra las definiciones de rol desde ROLE_SEEDS (código = semilla). INSERT OR IGNORE
@@ -595,6 +608,15 @@ export async function initSchema(): Promise<void> {
     screen             TEXT NOT NULL DEFAULT 'map',
     active_building_key TEXT,
     updated_at         TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+
+  // ═══════════ SYSTEM_CONFIG — configuración de sistema clave-valor (Fase 3). Independiente
+  // de agents: el Master Prompt vivía en agent_prompts con agent_id=0, lo que violaba la FK
+  // agent_prompts→agents(id). Aquí no hay FK artificial. Ver systemConfigService.ts. ═════════
+  await run(`CREATE TABLE IF NOT EXISTS system_config (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
 
   // ═══════════ ROLE_DEFINITIONS — Registry de roles como dato (Fase 1, UI
