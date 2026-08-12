@@ -1,5 +1,6 @@
 import type { Tool, ToolContext, ToolResult, ToolStatus, ToolPermission } from './base.js';
 import { EtsyTool, ShopifyTool, PrintifyTool, GoogleTrendsTool, WebBrowserTool, SystemExecTool, TrendReportTool, ContentCreateTool, MemoryWriteTool, DecisionCreateTool, MemoryRememberTool } from './index.js';
+import { recordAudit } from '../services/auditService.js';
 
 const registry = new Map<string, Tool>([
   [EtsyTool.id, EtsyTool],
@@ -56,7 +57,24 @@ export function listMeta(): ToolMeta[] {
 export async function execute(id: string, input: unknown, ctx: ToolContext): Promise<ToolResult<unknown>> {
   const tool = registry.get(id);
   if (!tool) return { ok: false, error: `Tool not found: ${id}` };
-  return tool.execute(input, ctx);
+  // Auditoría (Fase 9): SOLO nombre de tool, duración, estado y error saneado. Nunca argumentos
+  // (input) ni resultados (data) — pueden contener secretos/contenido. Para system.exec esto
+  // registra tool=system.exec/status/duración, jamás el comando, el env ni el output.
+  const start = Date.now();
+  const audit = { ventureId: ctx.ventureId ?? null, agentId: ctx.agentId ?? null } as const;
+  await recordAudit({ type: 'tool.started', ...audit, meta: { tool: id } });
+  try {
+    const result = await tool.execute(input, ctx);
+    await recordAudit({
+      type: result.ok ? 'tool.completed' : 'tool.failed', ...audit,
+      status: result.ok ? 'ok' : 'error',
+      meta: { tool: id, duration_ms: Date.now() - start, ...(result.ok ? {} : { error: result.error }) },
+    });
+    return result;
+  } catch (err: any) {
+    await recordAudit({ type: 'tool.failed', ...audit, status: 'error', meta: { tool: id, duration_ms: Date.now() - start, error: err?.message } });
+    throw err;
+  }
 }
 
 export function discover() {

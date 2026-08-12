@@ -1,5 +1,6 @@
 import { run, get, all } from '../db/init.js';
 import type { Decision, DecisionCreatePayload, DecisionCategory } from '../types/index.js';
+import { recordAudit } from './auditService.js';
 
 const SELECT = 'SELECT id, agent_id, entity_type, entity_id, title, description, reasoning, amount, risk_level, status, category, venture_id, approved_by, approved_at, created_at FROM decisions';
 
@@ -61,6 +62,8 @@ export async function createDecision(payload: DecisionCreatePayload): Promise<De
   const id = Number(result.lastID);
   const row = await getDecision(id);
   if (!row) throw new Error('Decision not found after insert');
+  // Auditoría (Fase 9): metadatos, no el contenido de la decisión.
+  await recordAudit({ type: 'decision.created', ventureId: row.venture_id, agentId: row.agent_id, meta: { decisionId: row.id, category: row.category, risk_level: row.risk_level, entityType: row.entity_type } });
   return row;
 }
 

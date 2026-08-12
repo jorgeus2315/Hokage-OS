@@ -261,6 +261,16 @@ async function runMigrations(): Promise<void> {
   if (!(await columnExists('hokage_tasks', 'reserved_usd'))) {
     await run(`ALTER TABLE hokage_tasks ADD COLUMN reserved_usd REAL NOT NULL DEFAULT 0`);
   }
+
+  // Fase 9: columnas de correlación en event_log (aditivo, no destructivo, idempotente).
+  for (const col of ['venture_id', 'command_id', 'task_id', 'work_item_id', 'agent_id']) {
+    if (!(await columnExists('event_log', col))) {
+      await run(`ALTER TABLE event_log ADD COLUMN ${col} INTEGER`);
+    }
+  }
+  await run(`CREATE INDEX IF NOT EXISTS idx_event_log_venture ON event_log(venture_id, created_at DESC)`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_event_log_command ON event_log(command_id)`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_event_log_type ON event_log(type, created_at DESC)`);
 }
 
 // Siembra las definiciones de rol desde ROLE_SEEDS (código = semilla). INSERT OR IGNORE
@@ -635,15 +645,26 @@ export async function initSchema(): Promise<void> {
   // Plan.md). Log de auditoría en paralelo: HokageBus sigue sin persistir nada por
   // sí mismo (ADR-003) — esta tabla solo recibe lo que ya emite publish() vía un
   // suscriptor aparte en config/eventBus.ts. ═══════════════════════════════════
+  // Columnas de correlación (Fase 9): permiten reconstruir una ejecución sin escanear el
+  // payload JSON. Todas nullable — un evento solo rellena las que le apliquen. No se inventa
+  // un trace_id nuevo: los IDs existentes (venture/command/task/work_item/agent) ya correlacionan.
   await run(`CREATE TABLE IF NOT EXISTS event_log (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    type       TEXT NOT NULL,
-    from_actor TEXT NOT NULL,
-    to_actor   TEXT,
-    payload    TEXT NOT NULL DEFAULT '{}',
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    type         TEXT NOT NULL,
+    from_actor   TEXT NOT NULL,
+    to_actor     TEXT,
+    payload      TEXT NOT NULL DEFAULT '{}',
+    venture_id   INTEGER,
+    command_id   INTEGER,
+    task_id      INTEGER,
+    work_item_id INTEGER,
+    agent_id     INTEGER,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
   await run(`CREATE INDEX IF NOT EXISTS idx_event_log_created ON event_log(created_at DESC)`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_event_log_venture ON event_log(venture_id, created_at DESC)`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_event_log_command ON event_log(command_id)`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_event_log_type ON event_log(type, created_at DESC)`);
 
   // ═══════════ USER_LAYOUT — persistencia del motor de paneles (Fase 5, UI
   // Implementation Plan.md). Fila única (id=1): sistema single-owner, sin concepto

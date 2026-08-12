@@ -1,5 +1,5 @@
 import { EventEmitter } from 'events';
-import { run } from '../db/init.js';
+import { recordBusEvent } from '../services/auditService.js';
 
 // ═══════════════════════════════════════════════════════
 // EVENT BUS — Comunicacion entre agentes en tiempo real
@@ -84,15 +84,10 @@ bus.setMaxListeners(50);
 // través de publish() y rompería a quien lo llame (agentRuntime.ts, tools, rutas
 // de server.ts) — declarar el handler async evita eso, y el catch evita incluso
 // el warning de unhandledRejection si la escritura falla.
-bus.subscribe('*', async (event) => {
-  try {
-    await run(
-      'INSERT INTO event_log (type, from_actor, to_actor, payload) VALUES (?, ?, ?, ?)',
-      [event.type, event.from, event.to ?? null, JSON.stringify(event.payload)]
-    );
-  } catch (err: any) {
-    console.error('[EVENT_LOG] Error persistiendo evento:', err.message);
-  }
+bus.subscribe('*', (event) => {
+  // Fase 9: la persistencia (con correlación + sanitización) vive en auditService; el suscriptor
+  // sigue siendo un consumidor más de la API pública del bus (no cambia el contrato de HokageBus).
+  void recordBusEvent(event);
 });
 
 export default bus;

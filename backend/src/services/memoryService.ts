@@ -1,5 +1,6 @@
 import { run, all } from '../db/init.js';
 import type { MemoryEntry, MemoryCategory } from '../types/index.js';
+import { recordAudit } from './auditService.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // memoryService — memoria de NEGOCIO (memory_entries, Fase 4, CORE SPEC §6).
@@ -37,6 +38,8 @@ export async function createMemoryEntry(input: MemoryEntryInput): Promise<{ id: 
       input.relatedEntityId ?? null,
     ]
   );
+  // Auditoría (Fase 9): SOLO metadatos de la memoria de NEGOCIO — nunca título ni contenido.
+  await recordAudit({ type: 'memory.business_write', ventureId: input.ventureId ?? null, agentId: input.sourceAgentId ?? null, meta: { category: input.category } });
   return { id: res.lastID };
 }
 

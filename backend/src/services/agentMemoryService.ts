@@ -1,4 +1,5 @@
 import { run } from '../db/init.js';
+import { recordAudit } from './auditService.js';
 
 // Escribe un hecho semántico en la memoria PRIVADA del agente, scopeada por venture (Fase 8).
 // venture_id procede SIEMPRE del contexto de ejecución (backend), nunca del LLM: 0 = global/sin
@@ -13,4 +14,6 @@ export async function writeAgentMemory(agentId: number, key: string, value: stri
      ON CONFLICT(agent_id, venture_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
     [agentId, ventureId ?? 0, key, value]
   );
+  // Auditoría (Fase 9): SOLO metadatos — nunca la clave ni el valor de la memoria privada.
+  await recordAudit({ type: 'memory.write', ventureId: ventureId ?? 0, agentId, meta: { category: 'fact' } });
 }

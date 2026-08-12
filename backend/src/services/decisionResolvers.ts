@@ -2,6 +2,7 @@ import type { Decision } from '../types/index.js';
 import { markObjectiveAchieved } from './objectiveService.js';
 import { runApprovedExec, rejectExec } from './hermesService.js';
 import { createMemoryEntry } from './memoryService.js';
+import { recordAudit } from './auditService.js';
 
 // Punto único donde vive "aprobar/rechazar esta Decision dispara esta acción real".
 // Añadir un nuevo entity_type es añadir una entrada aquí, no un if más en las rutas HTTP.
@@ -48,10 +49,20 @@ export async function resolveDecisionApproval(decision: Decision): Promise<void>
   const resolver = decision.entity_type ? resolvers[decision.entity_type] : undefined;
   await resolver?.onApprove?.(decision);
   await captureDecisionMemory(decision, 'aprobada');
+  // Auditoría (Fase 9): distingue aprobación humana de auto-aprobación L2 por approved_by.
+  await recordAudit({
+    type: decision.approved_by === 'auto:autonomy' ? 'decision.auto_approved' : 'decision.approved',
+    ventureId: decision.venture_id, agentId: decision.agent_id, actor: decision.approved_by,
+    meta: { decisionId: decision.id, category: decision.category },
+  });
 }
 
 export async function resolveDecisionRejection(decision: Decision): Promise<void> {
   const resolver = decision.entity_type ? resolvers[decision.entity_type] : undefined;
   await resolver?.onReject?.(decision);
   await captureDecisionMemory(decision, 'rechazada');
+  await recordAudit({
+    type: 'decision.rejected', ventureId: decision.venture_id, agentId: decision.agent_id, actor: decision.approved_by,
+    meta: { decisionId: decision.id, category: decision.category },
+  });
 }

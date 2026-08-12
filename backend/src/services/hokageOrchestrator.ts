@@ -5,6 +5,7 @@ import { createAgent } from './agentService.js';
 import { callAIJson, estimateTaskCostUsd } from './aiService.js';
 import { createMemoryEntry } from './memoryService.js';
 import { reserveVentureBudget, releaseVentureBudget, ventureOverRealBudget } from './ventureBudget.js';
+import { recordAudit } from './auditService.js';
 import bus from '../config/eventBus.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -151,18 +152,25 @@ Reglas:
 // Reutilizar un agente global entre ventures es SEGURO desde F8: su agent_memory PRIVADA está
 // scopeada por (agent_id, venture_id), así que un especialista que trabaja en V1 y V2 no cruza
 // sus facts privados. La memoria de NEGOCIO (memory_entries) sigue aislada por venture (F4).
-async function selectOrCreateSpecialist(role: string, ventureId: number | null): Promise<number> {
+async function selectOrCreateSpecialist(role: string, ventureId: number | null, commandId?: number, taskId?: number): Promise<number> {
+  let agentId: number | null = null;
   if (ventureId != null) {
     const scoped = await get<{ id: number }>('SELECT id FROM agents WHERE role = ? AND venture_id = ? LIMIT 1', [role, ventureId]);
-    if (scoped) return scoped.id;
+    if (scoped) agentId = scoped.id;
   }
-  const global = await get<{ id: number }>('SELECT id FROM agents WHERE role = ? AND venture_id IS NULL LIMIT 1', [role]);
-  if (global) return global.id;
-
-  const def = await getRoleDefinition(role);
-  const name = `${def?.label ?? role}${ventureId != null ? ` · v${ventureId}` : ''}`;
-  const created = await createAgent({ name, role, venture_id: ventureId });
-  return created.id;
+  if (agentId == null) {
+    const global = await get<{ id: number }>('SELECT id FROM agents WHERE role = ? AND venture_id IS NULL LIMIT 1', [role]);
+    if (global) agentId = global.id;
+  }
+  let created = false;
+  if (agentId == null) {
+    const def = await getRoleDefinition(role);
+    const name = `${def?.label ?? role}${ventureId != null ? ` · v${ventureId}` : ''}`;
+    agentId = (await createAgent({ name, role, venture_id: ventureId })).id;
+    created = true;
+  }
+  await recordAudit({ type: created ? 'agent.created' : 'agent.selected', ventureId, commandId, taskId, agentId, meta: { role } });
+  return agentId;
 }
 
 // ── Presupuesto (lectura, mismo criterio que stage2 del runtime) ──────────────
@@ -222,15 +230,17 @@ async function dispatchPhase(cmd: HokageCommand, phase: number): Promise<number>
     if (!def || def.status !== 'active' || def.scope !== 'business' || def.is_system) {
       await run(`UPDATE hokage_tasks SET status = 'blocked', error = ?, updated_at = datetime('now') WHERE id = ? AND status = 'pending'`,
         [`rol no despachable: ${t.role}`, t.id]);
+      await recordAudit({ type: 'task.blocked', ventureId: cmd.venture_id, commandId: cmd.id, taskId: t.id, meta: { role: t.role, reason: 'role' } });
       continue;
     }
 
-    const agentId = await selectOrCreateSpecialist(t.role, cmd.venture_id);
+    const agentId = await selectOrCreateSpecialist(t.role, cmd.venture_id, cmd.id, t.id);
 
     const budget = await budgetBlocked(agentId);
     if (budget.blocked) {
       await run(`UPDATE hokage_tasks SET status = 'blocked', agent_id = ?, error = ?, updated_at = datetime('now') WHERE id = ? AND status = 'pending'`,
         [agentId, `presupuesto agotado (${budget.pct}%)`, t.id]);
+      await recordAudit({ type: 'task.blocked', ventureId: cmd.venture_id, commandId: cmd.id, taskId: t.id, agentId, meta: { role: t.role, reason: 'agent_budget' } });
       continue;
     }
 
@@ -241,7 +251,12 @@ async function dispatchPhase(cmd: HokageCommand, phase: number): Promise<number>
     if (reserved === null) {
       await run(`UPDATE hokage_tasks SET status = 'blocked', agent_id = ?, error = ?, updated_at = datetime('now') WHERE id = ? AND status = 'pending'`,
         [agentId, 'presupuesto de la venture agotado', t.id]);
+      await recordAudit({ type: 'budget.blocked', ventureId: cmd.venture_id, commandId: cmd.id, taskId: t.id, agentId, meta: { estimate: est } });
+      await recordAudit({ type: 'task.blocked', ventureId: cmd.venture_id, commandId: cmd.id, taskId: t.id, agentId, meta: { role: t.role, reason: 'venture_budget' } });
       continue;
+    }
+    if (reserved > 0) {
+      await recordAudit({ type: 'budget.reserved', ventureId: cmd.venture_id, commandId: cmd.id, taskId: t.id, agentId, meta: { amount: reserved } });
     }
 
     // Un único camino de ejecución: work_item de tipo 'hokage_task'. stage3 lo ejecuta con
@@ -258,7 +273,7 @@ async function dispatchPhase(cmd: HokageCommand, phase: number): Promise<number>
       continue;
     }
 
-    bus.publish({ type: 'hokage.task.dispatched', from: 'Hokage', payload: { commandId: cmd.id, taskId: t.id, role: t.role, agentId } });
+    bus.publish({ type: 'hokage.task.dispatched', from: 'Hokage', payload: { commandId: cmd.id, taskId: t.id, workItemId: wi.lastID, ventureId: cmd.venture_id, role: t.role, agentId } });
     dispatched++;
   }
   return dispatched;
@@ -277,6 +292,7 @@ async function releaseTaskReservation(taskId: number): Promise<void> {
   if (z.changes !== 1) return; // otro llamador ya liberó
   const cmd = await getCommandRow(t.command_id);
   await releaseVentureBudget(cmd?.venture_id ?? null, t.reserved_usd);
+  await recordAudit({ type: 'budget.released', ventureId: cmd?.venture_id ?? null, commandId: t.command_id, taskId, meta: { amount: t.reserved_usd } });
 }
 
 // ── Avance del DAG: se llama cuando una tarea termina (hook desde stage3) ──────
@@ -290,6 +306,8 @@ export async function onHokageTaskCompleted(workItemId: number, ok: boolean, res
     `UPDATE hokage_tasks SET status = ?, result = ?, error = ?, updated_at = datetime('now') WHERE id = ?`,
     [ok ? 'completed' : 'failed', ok ? resultText.slice(0, RESULT_MAX) : null, ok ? null : (resultText.slice(0, RESULT_MAX) || 'fallo'), task.id]
   );
+  const cmdRow = await getCommandRow(task.command_id);
+  await recordAudit({ type: ok ? 'task.completed' : 'task.failed', ventureId: cmdRow?.venture_id ?? null, commandId: task.command_id, taskId: task.id, workItemId, agentId: task.agent_id, status: ok ? 'ok' : 'error' });
   await releaseTaskReservation(task.id); // el coste real ya quedó en agent_costs
   await advanceCommand(task.command_id, task.phase);
 }
@@ -328,7 +346,7 @@ async function advanceCommand(commandId: number, phase: number): Promise<void> {
     return;
   }
 
-  bus.publish({ type: 'hokage.phase.completed', from: 'Hokage', payload: { commandId, phase } });
+  bus.publish({ type: 'hokage.phase.completed', from: 'Hokage', payload: { commandId, ventureId: cmd.venture_id, phase } });
 
   const next = await get<{ phase: number | null }>(
     "SELECT MIN(phase) as phase FROM hokage_tasks WHERE command_id = ? AND phase > ? AND status = 'pending'",
@@ -376,7 +394,8 @@ export async function attemptReplan(
     );
   }
   await run(`UPDATE hokage_commands SET replan_count = replan_count + 1, status = 'active', updated_at = datetime('now') WHERE id = ?`, [commandId]);
-  bus.publish({ type: 'hokage.command.replanned', from: 'Hokage', payload: { commandId, replan: cmd.replan_count + 1, tasks: tasks.length } });
+  bus.publish({ type: 'hokage.command.replanned', from: 'Hokage', payload: { commandId, ventureId: cmd.venture_id, replan: cmd.replan_count + 1, tasks: tasks.length } });
+  await recordAudit({ type: 'command.replanned', ventureId: cmd.venture_id, commandId, meta: { replan: cmd.replan_count + 1, tasks: tasks.length, reason: 'task_failure' } });
 
   const dispatched = await dispatchPhase((await getCommandRow(commandId))!, base);
   if (dispatched === 0) await advanceCommand(commandId, base); // todo bloqueado → cascada/cierre
@@ -407,7 +426,7 @@ async function finalizeCommand(commandId: number): Promise<void> {
     relatedEntityId: commandId,
   }).catch((err) => console.error('[HOKAGE] Error guardando memoria:', err.message));
 
-  bus.publish({ type: 'hokage.command.completed', from: 'Hokage', payload: { commandId, status, completed, unfinished } });
+  bus.publish({ type: 'hokage.command.completed', from: 'Hokage', payload: { commandId, ventureId: cmd.venture_id, status, completed, unfinished } });
   console.log(`[HOKAGE] Comando ${commandId} finalizado: ${status} (${completed} ok, ${unfinished} sin completar)`);
 }
 
@@ -497,10 +516,11 @@ export async function createCommand(
   await run(`UPDATE hokage_commands SET plan_summary = ?, updated_at = datetime('now') WHERE id = ?`, [planSummary, commandId]);
 
   for (const vt of validTasks) {
-    await run(
+    const ins = await run(
       `INSERT INTO hokage_tasks (command_id, phase, role, title, prompt, status) VALUES (?, ?, ?, ?, ?, 'pending')`,
       [commandId, vt.phase, vt.role, vt.title, vt.prompt]
     );
+    await recordAudit({ type: 'task.created', ventureId, commandId, taskId: ins.lastID, meta: { role: vt.role, phase: vt.phase } });
   }
 
   const cmd = (await getCommandRow(commandId))!;
@@ -549,7 +569,7 @@ export async function cancelCommand(commandId: number): Promise<CommandResult | 
     await releaseTaskReservation(t.id); // devolver el presupuesto reservado de la tarea cancelada
   }
   await run(`UPDATE hokage_commands SET status = 'cancelled', updated_at = datetime('now') WHERE id = ?`, [commandId]);
-  bus.publish({ type: 'hokage.command.completed', from: 'Hokage', payload: { commandId, status: 'cancelled' } });
+  bus.publish({ type: 'hokage.command.completed', from: 'Hokage', payload: { commandId, ventureId: cmd.venture_id, status: 'cancelled' } });
 
   return { command: (await getCommandRow(commandId))!, tasks: await tasksOf(commandId) };
 }

@@ -56,8 +56,9 @@ import { listContent } from './services/contentService.js';
 import { listMarket } from './services/marketService.js';
 import { listExecRuns } from './services/hermesService.js';
 import { resolveDecisionApproval, resolveDecisionRejection } from './services/decisionResolvers.js';
-import { createCommand, getCommand, cancelCommand } from './services/hokageOrchestrator.js';
+import { createCommand, cancelCommand } from './services/hokageOrchestrator.js';
 import { getVentureBudget } from './services/ventureBudget.js';
+import { listAuditEvents, getCommandTrace } from './services/auditService.js';
 import { runtime } from './config/agentRuntime.js';
 import bus from './config/eventBus.js';
 
@@ -395,12 +396,36 @@ app.post('/api/hokage/command', requireAdmin, askLimiter, async (req, res) => {
   } catch (e: any) { sendError(res, 500, e, 'Error procesando la orden de Hokage'); }
 });
 
+// Detalle de una orden reconstruido (Fase 9): command + tasks + work_items + traza de eventos
+// correlacionada por command_id. Extiende el contrato previo ({command, tasks}) de forma aditiva.
 app.get('/api/hokage/commands/:id', requireAdmin, async (req, res) => {
   try {
-    const result = await getCommand(Number(req.params.id));
+    const result = await getCommandTrace(Number(req.params.id));
     if (!result) return res.status(404).json({ ok: false, error: 'Orden no encontrada' });
     res.json({ ok: true, data: result });
   } catch (e: any) { sendError(res, 500, e, 'Error leyendo la orden'); }
+});
+
+// ═══════════ AUDITORÍA (Fase 9) — traza operativa persistida (event_log). requireAdmin.
+// Scope por venture IMPUESTO en la query (una consulta de V1 no devuelve eventos de V2).
+app.get('/api/audit/events', requireAdmin, async (req, res) => {
+  try {
+    const q = req.query;
+    const n = (v: unknown) => (v !== undefined ? Number(v) : undefined);
+    const events = await listAuditEvents({
+      ventureId: q.venture_id !== undefined ? (q.venture_id === 'null' ? null : Number(q.venture_id)) : undefined,
+      commandId: n(q.command_id),
+      taskId: n(q.task_id),
+      workItemId: n(q.work_item_id),
+      agentId: n(q.agent_id),
+      type: q.type ? String(q.type) : undefined,
+      since: q.since ? String(q.since) : undefined,
+      until: q.until ? String(q.until) : undefined,
+      limit: n(q.limit),
+      cursor: n(q.cursor),
+    });
+    res.json({ ok: true, data: events });
+  } catch (e: any) { sendError(res, 500, e, 'Error listando eventos de auditoría'); }
 });
 
 app.post('/api/hokage/commands/:id/cancel', requireAdmin, async (req, res) => {
