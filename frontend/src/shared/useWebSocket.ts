@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import type { WsEnvelope } from './types';
-import { ADMIN_TOKEN } from './api';
 
 const MAX_BACKOFF = 15000;
 
@@ -21,9 +20,10 @@ export function useWebSocket(onEvent: (e: WsEnvelope) => void) {
 
   const connect = useCallback(() => {
     if (stoppedRef.current) return;
-    // A.2: el token viaja como subprotocolo (Sec-WebSocket-Protocol), no en la URL —
-    // el backend lo exige en verifyClient antes de aceptar la conexión.
-    const ws = new WebSocket(wsUrl(), ADMIN_TOKEN ? [ADMIN_TOKEN] : undefined);
+    // F10: el WebSocket autentica por la cookie de sesión HttpOnly, que el navegador envía
+    // automáticamente en el handshake same-origin. El backend la valida en verifyClient. Ya no
+    // se transporta ningún token en el subprotocolo (el frontend no conoce el ADMIN_TOKEN).
+    const ws = new WebSocket(wsUrl());
     wsRef.current = ws;
 
     ws.onopen = () => {

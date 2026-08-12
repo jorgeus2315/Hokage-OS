@@ -15,6 +15,7 @@ import { AlertsView } from './AlertsView';
 import { VenturesView } from './VenturesView';
 import { ObjectivesView } from './ObjectivesView';
 import { ConfigView } from './ConfigView';
+import { HokageConsoleView } from './HokageConsoleView';
 import { MenuView } from './MenuView';
 
 const RECENT_MS = 5 * 60 * 1000;
@@ -25,7 +26,7 @@ const RECENT_MS = 5 * 60 * 1000;
 // MenuView es un overlay-sobre-overlay con su propio booleano). Verificado: setScreen()
 // en todo este archivo, incluida la navegación desde MenuView, nunca usa 'boot' ni
 // 'menu' — estos 6 cubren el 100% de lo que showOverlay puede mostrar en la práctica.
-type OverlayScreen = 'crew' | 'alerts' | 'comms' | 'ventures' | 'objetivos' | 'config';
+type OverlayScreen = 'crew' | 'alerts' | 'comms' | 'ventures' | 'objetivos' | 'config' | 'hokage';
 
 export function GameLayout() {
   const [screen, setScreen] = useState<Screen>('map');
@@ -204,6 +205,10 @@ export function GameLayout() {
   overlayRegistry.register('config', {
     title: 'Configuración Global',
     render: () => <ConfigView agents={agents} roleColors={roleColors} onAgentUpdated={reload.loadAgents} />,
+  });
+  overlayRegistry.register('hokage', {
+    title: 'Torre Hokage',
+    render: () => <HokageConsoleView ventures={ventures} liveEvents={liveEvents} />,
   });
 
   const activeOverlay = showOverlay ? overlayRegistry.get(screen as OverlayScreen) : undefined;

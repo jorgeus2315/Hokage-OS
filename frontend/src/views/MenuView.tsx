@@ -4,6 +4,7 @@ import { IconMap, IconComms, IconAlert, IconCrew, IconChevron, IconVenture, Icon
 
 const NAV_ITEMS: Array<{ screen: Screen; title: string; desc: string; icon: JSX.Element; color: string; featured?: boolean }> = [
   { screen: 'map',      title: 'Ecosistema', desc: 'Mapa táctico · Edificios y agentes en tiempo real', icon: <IconMap />,     color: 'var(--ember)', featured: true },
+  { screen: 'hokage',   title: 'Torre Hokage', desc: 'Órdenes a Hokage · Tareas · Presupuesto · Auditoría', icon: <IconMap />,  color: 'var(--ember)', featured: true },
   { screen: 'ventures', title: 'Ventures',   desc: 'Iniciativas económicas · Assets · Pipeline rules',  icon: <IconVenture />, color: 'var(--signal)' },
   { screen: 'comms',    title: 'Ship Comms', desc: 'Canal de comunicación entre agentes',               icon: <IconComms />,   color: 'var(--signal)' },
   { screen: 'alerts',   title: 'Alertas',    desc: 'Decisiones pendientes de aprobación',               icon: <IconAlert />,   color: 'var(--ember)' },

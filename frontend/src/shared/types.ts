@@ -95,7 +95,7 @@ export interface WorkItem {
   resolved_at: string | null;
 }
 
-export type Screen = 'boot' | 'menu' | 'map' | 'building' | 'crew' | 'alerts' | 'comms' | 'ventures' | 'objetivos' | 'config';
+export type Screen = 'boot' | 'menu' | 'map' | 'building' | 'crew' | 'alerts' | 'comms' | 'ventures' | 'objetivos' | 'config' | 'hokage';
 
 // Fase 5 de UI Implementation Plan.md — solo qué overlay/sala estaba abierto,
 // nada de tabs internos ni chat (fuera del alcance autorizado de esa fase).
@@ -247,3 +247,66 @@ export const AUTOMATION_EVENTS: string[] = [
   'report.daily', 'system.error',
   'objective.created', 'objective.approved', 'objective.achieved',
 ];
+
+// ═══════════ FASE 10 — Gestión de órdenes de Hokage, presupuesto y auditoría ═══════════
+export interface HokageTask {
+  id: number;
+  command_id: number;
+  phase: number;
+  role: string;
+  agent_id: number | null;
+  title: string;
+  prompt: string;
+  status: string;
+  work_item_id: number | null;
+  result: string | null;
+  error: string | null;
+  reserved_usd: number;
+}
+
+export interface HokageCommand {
+  id: number;
+  venture_id: number | null;
+  text: string;
+  status: string;
+  plan_summary: string | null;
+  result_summary: string | null;
+  replan_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface HokageCommandResult {
+  command: HokageCommand;
+  tasks: HokageTask[];
+}
+
+export interface AuditEvent {
+  id: number;
+  type: string;
+  from_actor: string;
+  to_actor: string | null;
+  payload: string;
+  venture_id: number | null;
+  command_id: number | null;
+  task_id: number | null;
+  work_item_id: number | null;
+  agent_id: number | null;
+  created_at: string;
+}
+
+export interface HokageCommandTrace {
+  command: HokageCommand;
+  tasks: HokageTask[];
+  work_items: Array<{ id: number; agent_id: number | null; venture_id: number | null; type: string; status: string; resolved_at: string | null; created_at: string }>;
+  events: AuditEvent[];
+}
+
+export interface VentureBudget {
+  ventureId: number;
+  allocated: number;
+  reserved: number;
+  real: number;
+  available: number;
+  capped: boolean;
+}

@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "verify:no-secrets": "! grep -rqE 'VITE_ADMIN_TOKEN|OPENROUTER_API_KEY|x-admin-token' dist/assets 2>/dev/null && echo 'bundle OK: sin ADMIN_TOKEN ni secretos' || (echo 'ERROR: secreto detectado en el bundle' && exit 1)"
   },
   "dependencies": {
     "pixi.js": "^8.19.0",

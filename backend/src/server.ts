@@ -6,6 +6,10 @@ dotenv.config();
 import { sendError, structuredErrorHandler } from './middleware/errorHandler.js';
 import { OWNER_NAME } from './config/env.js';
 import { constantTimeEqual } from './config/security.js';
+import {
+  evaluateAuth, regenerateSession, destroySession, validateSession, parseCookies,
+  serializeSessionCookie, clearSessionCookie, originAllowed, SESSION_COOKIE,
+} from './config/session.js';
 
 const REQUIRED_ENV = ['OPENROUTER_API_KEY', 'ADMIN_TOKEN'];
 const missing = REQUIRED_ENV.filter((key) => !process.env[key]);
@@ -23,15 +27,24 @@ function isTrustedOrigin(origin: string | undefined): boolean {
   return TRUSTED_ORIGINS.has(origin);
 }
 
-// Auth de operador único: token compartido, comparado en tiempo constante. Cubre las
-// MUTACIONES; los GET de lectura no exigen token (el frontend no lo envía). REQUISITO DE
-// DESPLIEGUE (D1, aprobado F6): el backend NUNCA se expone directo a Internet — solo detrás de
-// nginx con auth/IP-allowlist o túnel privado (el bind es 127.0.0.1). La migración a auth de
-// sesión, con el token fuera del bundle del frontend y GET protegidos, es F10.
+// Autoridad backend de operador único (F10). Acepta DOS credenciales, comparadas en tiempo
+// constante: (a) sesión de navegador vía cookie HttpOnly (el frontend ya no lleva el token), o
+// (b) cabecera x-admin-token para clientes máquina/CLI. Las mutaciones por sesión exigen Origin
+// de confianza (CSRF); el camino por token no es CSRF-able (cabecera custom). El backend sigue
+// ligado a 127.0.0.1 y expuesto solo tras nginx/túnel (D1, F6).
 function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction): void {
-  const token = req.headers['authorization']?.toString().replace('Bearer ', '') || req.headers['x-admin-token']?.toString();
-  if (!constantTimeEqual(token, ADMIN_TOKEN)) {
-    res.status(401).json({ ok: false, error: 'Token inválido o faltante' });
+  const decision = evaluateAuth(
+    {
+      method: req.method,
+      adminTokenHeader: req.headers['authorization']?.toString().replace('Bearer ', '') || req.headers['x-admin-token']?.toString(),
+      cookieHeader: req.headers['cookie']?.toString(),
+      origin: req.headers['origin']?.toString(),
+      referer: req.headers['referer']?.toString(),
+    },
+    { adminToken: ADMIN_TOKEN, trustedOrigins: TRUSTED_ORIGINS }
+  );
+  if (!decision.ok) {
+    res.status(decision.status).json({ ok: false, error: decision.reason === 'csrf' ? 'Origen no permitido (CSRF)' : 'No autenticado' });
     return;
   }
   next();
@@ -93,14 +106,29 @@ const runtimeLimiter = rateLimit({
   message: { ok: false, error: 'Límite de ejecución alcanzado. Espera un momento.' },
 });
 
+// Rate limit estricto para el login (anti fuerza bruta de la credencial).
+const loginLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { ok: false, error: 'Demasiados intentos de acceso. Espera un momento.' },
+});
+
+// La cookie de sesión lleva Secure cuando la conexión es HTTPS (detrás de nginx via
+// x-forwarded-proto) o si se fuerza por entorno. En local (http) no, para que funcione en dev.
+function cookieSecure(req: express.Request): boolean {
+  return req.secure || req.headers['x-forwarded-proto'] === 'https' || process.env.SESSION_SECURE === '1';
+}
+
 app.use('/api', generalLimiter);
 app.use('/api/agents', generalLimiter);
 app.use('/api/agents/:id/ask', askLimiter);
 app.use('/api/runtime', runtimeLimiter);
 
-// WebSocket para actualizaciones en tiempo real — A.2: exige el mismo ADMIN_TOKEN
-// que las mutaciones REST, transportado en el header Sec-WebSocket-Protocol (no en
-// la URL: evita que el token quede en logs de acceso/Referer/historial del navegador).
+// WebSocket para actualizaciones en tiempo real. F10: el navegador autentica por la cookie de
+// sesión (validada en verifyClient); los clientes máquina pueden seguir enviando el ADMIN_TOKEN
+// en el header Sec-WebSocket-Protocol (no en la URL, para no filtrarlo en logs/Referer).
 function extractWsToken(req: import('http').IncomingMessage): string | undefined {
   const proto = req.headers['sec-websocket-protocol'];
   return proto?.split(',')[0]?.trim();
@@ -109,12 +137,14 @@ function extractWsToken(req: import('http').IncomingMessage): string | undefined
 const wss = new WebSocketServer({
   server: httpServer,
   verifyClient: (info, callback) => {
+    // F10: el navegador autentica por cookie de sesión (enviada en el handshake same-origin);
+    // los clientes máquina pueden seguir usando el token en Sec-WebSocket-Protocol. El backend
+    // deriva la identidad de la sesión/token — nunca de datos de aplicación del cliente.
+    const cookies = parseCookies(info.req.headers['cookie']);
+    if (validateSession(cookies[SESSION_COOKIE])) { callback(true); return; }
     const token = extractWsToken(info.req);
-    if (!constantTimeEqual(token, ADMIN_TOKEN)) {
-      callback(false, 401, 'Token inválido o faltante');
-      return;
-    }
-    callback(true);
+    if (constantTimeEqual(token, ADMIN_TOKEN)) { callback(true); return; }
+    callback(false, 401, 'No autenticado');
   },
   handleProtocols: (protocols) => {
     // El subprotocolo ofrecido es el token en sí, no un protocolo de aplicación —
@@ -178,6 +208,48 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '64kb' }));
 app.use(express.urlencoded({ extended: false, limit: '64kb' }));
+
+// ═══════════ AUTENTICACIÓN DE SESIÓN (Fase 10) ═══════════
+// Gate global SECURE-BY-DEFAULT: todo /api/* exige sesión (o token de máquina) salvo el
+// allowlist público de bootstrap del login. Así los GET sensibles (ventures, decisions,
+// objectives, messages, prompts, auditoría, presupuesto…) quedan protegidos sin editar ruta a
+// ruta, y cualquier endpoint futuro nace protegido. Los requireAdmin inline de las mutaciones
+// permanecen como defensa redundante.
+const PUBLIC_API_PATHS = new Set(['/api/health', '/api/auth/login', '/api/auth/logout', '/api/auth/session']);
+app.use((req, res, next) => {
+  if (!req.path.startsWith('/api/')) return next();
+  if (PUBLIC_API_PATHS.has(req.path)) return next();
+  return requireAdmin(req, res, next);
+});
+
+// POST /api/auth/login — credencial == ADMIN_TOKEN (comparación en tiempo constante). Regenera la
+// sesión (anti session-fixation) y entrega cookie HttpOnly. NUNCA devuelve el token al navegador.
+app.post('/api/auth/login', loginLimiter, (req, res) => {
+  if (!originAllowed(req.headers.origin?.toString(), req.headers.referer?.toString(), TRUSTED_ORIGINS)) {
+    return res.status(403).json({ ok: false, error: 'Origen no permitido' });
+  }
+  const { password } = req.body as { password?: string };
+  if (!constantTimeEqual(password ?? '', ADMIN_TOKEN)) {
+    return res.status(401).json({ ok: false, error: 'Credenciales inválidas' });
+  }
+  const prev = parseCookies(req.headers.cookie?.toString())[SESSION_COOKIE];
+  const sid = regenerateSession(prev);
+  res.setHeader('Set-Cookie', serializeSessionCookie(sid, { secure: cookieSecure(req) }));
+  res.json({ ok: true, data: { authenticated: true } });
+});
+
+// POST /api/auth/logout — invalida la sesión y limpia la cookie. Idempotente (público).
+app.post('/api/auth/logout', (req, res) => {
+  destroySession(parseCookies(req.headers.cookie?.toString())[SESSION_COOKIE]);
+  res.setHeader('Set-Cookie', clearSessionCookie({ secure: cookieSecure(req) }));
+  res.json({ ok: true, data: { authenticated: false } });
+});
+
+// GET /api/auth/session — estado mínimo, sin secretos. Público (bootstrap del login).
+app.get('/api/auth/session', (req, res) => {
+  const authed = validateSession(parseCookies(req.headers.cookie?.toString())[SESSION_COOKIE]);
+  res.json({ ok: true, data: { authenticated: authed } });
+});
 
 // ═══════════ HEALTH ═══════════
 app.get('/api/health', (_req, res) => res.json({
