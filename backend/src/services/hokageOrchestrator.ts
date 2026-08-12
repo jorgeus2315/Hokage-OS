@@ -148,10 +148,9 @@ Reglas:
 // Prefiere un agente de esta venture; si no, uno global (venture_id NULL) reutilizable;
 // si no existe ninguno, lo INSTANCIA desde el role_definition (createAgent hereda modelo,
 // prompt base y presupuesto del rol). Nunca crea un agente "en blanco".
-// DEUDA (requisito PRE-PRODUCCIÓN, siguiente fase — decisión aprobada 'c'): reutilizar un
-// agente global entre ventures comparte su agent_memory PRIVADA ([LO QUE SÉ]) entre negocios.
-// La memoria de NEGOCIO (memory_entries) sí está aislada. Resolver el aislamiento de la memoria
-// privada antes de producción; no se cambia aquí para no ampliar el alcance de la Fase 5.
+// Reutilizar un agente global entre ventures es SEGURO desde F8: su agent_memory PRIVADA está
+// scopeada por (agent_id, venture_id), así que un especialista que trabaja en V1 y V2 no cruza
+// sus facts privados. La memoria de NEGOCIO (memory_entries) sigue aislada por venture (F4).
 async function selectOrCreateSpecialist(role: string, ventureId: number | null): Promise<number> {
   if (ventureId != null) {
     const scoped = await get<{ id: number }>('SELECT id FROM agents WHERE role = ? AND venture_id = ? LIMIT 1', [role, ventureId]);

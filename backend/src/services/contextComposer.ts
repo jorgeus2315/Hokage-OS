@@ -70,10 +70,12 @@ export async function composeSystemContext(input: ContextInput): Promise<string>
     }
   }
 
-  // 4 · Memoria privada del agente (scope por agent_id — nunca de otro agente). Son DATOS.
+  // 4 · Memoria privada del agente (scope por agent_id Y venture_id — Fase 8). Nunca de otro
+  // agente ni de otra venture. venture_id sale del contexto de ejecución (0 = global/sin venture),
+  // jamás del LLM. Un agente en V2 NO ve los facts privados que guardó en V1. Son DATOS.
   const memoryRows = await all<{ key: string; value: string }>(
-    "SELECT key, value FROM agent_memory WHERE agent_id = ? AND category = 'fact' ORDER BY updated_at DESC LIMIT ?",
-    [agentId, MEMORY_LIMIT]
+    "SELECT key, value FROM agent_memory WHERE agent_id = ? AND venture_id = ? AND category = 'fact' ORDER BY updated_at DESC LIMIT ?",
+    [agentId, ventureId ?? 0, MEMORY_LIMIT]
   );
   if (memoryRows.length > 0) {
     sections.push('[LO QUE SÉ]\n' + memoryRows.map((m) => `- ${m.key}: ${m.value}`).join('\n'));

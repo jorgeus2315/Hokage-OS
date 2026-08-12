@@ -499,7 +499,7 @@ export const MemoryWriteTool: Tool<MemoryWriteInput, MemoryWriteOutput> = {
       }
       const value = input.value.trim().slice(0, 150);
 
-      await writeAgentMemory(ctx.agentId, key, value);
+      await writeAgentMemory(ctx.agentId, key, value, ctx.ventureId);
 
       const agent = await get<{ name: string }>('SELECT name FROM agents WHERE id = ?', [ctx.agentId]);
       console.log(`[TOOL:memory.write] ${agent?.name || 'agente'} → agent_memory :: ${key}`);

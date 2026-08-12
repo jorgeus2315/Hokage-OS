@@ -218,7 +218,7 @@ ${formatLines.join('\n')}`;
       if (autonomy >= 1) {
       const memoryMatches = [...response.matchAll(/\[MEMORIA:\s*([a-z_][a-z0-9_]*)\s*=\s*([^\]]{1,150})\]/gi)];
       for (const match of memoryMatches.slice(0, 3)) {
-        await writeAgentMemory(task.agentId, match[1].trim().toLowerCase(), match[2].trim());
+        await writeAgentMemory(task.agentId, match[1].trim().toLowerCase(), match[2].trim(), task.ventureId);
       }
 
       // Contenido listo del Escritor → persiste como output real + dispara pipeline Tráfico

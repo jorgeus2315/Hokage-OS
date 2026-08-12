@@ -77,8 +77,16 @@ async function runMigrations(): Promise<void> {
     console.log('[DB] Migración agent_schedules: agent_role → agent_id completada');
   }
 
-  // UNIQUE index en agent_memory para evitar duplicados por clave
-  await run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_memory_unique ON agent_memory(agent_id, key)`);
+  // Fase 8: aislamiento de agent_memory PRIVADA por venture. venture_id (0 = global/sin venture,
+  // sentinel sin FK). Migración idempotente y no destructiva: añade la columna si falta (en BD
+  // existentes las filas quedan a 0 = memoria histórica preservada como GLOBAL, no se borra nada),
+  // y sustituye el índice UNIQUE (agent_id,key) por (agent_id,venture_id,key) para que la misma
+  // key pueda existir por venture sin colisión. Ejecutable varias veces sin duplicar ni corromper.
+  if (!(await columnExists('agent_memory', 'venture_id'))) {
+    await run(`ALTER TABLE agent_memory ADD COLUMN venture_id INTEGER NOT NULL DEFAULT 0`);
+  }
+  await run(`DROP INDEX IF EXISTS idx_agent_memory_unique`);
+  await run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_memory_venture_unique ON agent_memory(agent_id, venture_id, key)`);
 
   // Índices de rendimiento en tablas de alto crecimiento
   await run(`CREATE INDEX IF NOT EXISTS idx_work_items_agent_status ON work_items(agent_id, status)`);
@@ -400,9 +408,13 @@ export async function initSchema(): Promise<void> {
     FOREIGN KEY (agent_id) REFERENCES agents(id)
   )`);
 
+  // venture_id (Fase 8): aísla la memoria PRIVADA del agente entre ventures. 0 = global/sin
+  // venture (sentinel, no es un venture real → sin FK). El índice UNIQUE es (agent_id,
+  // venture_id, key), de modo que la misma key existe por venture sin colisionar.
   await run(`CREATE TABLE IF NOT EXISTS agent_memory (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     agent_id INTEGER NOT NULL,
+    venture_id INTEGER NOT NULL DEFAULT 0,
     key TEXT NOT NULL,
     value TEXT NOT NULL,
     category TEXT NOT NULL DEFAULT 'general',
