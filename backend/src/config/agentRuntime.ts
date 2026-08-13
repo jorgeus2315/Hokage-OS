@@ -1,7 +1,7 @@
 import bus, { AgentEvent } from './eventBus.js';
 import { toolsFor, autonomousTaskFor } from '../services/roleService.js';
 import { askAgent, writeAgentMemory } from '../services/aiService.js';
-import { listAgents } from '../services/agentService.js';
+import { listAgents, listBusinessAgents } from '../services/agentService.js';
 import { createDecision } from '../services/decisionService.js';
 import { autonomyForAgent, maybeAutoApprove } from '../services/agentAutonomy.js';
 import { createMessage } from '../services/messageService.js';
@@ -365,7 +365,9 @@ ${formatLines.join('\n')}`;
 
   // Etapa 2: garantizar schedules + crear work_items para agentes vencidos + bloquear pending
   private async stage2_assignWork(): Promise<void> {
-    const agents = await listAgents();
+    // B.1: el scheduling autónomo opera sobre agentes de NEGOCIO. Hermes (kernel) queda fuera
+    // de forma explícita — ya lo estaba de hecho (sin autonomous_task nunca obtenía schedule).
+    const agents = await listBusinessAgents();
 
     for (const agent of agents) {
       const config = await autonomousTaskFor(agent.role);

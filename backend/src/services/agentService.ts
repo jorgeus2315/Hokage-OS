@@ -9,6 +9,16 @@ export async function listAgents(): Promise<Agent[]> {
   return all<Agent>(`${SELECT} ORDER BY id ASC`);
 }
 
+// B.1 (Fase B — Hermes como Kernel): agentes de NEGOCIO. Excluye los roles de sistema
+// (Hermes es scope='system' en role_definitions, la fuente canónica de la distinción — no se
+// duplica un flag en `agents`). listAgents()/getAgent() se conservan para resolución interna
+// por id/rol. Un rol legacy sin role_definition cuenta como negocio (NOT IN el conjunto system).
+export async function listBusinessAgents(): Promise<Agent[]> {
+  return all<Agent>(
+    `${SELECT} WHERE role NOT IN (SELECT key FROM role_definitions WHERE scope = 'system') ORDER BY id ASC`
+  );
+}
+
 export async function getAgent(id: number): Promise<Agent | undefined> {
   return get<Agent>(`${SELECT} WHERE id = ?`, [id]);
 }
