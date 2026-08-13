@@ -122,6 +122,54 @@ export interface HokageTask {
   updated_at: string;
 }
 
+// ═══════════ F11 — Pipeline de oportunidades ═══════════════════════════════════
+export type OpportunityStatus =
+  | 'draft' | 'researching' | 'validating' | 'monetization' | 'proposed'
+  | 'awaiting_approval' | 'approved' | 'creating' | 'created'
+  | 'rejected' | 'failed' | 'insufficient_evidence' | 'needs_human_review';
+export type ValidationStatus = 'not_started' | 'insufficient_evidence' | 'validated' | 'rejected' | 'needs_human_review';
+export type EvidenceKind = 'fact' | 'inference' | 'hypothesis' | 'unknown';
+export type ProposalStatus = 'proposed' | 'awaiting_approval' | 'approved' | 'rejected' | 'created' | 'failed';
+
+export interface Opportunity {
+  id: number;
+  funding_venture_id: number;
+  title: string;
+  status: OpportunityStatus;
+  research_command_id: number | null;
+  validation_status: ValidationStatus;
+  validation_notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Evidence {
+  id: number;
+  opportunity_id: number;
+  kind: EvidenceKind;
+  claim: string;
+  source: string | null;
+  confidence: number;         // 0..100
+  agent_id: number | null;
+  task_id: number | null;
+  conflicts_with: number | null;
+  created_at: string;
+}
+
+export interface BusinessProposal {
+  id: number;
+  opportunity_id: number;
+  content: string;            // JSON estructurado (§13)
+  proposed_budget_usd: number;
+  proposed_name: string;
+  proposed_type: string;
+  status: ProposalStatus;
+  decision_id: number | null;
+  created_venture_id: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Message {
   id: number;
   sender_id: number | null;

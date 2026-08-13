@@ -271,6 +271,14 @@ async function runMigrations(): Promise<void> {
   await run(`CREATE INDEX IF NOT EXISTS idx_event_log_venture ON event_log(venture_id, created_at DESC)`);
   await run(`CREATE INDEX IF NOT EXISTS idx_event_log_command ON event_log(command_id)`);
   await run(`CREATE INDEX IF NOT EXISTS idx_event_log_type ON event_log(type, created_at DESC)`);
+
+  // Fase 11: enlace idempotente propuesta→venture. UNIQUE (SQLite permite múltiples NULL → las
+  // ventures existentes, todas con NULL, no colisionan). Impide crear dos ventures por la misma
+  // propuesta (doble-click / retry / concurrencia).
+  if (!(await columnExists('ventures', 'source_proposal_id'))) {
+    await run(`ALTER TABLE ventures ADD COLUMN source_proposal_id INTEGER`);
+  }
+  await run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_ventures_source_proposal ON ventures(source_proposal_id)`);
 }
 
 // Siembra las definiciones de rol desde ROLE_SEEDS (código = semilla). INSERT OR IGNORE
@@ -771,6 +779,56 @@ export async function initSchema(): Promise<void> {
   )`);
   await run(`CREATE INDEX IF NOT EXISTS idx_hokage_tasks_command ON hokage_tasks(command_id, phase)`);
   await run(`CREATE INDEX IF NOT EXISTS idx_hokage_tasks_workitem ON hokage_tasks(work_item_id)`);
+
+  // ═══════════ F11 — Pipeline de oportunidades (investigación → validación → monetización →
+  // propuesta → aprobación humana → creación). Capa sobre el orquestador F5; el estado del
+  // pipeline se persiste aquí. Ver services/opportunityPipeline.ts. ══════════════════════════
+  await run(`CREATE TABLE IF NOT EXISTS opportunities (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    funding_venture_id  INTEGER NOT NULL REFERENCES ventures(id),
+    title               TEXT NOT NULL,
+    status              TEXT NOT NULL DEFAULT 'draft',
+    research_command_id INTEGER REFERENCES hokage_commands(id),
+    validation_status   TEXT NOT NULL DEFAULT 'not_started',
+    validation_notes    TEXT,
+    created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_opportunities_status ON opportunities(status)`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_opportunities_research ON opportunities(research_command_id)`);
+
+  // Evidencia estructurada (F11 §8): DATO de investigación, distinto de agent_memory/memory_entries.
+  // kind ∈ fact|inference|hypothesis|unknown; una respuesta LLM sin fuente verificable no es 'fact'.
+  await run(`CREATE TABLE IF NOT EXISTS evidence (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    opportunity_id INTEGER NOT NULL REFERENCES opportunities(id) ON DELETE CASCADE,
+    kind           TEXT NOT NULL,
+    claim          TEXT NOT NULL,
+    source         TEXT,
+    confidence     INTEGER NOT NULL DEFAULT 0,
+    agent_id       INTEGER REFERENCES agents(id),
+    task_id        INTEGER,
+    conflicts_with INTEGER,
+    created_at     TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_evidence_opportunity ON evidence(opportunity_id)`);
+
+  // Propuesta de negocio (F11 §15): distinta de una venture. content = JSON estructurado.
+  // proposed_budget_usd lo propone el LLM pero lo CAPA el código (MAX_VENTURE_BUDGET_USD).
+  await run(`CREATE TABLE IF NOT EXISTS business_proposals (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    opportunity_id     INTEGER NOT NULL REFERENCES opportunities(id),
+    content            TEXT NOT NULL DEFAULT '{}',
+    proposed_budget_usd REAL NOT NULL DEFAULT 0,
+    proposed_name      TEXT NOT NULL,
+    proposed_type      TEXT NOT NULL DEFAULT 'other',
+    status             TEXT NOT NULL DEFAULT 'proposed',
+    decision_id        INTEGER REFERENCES decisions(id),
+    created_venture_id INTEGER REFERENCES ventures(id),
+    created_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at         TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_proposals_opportunity ON business_proposals(opportunity_id)`);
 
   const deptCount = await get<{ count: number }>('SELECT COUNT(*) as count FROM departments');
   if (!deptCount || deptCount.count === 0) await seedDepartments();

@@ -3,6 +3,7 @@ import { markObjectiveAchieved } from './objectiveService.js';
 import { runApprovedExec, rejectExec } from './hermesService.js';
 import { createMemoryEntry } from './memoryService.js';
 import { recordAudit } from './auditService.js';
+import { createVentureFromProposal, rejectProposal } from './opportunityPipeline.js';
 
 // Punto único donde vive "aprobar/rechazar esta Decision dispara esta acción real".
 // Añadir un nuevo entity_type es añadir una entrada aquí, no un if más en las rutas HTTP.
@@ -25,6 +26,16 @@ const resolvers: Record<string, DecisionResolver> = {
     },
     onReject: async (decision) => {
       if (decision.entity_id != null) await rejectExec(decision.entity_id);
+    },
+  },
+  // Fase 11: el ÚNICO camino a crear una venture. Se dispara SOLO por aprobación HUMANA
+  // (autonomyAutoApproves excluye cualquier entity_type → nunca auto-aprobada). Idempotente.
+  business_proposal: {
+    onApprove: async (decision) => {
+      if (decision.entity_id != null) await createVentureFromProposal(decision.entity_id);
+    },
+    onReject: async (decision) => {
+      if (decision.entity_id != null) await rejectProposal(decision.entity_id);
     },
   },
 };

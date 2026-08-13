@@ -72,6 +72,10 @@ import { resolveDecisionApproval, resolveDecisionRejection } from './services/de
 import { createCommand, cancelCommand } from './services/hokageOrchestrator.js';
 import { getVentureBudget } from './services/ventureBudget.js';
 import { listAuditEvents, getCommandTrace } from './services/auditService.js';
+import {
+  createOpportunity, listOpportunities, getOpportunityDetail, getOpportunity,
+  beginResearch, progressOpportunity, researchPromptFor,
+} from './services/opportunityPipeline.js';
 import { runtime } from './config/agentRuntime.js';
 import bus from './config/eventBus.js';
 
@@ -507,6 +511,54 @@ app.post('/api/hokage/commands/:id/cancel', requireAdmin, async (req, res) => {
     broadcast('hokage.command', result.command);
     res.json({ ok: true, data: result });
   } catch (e: any) { sendError(res, 500, e, 'Error cancelando la orden'); }
+});
+
+// ═══════════ F11 — PIPELINE DE OPORTUNIDADES ═══════════
+// Investigación → validación → monetización → propuesta → (aprobación HUMANA vía la Decision
+// business_proposal, ruta PUT /api/decisions/:id/approve) → creación. Todo bajo el gate F10.
+app.post('/api/opportunities', requireAdmin, async (req, res) => {
+  try {
+    const { title, funding_venture_id } = req.body as { title?: string; funding_venture_id?: number };
+    if (!title?.trim()) return res.status(400).json({ ok: false, error: 'Falta el título/hipótesis' });
+    if (funding_venture_id == null) return res.status(400).json({ ok: false, error: 'Falta funding_venture_id' });
+    const opp = await createOpportunity({ title: String(title), fundingVentureId: Number(funding_venture_id) });
+    res.status(201).json({ ok: true, data: opp });
+  } catch (e: any) { sendError(res, 400, e, 'Error creando oportunidad'); }
+});
+
+app.get('/api/opportunities', requireAdmin, async (_req, res) => {
+  try { res.json({ ok: true, data: await listOpportunities() }); }
+  catch (e: any) { sendError(res, 500, e, 'Error listando oportunidades'); }
+});
+
+app.get('/api/opportunities/:id', requireAdmin, async (req, res) => {
+  try {
+    const detail = await getOpportunityDetail(Number(req.params.id));
+    if (!detail) return res.status(404).json({ ok: false, error: 'Oportunidad no encontrada' });
+    res.json({ ok: true, data: detail });
+  } catch (e: any) { sendError(res, 500, e, 'Error leyendo oportunidad'); }
+});
+
+// Despacha la investigación por el orquestador F5, financiada por la funding_venture (F7).
+app.post('/api/opportunities/:id/research', requireAdmin, askLimiter, async (req, res) => {
+  try {
+    const opp = await getOpportunity(Number(req.params.id));
+    if (!opp) return res.status(404).json({ ok: false, error: 'Oportunidad no encontrada' });
+    if (opp.status !== 'draft') { res.json({ ok: true, data: opp }); return; } // idempotente
+    const cmd = await createCommand({ text: researchPromptFor(opp.title), ventureId: opp.funding_venture_id });
+    const updated = await beginResearch(opp.id, cmd.command.id);
+    res.status(201).json({ ok: true, data: updated });
+  } catch (e: any) { sendError(res, 500, e, 'Error lanzando investigación'); }
+});
+
+// Progresión acotada (respaldo del hook automático): research→…→awaiting_approval. Idempotente.
+app.post('/api/opportunities/:id/advance', requireAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!(await getOpportunity(id))) return res.status(404).json({ ok: false, error: 'Oportunidad no encontrada' });
+    await progressOpportunity(id);
+    res.json({ ok: true, data: await getOpportunityDetail(id) });
+  } catch (e: any) { sendError(res, 500, e, 'Error avanzando la oportunidad'); }
 });
 
 // ═══════════ MENSAJES ═══════════

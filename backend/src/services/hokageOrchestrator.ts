@@ -6,6 +6,7 @@ import { callAIJson, estimateTaskCostUsd } from './aiService.js';
 import { createMemoryEntry } from './memoryService.js';
 import { reserveVentureBudget, releaseVentureBudget, ventureOverRealBudget } from './ventureBudget.js';
 import { recordAudit } from './auditService.js';
+import { onResearchCommandFinalized } from './opportunityPipeline.js';
 import bus from '../config/eventBus.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -428,6 +429,11 @@ async function finalizeCommand(commandId: number): Promise<void> {
 
   bus.publish({ type: 'hokage.command.completed', from: 'Hokage', payload: { commandId, ventureId: cmd.venture_id, status, completed, unfinished } });
   console.log(`[HOKAGE] Comando ${commandId} finalizado: ${status} (${completed} ok, ${unfinished} sin completar)`);
+
+  // Hook aditivo F11: si este command era la investigación de una oportunidad, la hace avanzar
+  // (extracción → validación → monetización → propuesta), deteniéndose en el gate humano. No-op
+  // si no hay oportunidad enlazada. No altera la semántica del command.
+  await onResearchCommandFinalized(commandId).catch((err) => console.error('[F11] Error avanzando oportunidad:', err.message));
 }
 
 // ── Síntesis final (DETERMINISTA — sin LLM: los datos son la fuente) ──────────
