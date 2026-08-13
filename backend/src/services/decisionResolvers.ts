@@ -4,6 +4,7 @@ import { runApprovedExec, rejectExec } from './hermesService.js';
 import { createMemoryEntry } from './memoryService.js';
 import { recordAudit } from './auditService.js';
 import { createVentureFromProposal, rejectProposal } from './opportunityPipeline.js';
+import { activateVenture } from './ventureActivation.js';
 
 // Punto único donde vive "aprobar/rechazar esta Decision dispara esta acción real".
 // Añadir un nuevo entity_type es añadir una entrada aquí, no un if más en las rutas HTTP.
@@ -32,7 +33,12 @@ const resolvers: Record<string, DecisionResolver> = {
   // (autonomyAutoApproves excluye cualquier entity_type → nunca auto-aprobada). Idempotente.
   business_proposal: {
     onApprove: async (decision) => {
-      if (decision.entity_id != null) await createVentureFromProposal(decision.entity_id);
+      if (decision.entity_id == null) return;
+      const ventureId = await createVentureFromProposal(decision.entity_id); // creación: se espera
+      // Fase 12: la aprobación humana auto-activa (decisión 7.2). Fire-and-forget como system_exec:
+      // el arranque dispara trabajo del orquestador F5 y no debe bloquear la respuesta HTTP. Fallos
+      // quedan auditados dentro de activateVenture y son reintentables por POST /ventures/:id/activate.
+      if (ventureId != null) activateVenture(ventureId, 'approval').catch((err) => console.error('[F12] Activación de venture falló:', err.message));
     },
     onReject: async (decision) => {
       if (decision.entity_id != null) await rejectProposal(decision.entity_id);

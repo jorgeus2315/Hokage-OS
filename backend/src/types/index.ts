@@ -276,6 +276,7 @@ export interface Venture {
   revenue_target_usd: number;
   metadata: string;
   created_at: string;
+  activated_at?: string | null; // Fase 12: NULL = creada pero inerte; sello = activada
 }
 
 export interface VentureCreatePayload {

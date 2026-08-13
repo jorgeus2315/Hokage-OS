@@ -279,6 +279,12 @@ async function runMigrations(): Promise<void> {
     await run(`ALTER TABLE ventures ADD COLUMN source_proposal_id INTEGER`);
   }
   await run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_ventures_source_proposal ON ventures(source_proposal_id)`);
+
+  // Fase 12: marcador de activación (NULL = venture creada pero inerte; sello temporal = ya activada).
+  // Es la guarda de idempotencia de la activación (CAS: UPDATE ... WHERE activated_at IS NULL).
+  if (!(await columnExists('ventures', 'activated_at'))) {
+    await run(`ALTER TABLE ventures ADD COLUMN activated_at TEXT`);
+  }
 }
 
 // Siembra las definiciones de rol desde ROLE_SEEDS (código = semilla). INSERT OR IGNORE

@@ -76,6 +76,7 @@ import {
   createOpportunity, listOpportunities, getOpportunityDetail, getOpportunity,
   beginResearch, progressOpportunity, researchPromptFor,
 } from './services/opportunityPipeline.js';
+import { activateVenture } from './services/ventureActivation.js';
 import { runtime } from './config/agentRuntime.js';
 import bus from './config/eventBus.js';
 
@@ -771,6 +772,18 @@ app.patch('/api/ventures/:id', requireAdmin, async (req, res) => {
     const venture = await get('SELECT * FROM ventures WHERE id = ?', [id]);
     res.json({ ok: true, data: venture });
   } catch (e: any) { sendError(res, 400, e, 'Error actualizando venture'); }
+});
+
+// F12 · Activación de venture — backstop/retry idempotente (la vía normal es la auto-activación
+// tras aprobar la Decision business_proposal). askLimiter: dispara trabajo del orquestador F5 (gasto).
+// Reactiva también una venture antes inerte por presupuesto 0, una vez se le asigna presupuesto vía PATCH.
+app.post('/api/ventures/:id/activate', requireAdmin, askLimiter, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!(await get('SELECT id FROM ventures WHERE id = ?', [id]))) return res.status(404).json({ ok: false, error: 'Venture no encontrada' });
+    const result = await activateVenture(id, 'endpoint');
+    res.json({ ok: true, data: result });
+  } catch (e: any) { sendError(res, 500, e, 'Error activando venture'); }
 });
 
 // ═══════════ ASSETS ═══════════

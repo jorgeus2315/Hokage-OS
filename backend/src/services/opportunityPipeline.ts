@@ -196,10 +196,10 @@ export async function requestApproval(oppId: number): Promise<void> {
 }
 
 // ── Creación de venture (SOLO vía resolver, es decir, aprobación humana; idempotente) ──
-export async function createVentureFromProposal(proposalId: number): Promise<void> {
+export async function createVentureFromProposal(proposalId: number): Promise<number | null> {
   const p = await get<BusinessProposal>(`${PROP_SELECT} WHERE id = ?`, [proposalId]);
-  if (!p) return;
-  if (p.created_venture_id) return; // idempotente (doble-click / retry secuencial)
+  if (!p) return null;
+  if (p.created_venture_id) return p.created_venture_id; // idempotente (doble-click / retry secuencial)
   const opp = await getOpp(p.opportunity_id);
   // El humano acaba de aprobar la Decision → registra la aprobación y pasa a 'creating'.
   if (opp && opp.status === 'awaiting_approval') {
@@ -224,13 +224,14 @@ export async function createVentureFromProposal(proposalId: number): Promise<voi
     } catch {
       // Carrera: otra ejecución insertó primero (UNIQUE source_proposal_id) → reutilizar.
       const again = await get<{ id: number }>('SELECT id FROM ventures WHERE source_proposal_id = ?', [proposalId]);
-      if (!again) { await recordAudit({ type: 'venture.creation_failed', ventureId: opp?.funding_venture_id ?? null, meta: { proposalId } }); return; }
+      if (!again) { await recordAudit({ type: 'venture.creation_failed', ventureId: opp?.funding_venture_id ?? null, meta: { proposalId } }); return null; }
       ventureId = again.id;
     }
   }
   await run(`UPDATE business_proposals SET status = 'created', created_venture_id = ?, updated_at = datetime('now') WHERE id = ? AND created_venture_id IS NULL`, [ventureId, proposalId]);
   if (opp) await run(`UPDATE opportunities SET status = 'created', updated_at = datetime('now') WHERE id = ?`, [opp.id]);
   await recordAudit({ type: 'venture.created', ventureId: opp?.funding_venture_id ?? null, meta: { proposalId, ventureId, budget } });
+  return ventureId;
 }
 
 export async function rejectProposal(proposalId: number): Promise<void> {
