@@ -2,6 +2,7 @@ import bus, { AgentEvent } from './eventBus.js';
 import { toolsFor, autonomousTaskFor } from '../services/roleService.js';
 import { askAgent, writeAgentMemory } from '../services/aiService.js';
 import { listAgents, listBusinessAgents } from '../services/agentService.js';
+import { computeAllRuntimeStates, stateSignature } from '../services/agentRuntimeState.js';
 import { createDecision } from '../services/decisionService.js';
 import { autonomyForAgent, maybeAutoApprove } from '../services/agentAutonomy.js';
 import { createMessage } from '../services/messageService.js';
@@ -109,6 +110,7 @@ class AgentRuntime {
   private pollTimer: NodeJS.Timeout | null = null;
   private busEventQueue: AgentEvent[] = [];
   private activeAgents: Set<number> = new Set();
+  private lastStateSignature = new Map<number, string>();  // K.4: dedup de deltas de estado
 
   start(): void {
     if (this.running) {
@@ -302,6 +304,7 @@ ${formatLines.join('\n')}`;
       // Etapa 6: pipeline derivado gestionado via bus eventos en stage1_drainBusEvents
       await this.stage7_closeDecisionLoop();
       await this.stage8_updateMetrics();
+      await this.stage9_broadcastStates();  // K.4: deriva AgentRuntimeState y emite deltas
     } catch (error) {
       console.error('[RUNTIME] Error en pollTick:', error);
     } finally {
@@ -576,6 +579,24 @@ ${formatLines.join('\n')}`;
     bus.subscribe('decision.approved', (event) => this.busEventQueue.push(event));
     bus.subscribe('decision.created',  (event) => this.busEventQueue.push(event));
     bus.subscribe('sale.made',         (event) => this.busEventQueue.push(event));
+  }
+
+  // Etapa 9 (K.4): deriva el estado REAL de cada agente de negocio y emite un delta SOLO si
+  // cambió (dedup por firma). No es una simulación ni un intervalo nuevo: recalcula estado real
+  // sobre el pollTick ya existente. La derivación vive en agentRuntimeState.ts (una responsabilidad).
+  private async stage9_broadcastStates(): Promise<void> {
+    const states = await computeAllRuntimeStates(this.activeAgents);
+    for (const state of states) {
+      const sig = stateSignature(state);
+      if (this.lastStateSignature.get(state.agentId) === sig) continue;  // sin cambio → sin delta
+      this.lastStateSignature.set(state.agentId, sig);
+      bus.publish({ type: 'agent.state.changed', from: 'runtime', payload: { state } });
+    }
+  }
+
+  // Snapshot de estado de runtime para el WS (server.ts). Recalculable on-demand, no persistido.
+  async getRuntimeStates() {
+    return computeAllRuntimeStates(this.activeAgents);
   }
 
   getStatus(): Record<string, unknown> {

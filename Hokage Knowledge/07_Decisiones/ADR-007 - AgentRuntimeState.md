@@ -30,6 +30,14 @@ Se define `AgentRuntimeState` como **proyección derivada** en el backend (fuent
 
 Estado fiel al Runtime, reconstruible tras reinicio, sin invención. Un agente/capacidad nueva añade un modificador o primario sin romper el contrato. El World Engine mapea primario→visual y modificador→badge. Riesgo aceptado: la granularidad de `activity`/transiciones depende de la instrumentación del runtime — afinable, no bloqueante. Disparador de revisión: si surge necesidad real de histórico de estados → añadir log append-only.
 
+## Estado de implementación (K.4, 2026-08-13)
+
+Implementado como **derivación real** (sin tabla): `backend/src/services/agentRuntimeState.ts` (`deriveAgentRuntimeState` pura + `computeAgentRuntimeState`/`computeAllRuntimeStates`), emitido por `agentRuntime.ts` (etapa 9: delta `agent.state.changed` con dedup por firma, sobre el pollTick existente) y expuesto en el snapshot WS (`server.ts`, campo `agent_states`). El frontend lo consume en `useAppData` y `useWorldState` (`isWorking`/`hasError` ya usan el estado real, no heurísticas de tiempo).
+
+**Derivado con evidencia sólida hoy:** primario ∈ {IDLE, WORKING, COMPLETED, ERROR}; modificadores ∈ {awaitingApproval, hasError}; `currentTask` y `ventureId` desde `work_items`. El contrato (tipo) soporta el vocabulario completo; la derivación es parcial por diseño.
+
+**GAP (deferido, marcado en código, sin inventar):** THINKING/RESEARCHING y modificador `toolActive` → **D-2** (instrumentación de tools en el bus); WAITING/`blocked` → **D-2** (dependencias del orquestador); REVIEWING/`reviewing` → quality gate (C §10); COMMUNICATING → hand-offs (C-5); **MOVING no lo emite el backend** — es un transitorio del World Engine (D §7). El borrado del `Math.random`/`setInterval` de **movimiento** en `useWorldState` queda para **D-3**.
+
 ## Relacionado
 
 - [[BLOQUE_0_DECISIONES_FUNDACIONALES]]

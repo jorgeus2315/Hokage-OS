@@ -167,12 +167,13 @@ wss.on('connection', async (ws, _req) => {
 
   // Snapshot inicial — el cliente no necesita REST para el arranque
   try {
-    const [agents, decisions, departments] = await Promise.all([
+    const [agents, decisions, departments, agentStates] = await Promise.all([
       listAgents(),
       listDecisions(),
       all<{ id: number; key: string; name: string; desc: string; role: string; glyph: string; color: string; pos_x: number; pos_y: number; is_hub: number }>(
         'SELECT * FROM departments WHERE active = 1 ORDER BY sort_order ASC'
       ),
+      runtime.getRuntimeStates(),  // K.4: estado real de runtime por agente (derivado, no inventado)
     ]);
     ws.send(JSON.stringify({
       type: 'initial_snapshot',
@@ -180,6 +181,7 @@ wss.on('connection', async (ws, _req) => {
         agents,
         decisions,
         departments,
+        agent_states: agentStates,  // K.4: snapshot de AgentRuntimeState (aditivo)
         recent_events: bus.getHistory(30),
         timestamp: new Date().toISOString(),
       },

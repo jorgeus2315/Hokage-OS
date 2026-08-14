@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import type { Agent, AgentRun, Building, Decision, WsEvent } from '../shared/types';
+import type { Agent, AgentRun, Building, Decision, WsEvent, AgentRuntimeState } from '../shared/types';
 import { BUILDINGS } from '../shared/constants';
 import type { HubDescriptor, RoomDescriptor, TokenDescriptor, RippleEvent } from '../world/types';
 import { adaptEvents, commandsToRippleEvents } from '../world/events';
@@ -26,6 +26,7 @@ export function useWorldState({
   runs,
   pending,
   liveEvents,
+  agentStates,
   onEnterBuilding,
 }: {
   departments?: Building[];
@@ -33,6 +34,7 @@ export function useWorldState({
   runs: AgentRun[];
   pending: Decision[];
   liveEvents: WsEvent[];
+  agentStates: Record<number, AgentRuntimeState>;
   onEnterBuilding: (b: Building) => void;
 }): WorldState {
   const allDepts = departments && departments.length > 0 ? departments : BUILDINGS;
@@ -52,10 +54,11 @@ export function useWorldState({
   }
 
   const lastRunFor = (agentId: number) => runs.find((r) => r.agent_id === agentId);
-  const isWorking = (agentId: number) => {
-    const last = lastRunFor(agentId);
-    return !!last && Date.now() - new Date(last.started_at).getTime() < RECENT_MS;
-  };
+  // K.4: "working" viene del ESTADO REAL derivado por el backend (AgentRuntimeState), no de una
+  // heurística de tiempo. Ausencia de estado → NO working (invariante: el frontend no inventa
+  // actividad). El movimiento (atHub/roomWander con Math.random/setInterval) sigue siendo deuda
+  // conocida de D-3 — ver la nota "DEUDA CONOCIDA" más abajo; K.4 no lo toca.
+  const isWorking = (agentId: number) => agentStates[agentId]?.primary === 'WORKING';
   const isJustActed = (agentId: number) => {
     const last = lastRunFor(agentId);
     return !!last && Date.now() - new Date(last.started_at).getTime() < JUST_ACTED_MS;
@@ -70,10 +73,8 @@ export function useWorldState({
     if (ms < 3 * 60 * 60_000) return 0.2;
     return 0.06;
   };
-  const hasRecentError = (agentId: number): boolean => {
-    const last = lastRunFor(agentId);
-    return !!last && (last.status === 'error' || last.status === 'failed');
-  };
+  // K.4: error real desde el backend (modifier.hasError), no inferido del status de la última run.
+  const hasRecentError = (agentId: number): boolean => agentStates[agentId]?.modifiers.hasError ?? false;
 
   // DEUDA CONOCIDA, MANTENIDA A PROPÓSITO (ver Plan de Migración ECS, Fase 0,
   // 2026-08-05): atHub/roomWander usan un setInterval independiente POR

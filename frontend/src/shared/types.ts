@@ -310,3 +310,37 @@ export interface VentureBudget {
   available: number;
   capped: boolean;
 }
+
+// ═══════════ K.4 — AgentRuntimeState ═══════════
+// Espejo del contrato del backend (ADR-007). El backend es la ÚNICA fuente de verdad; el
+// frontend solo lo consume. Llega por WS: snapshot inicial (agent_states) + deltas
+// (agent.state.changed). El frontend NUNCA deriva ni inventa este estado.
+export type AgentPrimaryState =
+  | 'IDLE' | 'THINKING' | 'RESEARCHING' | 'WORKING' | 'WAITING'
+  | 'REVIEWING' | 'COMMUNICATING' | 'MOVING' | 'COMPLETED' | 'ERROR';
+
+export interface AgentStateModifiers {
+  awaitingApproval: boolean;
+  hasError: boolean;
+  blocked: boolean;
+  reviewing: boolean;
+}
+
+export interface AgentCurrentTask {
+  workItemId: number;
+  kind: string;
+  tool?: string;
+  startedAt: string;
+}
+
+export interface AgentRuntimeState {
+  agentId: number;
+  ventureId: number | null;
+  primary: AgentPrimaryState;
+  modifiers: AgentStateModifiers;
+  currentTask?: AgentCurrentTask;
+  activity: number;
+  since: string;
+  updatedAt: string;
+  source: 'runtime';
+}

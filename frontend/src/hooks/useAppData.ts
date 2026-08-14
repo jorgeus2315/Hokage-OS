@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import type { Agent, Decision, AgentRun, CommMsg, WsEvent, Building, Venture, Objective, MetricsSummary } from '../shared/types';
+import type { Agent, Decision, AgentRun, CommMsg, WsEvent, Building, Venture, Objective, MetricsSummary, AgentRuntimeState } from '../shared/types';
 import { api, useWebSocket } from '../shared';
 
 const EMPTY_METRICS: MetricsSummary = { ai_cost_today_usd: 0, messages_today: 0, pending_decisions: 0, urgent_decisions: 0 };
@@ -14,6 +14,7 @@ export type AppData = {
   departments: Building[];
   objectives: Objective[];
   metrics: MetricsSummary;
+  agentStates: Record<number, AgentRuntimeState>;  // K.4: estado real por agentId (fuente: backend)
   runtimeOn: boolean;
   pending: Decision[];
   wsConnected: boolean;
@@ -41,6 +42,7 @@ export function useAppData(): AppData {
   const [runtimeOn, setRuntimeOn] = useState(false);
   const [objectives, setObjectives] = useState<Objective[]>([]);
   const [metrics, setMetrics] = useState<MetricsSummary>(EMPTY_METRICS);
+  const [agentStates, setAgentStates] = useState<Record<number, AgentRuntimeState>>({});
 
   const loadAgents = useCallback(async () => {
     const data = await api.agents();
@@ -91,9 +93,11 @@ export function useAppData(): AppData {
         decisions?: Decision[];
         departments?: Building[];
         recent_events?: WsEvent[];
+        agent_states?: AgentRuntimeState[];
       };
       if (snap.agents)       setAgents(snap.agents);
       if (snap.decisions)    setDecisions(snap.decisions);
+      if (snap.agent_states) setAgentStates(Object.fromEntries(snap.agent_states.map((s) => [s.agentId, s])));
       if (snap.recent_events) setLiveEvents(snap.recent_events.slice(0, 50));
       if (snap.departments)  setDepartments(
         snap.departments.map((d: any) => ({
@@ -107,6 +111,12 @@ export function useAppData(): AppData {
 
     if (envelope.type === 'agent.event' && envelope.data && typeof envelope.data === 'object') {
       const inner: WsEvent = { ...(envelope.data as WsEvent), _cid: `${Date.now()}-${Math.random().toString(36).slice(2)}` };
+      // K.4: delta de estado real. El backend es la fuente de verdad; aquí solo se almacena.
+      if (inner.type === 'agent.state.changed') {
+        const st = inner.payload?.state as AgentRuntimeState | undefined;
+        if (st) setAgentStates((prev) => ({ ...prev, [st.agentId]: st }));
+        return;   // no es un evento de feed; no engrosar liveEvents
+      }
       setLiveEvents((prev) => [inner, ...prev].slice(0, 50));
       if (inner.type === 'decision.created') { loadDecisions(); loadMetrics(); }
       if (inner.type === 'agent.task.done' || inner.type === 'agent.task.start' || inner.type === 'agent.task.error') loadRuns();
@@ -138,7 +148,7 @@ export function useAppData(): AppData {
 
   return {
     agents, ventures, decisions, runs, messages, liveEvents,
-    departments, objectives, metrics, runtimeOn, pending, wsConnected,
+    departments, objectives, metrics, agentStates, runtimeOn, pending, wsConnected,
     reload: { loadAgents, loadVentures, loadDecisions, loadRuns, loadMessages, loadDepartments, loadRuntimeStatus, loadObjectives, loadMetrics },
   };
 }

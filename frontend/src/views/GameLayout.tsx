@@ -43,7 +43,7 @@ export function GameLayout() {
 
   const {
     agents, ventures, runs, messages, liveEvents,
-    departments, objectives, metrics, runtimeOn, pending, wsConnected, reload,
+    departments, objectives, metrics, runtimeOn, pending, wsConnected, agentStates, reload,
   } = useAppData();
 
   useEffect(() => {
@@ -71,6 +71,7 @@ export function GameLayout() {
     runs,
     pending,
     liveEvents,
+    agentStates,
     onEnterBuilding: enterBuilding,
   });
 
