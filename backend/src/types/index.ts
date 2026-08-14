@@ -380,3 +380,68 @@ export interface AutomationCreatePayload {
   action_context_template?: string | null;
   requires_approval?: boolean;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BLOQUE 0 (2026-08-13) — contratos de selección de modelo y estado de runtime.
+// ADITIVO: tipos nuevos, sin efecto sobre el comportamiento actual. Ver
+// BLOQUE_0_DECISIONES_FUNDACIONALES (vault) + ADR-007/008/009/010.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// —— TaskProfile / ModelRouter (ADR-008) ——
+export type TaskKind =
+  | 'research' | 'content' | 'strategy' | 'analysis' | 'review'
+  | 'classify' | 'bulk' | 'conversation' | 'code' | 'design';
+export type TaskComplexity = 'low' | 'medium' | 'high';
+export type TaskImportance = 'low' | 'medium' | 'high' | 'critical';
+export type TaskRisk = 'low' | 'medium' | 'high';
+
+export interface TaskNeeds {
+  reasoning?: boolean;
+  creativity?: boolean;
+  research?: boolean;
+  tools?: boolean;
+  longContext?: boolean;
+}
+
+// Perfil estructurado que Hokage produce al descomponer una orden — alimenta al ModelRouter.
+// El LLM propone este perfil; el runtime (router determinista) decide el modelo.
+export interface TaskProfile {
+  kind: TaskKind;
+  complexity: TaskComplexity;
+  importance: TaskImportance;
+  needs: TaskNeeds;
+  risk: TaskRisk;
+  timeSensitivity?: 'normal' | 'urgent';
+}
+
+// —— AgentRuntimeState (ADR-007) ——
+// Proyección DERIVADA en el backend (fuente de verdad). El frontend nunca la inventa.
+export type AgentPrimaryState =
+  | 'IDLE' | 'THINKING' | 'RESEARCHING' | 'WORKING' | 'WAITING'
+  | 'REVIEWING' | 'COMMUNICATING' | 'MOVING' | 'COMPLETED' | 'ERROR';
+
+export interface AgentStateModifiers {
+  awaitingApproval: boolean;   // tiene ≥1 Decision suya en 'proposed'
+  hasError: boolean;           // último run/tarea con error
+  blocked: boolean;            // bloqueada por dependencia/fase
+  reviewing: boolean;          // sometida a quality gate
+}
+
+export interface AgentCurrentTask {
+  workItemId: number;
+  kind: string;                // TaskKind del trabajo en curso
+  tool?: string;               // tool activa
+  startedAt: string;           // ISO
+}
+
+export interface AgentRuntimeState {
+  agentId: number;
+  ventureId: number | null;    // venture del trabajo ACTUAL
+  primary: AgentPrimaryState;
+  modifiers: AgentStateModifiers;
+  currentTask?: AgentCurrentTask;
+  activity: number;            // 0..1, derivado de señales reales (nunca Math.random)
+  since: string;               // desde cuándo en este primary
+  updatedAt: string;           // sello de captura
+  source: 'runtime';           // SIEMPRE backend
+}

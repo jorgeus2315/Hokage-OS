@@ -8,7 +8,9 @@ MOC (Map of Content) de Hokage Knowledge. Auditoría de arquitecto completa el 2
 
 ## Pilares (01_Arquitectura)
 
-- [[Especificación Funcional de Producto - v1]] — documento de mayor nivel del proyecto: filosofía, sesión de usuario completa, contratos de Hokage/Hermes/Agentes, conocimiento, memoria multinivel, herramientas, interfaz/escritorio, departamentos, automatización 24/7, escalabilidad, filosofía de configuración — 8 mejoras propuestas justificadas. Nada implementado 🆕
+- [[HOKAGE_OS_MASTER_SPEC]] — **documento ápice (2026-08-13):** referencia arquitectónica de alto nivel, 24 secciones, estado ✅/🟡/🔜 verificado contra código post-F12+B.1. Consolida y sustituye como ápice a los dos siguientes (que quedan como deep-dives). Fundado en la [[Auditoría de Arquitectura - 2026-08-13]] 🆕
+- [[BLOQUE_0_DECISIONES_FUNDACIONALES]] — 🔒 **CONGELADO (2026-08-13):** cierre de `AgentRuntimeState`, `ModelRouter`+`AIProvider`, Quality Floors, política de coste, feedback y revisión, + comprobación §Ω "Hokage es una cadena de orquestación, no un ModelRouter". 7 trampas evitadas, invariantes vs configurable, orden K.1–K.7. Genera ADR-007…010. Fundación del Bloque 1.
+- [[Especificación Funcional de Producto - v1]] — deep-dive (superado como ápice por el Master Spec): documento de mayor nivel anterior: filosofía, sesión de usuario completa, contratos de Hokage/Hermes/Agentes, conocimiento, memoria multinivel, herramientas, interfaz/escritorio, departamentos, automatización 24/7, escalabilidad, filosofía de configuración — 8 mejoras propuestas justificadas. Nada implementado 🆕
 - [[Núcleo - Arquitectura del Core]] — §0+§1 de la especificación, congelado ✅
 - [[VISION]] — documento fundacional de producto (extendido por la Especificación Funcional de arriba) ✅
 - [[Redefinición de Principios Fundamentales - 2026-08-06]] — Hermes deja de ser agente (es el Runtime), Hokage como única interfaz conversacional, agentes dejan de ser chatbots, contexto por capas, biblioteca de referencias, todo declarativo/configurable/editable (generalizar el patrón Registry del ECS) — filtro permanente "¿esto acerca a sistema operativo o a dashboard?" 🆕
@@ -24,6 +26,7 @@ MOC (Map of Content) de Hokage Knowledge. Auditoría de arquitecto completa el 2
 - [[Automatizaciones (Agente-Agente)]] (§7) ✅
 - [[Economía]] (§10) ✅
 - [[Economía v2 - Sistema Financiero]] (séptimo sistema de diseño, extiende Economía sin duplicarla, 2026-08-05) ✅
+- [[HOKAGE_MIGRATION_AND_DEPLOYMENT_SPEC]] — **ápice de producción/escalado (documento E, 2026-08-13):** arquitectura VPS, estrategia por 4 etapas (mínimo coste sin bloquear crecimiento), migración Mac→VPS clasificada A/B/C/D/E, contradicciones de producción, y el **orden recomendado de implementación de TODO el sistema**. Reconcilia las dos notas siguientes. Deep-dive de [[HOKAGE_OS_MASTER_SPEC]] §20 🆕
 - [[Seguridad, Permisos y VPS]] (§11.1 + §11.3) ✅
 - [[Gestión de Secretos y Capabilities]] (§11.2, separada de la anterior el 2026-08-05 — 4+ sistemas la citan como su propio sistema) ✅
 - [[Arquitectura de Voz - Hermes]] (octavo sistema de diseño, 2026-08-05) ✅
@@ -34,6 +37,7 @@ MOC (Map of Content) de Hokage Knowledge. Auditoría de arquitecto completa el 2
 
 Clúster acoplado del mapa/frontend vivo: 4 notas que se citan constantemente entre sí y seguirán creciendo (Fases 6-7 pendientes, overlays R7, modo edición). Los wikilinks sin ruta de carpeta no se ven afectados por vivir en subcarpeta — Obsidian resuelve por título de nota, no por ubicación.
 
+- [[HOKAGE_WORLD_ENGINE_SPEC]] — **ápice del clúster World Engine (documento D, 2026-08-13):** el mundo como proyección del estado REAL del Runtime (no animación decorativa). Contrato `AgentRuntimeState`, 5 capas sin contaminación, auditoría reutilizable-vs-deuda del ECS, migración incremental. Deep-dive de [[HOKAGE_OS_MASTER_SPEC]] §18–§19 🆕
 - [[Frontend World Engine]] (spec v1.0) ✅
 - [[Frontend - Decisiones v2]] (§13, congelado — v3, 2026-08-05) ✅
 - [[Crecimiento de la Ciudad - World Engine]] (noveno sistema de diseño, 2026-08-05) ✅
@@ -43,7 +47,8 @@ Clúster acoplado del mapa/frontend vivo: 4 notas que se citan constantemente en
 
 ## 03_Agentes
 
-- [[Agentes - Modelo y Decisión]] (§4) ✅
+- [[HOKAGE_AGENT_OPERATING_MODEL]] — **modelo operativo objetivo de agentes (documento C, 2026-08-13):** ciclo de vida, contexto por 11 capas, selección de modelo/proveedor por calidad, feedback→conocimiento, aportes dirigidos, coste/beneficio, autonomía por-agente, y el corte invariantes ↔ evolucionable. Deep-dive de [[HOKAGE_OS_MASTER_SPEC]] §2–§14 🆕
+- [[Agentes - Modelo y Decisión]] (§4) — deep-dive de decisiones de rol concretas ✅
 - [[Hermes y Claude - Los Dos Motores]] (§9) ✅
 
 ## 04_Plugins
@@ -73,6 +78,10 @@ Alcance: solo investigación técnica que informa decisiones de arquitectura (mo
 - [[ADR-004 - Memory System]] ✅
 - [[ADR-005 - Tool Runtime y Plugin Contract]] ✅
 - [[ADR-006 - Multi-Venture]] ✅
+- [[ADR-007 - AgentRuntimeState]] — estado de agente derivado (primario + modificadores), no inventado por frontend 🔒
+- [[ADR-008 - ModelRouter y AIProvider]] — selección dinámica de modelo; catálogo como dato; proveedor tras interfaz 🔒
+- [[ADR-009 - Hokage Cadena de Orquestación]] — Hokage no es un ModelRouter; composición como Tasks-con-dependencias, sin tocar el núcleo 🔒
+- [[ADR-010 - Quality Floors, Coste y Revisión]] — suelo de calidad como restricción; coste por valor; remediación diagnóstica 🔒
 
 ## 08_Memoria
 
