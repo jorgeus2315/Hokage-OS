@@ -8,6 +8,9 @@ import { reserveVentureBudget, releaseVentureBudget, ventureOverRealBudget } fro
 import { recordAudit } from './auditService.js';
 import { onResearchCommandFinalized } from './opportunityPipeline.js';
 import bus from '../config/eventBus.js';
+import { selectModel } from '../config/modelRouter.js';       // K.5: política determinista de modelo
+import { validateTaskProfile } from '../config/taskProfile.js'; // K.5: sanea el profile del LLM
+import type { TaskProfile } from '../types/index.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // hokageOrchestrator — Fase 5. Hokage como ORQUESTADOR, no especialista universal.
@@ -45,6 +48,7 @@ export interface ValidatedTask {
   role: string;
   title: string;
   prompt: string;
+  profile: TaskProfile;   // K.5: perfil de la tarea (lo PROPONE el LLM, lo SANEA validateTaskProfile)
 }
 export interface PlanValidation {
   tasks: ValidatedTask[];
@@ -86,11 +90,17 @@ export function validatePlan(raw: unknown, allowedRoles: Set<string>): PlanValid
         rejected.push({ reason: 'tarea incompleta (title/task vacío)', role });
         continue;
       }
-      tasks.push({ phase: p, role, title: title.slice(0, TITLE_MAX), prompt: prompt.slice(0, PROMPT_MAX) });
+      tasks.push({ phase: p, role, title: title.slice(0, TITLE_MAX), prompt: prompt.slice(0, PROMPT_MAX), profile: validateTaskProfile(rt.profile) });
       perPhase++;
     }
   }
   return { tasks, rejected };
+}
+
+// K.5: modelo elegido por el ModelRouter para una tarea validada (parte de la cadena de Hokage,
+// NO de askAgent). El tamaño de contexto lo estima el runtime desde el prompt real, no el LLM.
+function routeModelFor(vt: ValidatedTask): string {
+  return selectModel(vt.profile, { estimatedContextTokens: Math.ceil((vt.prompt.length + 2000) / 4) }).model.id;
 }
 
 // Roles a los que Hokage PUEDE delegar: negocio, no-sistema, activos. Excluye ceo/hermes.
@@ -105,7 +115,7 @@ async function allowedRoleKeySet(): Promise<Set<string>> {
 
 // ── Descomposición vía LLM (la salida es DATO no confiable → pasa por validatePlan) ──
 interface RawPlan {
-  phases?: Array<{ tasks?: Array<{ role?: string; title?: string; task?: string }> }>;
+  phases?: Array<{ tasks?: Array<{ role?: string; title?: string; task?: string; profile?: unknown }> }>;
 }
 // Alias exportado solo para tipar el plan inyectado en los tests (createCommand con decomposeFn).
 export type RawPlanForTest = RawPlan;
@@ -131,13 +141,14 @@ async function decompose(text: string, ventureId: number | null): Promise<RawPla
 Roles disponibles (usa SOLO estas claves): ${rolesDesc}
 
 Devuelve exactamente este JSON:
-{"phases":[{"tasks":[{"role":"<clave_de_rol>","title":"título corto","task":"instrucción concreta para el especialista"}]}]}
+{"phases":[{"tasks":[{"role":"<clave_de_rol>","title":"título corto","task":"instrucción concreta para el especialista","profile":{"kind":"research|content|strategy|analysis|review|classify|bulk|code|design|conversation","complexity":"low|medium|high","importance":"low|medium|high|critical","needs":{"reasoning":false,"creativity":false,"research":false,"tools":false},"risk":"low|medium|high"}}]}]}
 
 Reglas:
 - Agrupa en la MISMA fase las tareas independientes (se ejecutan en paralelo).
 - Pon en una fase POSTERIOR una tarea que dependa del resultado de otra.
 - Máximo ${MAX_PHASES} fases y ${MAX_TASKS_PER_PHASE} tareas por fase.
-- Cada tarea va a UN rol de la lista. No inventes roles, tools ni permisos.`;
+- Cada tarea va a UN rol de la lista. No inventes roles, tools ni permisos.
+- "profile" describe la tarea para elegir el modelo. Sé HONESTO: no marques todo como critical/high. importance=critical solo para lo irreversible o público; needs.tools=true solo si de verdad requiere herramientas.`;
 
   const model = await modelFor('ceo');
   // Atribución de coste del planner a la venture (Fase 7): el actor es el agente ceo (Hokage).
@@ -191,7 +202,7 @@ async function budgetBlocked(agentId: number): Promise<{ blocked: boolean; pct: 
 
 // ── Persistencia auxiliar ─────────────────────────────────────────────────────
 const CMD_SELECT = 'SELECT id, venture_id, text, status, plan_summary, result_summary, idempotency_key, replan_count, created_at, updated_at FROM hokage_commands';
-const TASK_SELECT = 'SELECT id, command_id, phase, role, agent_id, title, prompt, status, work_item_id, result, error, reserved_usd, created_at, updated_at FROM hokage_tasks';
+const TASK_SELECT = 'SELECT id, command_id, phase, role, agent_id, title, prompt, status, work_item_id, result, error, reserved_usd, model, created_at, updated_at FROM hokage_tasks';
 
 async function getCommandRow(id: number): Promise<HokageCommand | undefined> {
   return get<HokageCommand>(`${CMD_SELECT} WHERE id = ?`, [id]);
@@ -262,9 +273,11 @@ async function dispatchPhase(cmd: HokageCommand, phase: number): Promise<number>
 
     // Un único camino de ejecución: work_item de tipo 'hokage_task'. stage3 lo ejecuta con
     // askAgent() (tools por rol + autonomía + contexto + memoria), venture_id incluido.
+    // K.5: el modelo ya lo eligió el ModelRouter al crear el plan (routeModelFor → hokage_tasks.model).
+    // Aquí solo se PROPAGA al work_item para que el runtime lo ejecute con él.
     const wi = await run(
-      `INSERT INTO work_items (agent_id, venture_id, type, priority, status, context) VALUES (?, ?, 'hokage_task', 8, 'pending', ?)`,
-      [agentId, cmd.venture_id, priorBlock + t.prompt]
+      `INSERT INTO work_items (agent_id, venture_id, type, priority, status, context, model) VALUES (?, ?, 'hokage_task', 8, 'pending', ?, ?)`,
+      [agentId, cmd.venture_id, priorBlock + t.prompt, t.model ?? null]
     );
     const upd = await run(`UPDATE hokage_tasks SET status = 'dispatched', agent_id = ?, work_item_id = ?, reserved_usd = ?, updated_at = datetime('now') WHERE id = ? AND status = 'pending'`,
       [agentId, wi.lastID, reserved, t.id]);
@@ -390,8 +403,8 @@ export async function attemptReplan(
   const base = (maxPhaseRow?.m ?? 0) + 1; // las tareas nuevas van a fases posteriores a todo lo anterior
   for (const vt of tasks) {
     await run(
-      `INSERT INTO hokage_tasks (command_id, phase, role, title, prompt, status) VALUES (?, ?, ?, ?, ?, 'pending')`,
-      [commandId, base + vt.phase, vt.role, vt.title, vt.prompt]
+      `INSERT INTO hokage_tasks (command_id, phase, role, title, prompt, status, model) VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
+      [commandId, base + vt.phase, vt.role, vt.title, vt.prompt, routeModelFor(vt)]
     );
   }
   await run(`UPDATE hokage_commands SET replan_count = replan_count + 1, status = 'active', updated_at = datetime('now') WHERE id = ?`, [commandId]);
@@ -523,8 +536,8 @@ export async function createCommand(
 
   for (const vt of validTasks) {
     const ins = await run(
-      `INSERT INTO hokage_tasks (command_id, phase, role, title, prompt, status) VALUES (?, ?, ?, ?, ?, 'pending')`,
-      [commandId, vt.phase, vt.role, vt.title, vt.prompt]
+      `INSERT INTO hokage_tasks (command_id, phase, role, title, prompt, status, model) VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
+      [commandId, vt.phase, vt.role, vt.title, vt.prompt, routeModelFor(vt)]
     );
     await recordAudit({ type: 'task.created', ventureId, commandId, taskId: ins.lastID, meta: { role: vt.role, phase: vt.phase } });
   }

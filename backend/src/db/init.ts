@@ -129,6 +129,15 @@ async function runMigrations(): Promise<void> {
   if (!(await columnExists('work_items', 'milestone_id'))) {
     await run(`ALTER TABLE work_items ADD COLUMN milestone_id INTEGER REFERENCES obj_milestones(id)`);
   }
+  // K.5: modelo ELEGIDO por el ModelRouter en la cadena de Hokage (dispatch). El runtime lo usa
+  // como override en askAgent. NULL en work_items no orquestados → comportamiento estático.
+  if (!(await columnExists('work_items', 'model'))) {
+    await run(`ALTER TABLE work_items ADD COLUMN model TEXT`);
+  }
+  // K.5: modelo elegido por el ModelRouter al crear el plan (viaja hokage_tasks → work_item).
+  if (!(await columnExists('hokage_tasks', 'model'))) {
+    await run(`ALTER TABLE hokage_tasks ADD COLUMN model TEXT`);
+  }
 
   // Migración: work_items.business_id y agent_costs.business_id referenciaban
   // a la tabla businesses, eliminada por código muerto — con
@@ -256,6 +265,10 @@ async function runMigrations(): Promise<void> {
     await run(`ALTER TABLE agent_costs ADD COLUMN venture_id INTEGER REFERENCES ventures(id)`);
   }
   await run(`CREATE INDEX IF NOT EXISTS idx_agent_costs_venture ON agent_costs(venture_id)`);
+  // K.5: modelo realmente usado en la llamada (control de gasto por modelo). Lo puebla askAgent/callAIJson.
+  if (!(await columnExists('agent_costs', 'model'))) {
+    await run(`ALTER TABLE agent_costs ADD COLUMN model TEXT`);
+  }
 
   // Fase 7: reserva por tarea del orquestador (importe comprometido, para liberar al terminar).
   if (!(await columnExists('hokage_tasks', 'reserved_usd'))) {

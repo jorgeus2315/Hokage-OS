@@ -2,11 +2,11 @@
 // modelCatalog — catálogo de modelos como DATO (Bloque 0, ADR-008, trampa L4/L7).
 // ═══════════════════════════════════════════════════════════════════════════
 //
-// Fuente (futura) única de metadatos de modelo: tier, precio, contexto, tools, fuerzas.
-// ADITIVO y NO cableado todavía: aiService.ts / agentModels.ts siguen resolviendo el modelo
-// exactamente como antes. La consolidación (que aquellos lean de aquí) es K.5, no este paso.
-// Hoy este catálogo ESPEJA la config actual (AGENT_MODELS / MODEL_PRICES / TOOL_CAPABLE_MODELS)
-// — un test verifica que no hay drift. Añadir un modelo/proveedor futuro = una fila aquí.
+// FUENTE DE VERDAD (K.5, cableado) de los metadatos de modelo: tier, precio, contexto, tools,
+// fuerzas. aiService lee el precio (priceOf) y agentModels la capacidad de tools (modelSupportsTools)
+// desde aquí — sin tablas duplicadas (MODEL_PRICES / TOOL_CAPABLE_MODELS retiradas en K.5).
+// AGENT_MODELS queda solo como modelo por defecto del ROL (fallback cuando no hay TaskProfile).
+// Añadir un modelo/proveedor futuro = una fila aquí, sin tocar el router ni el dominio.
 
 export type ModelTier = 'S' | 'A' | 'B';
 
@@ -21,9 +21,9 @@ export interface ModelDescriptor {
   id: string;
   provider: string;                    // 'openrouter' (una impl de AIProvider)
   tier: ModelTier;
-  price: { in: number; out: number };  // USD por millón de tokens (espeja aiService MODEL_PRICES)
+  price: { in: number; out: number };  // USD por millón de tokens — fuente de verdad del coste (K.5)
   contextWindow: number;               // tokens (aproximado, dato afinable)
-  supportsTools: boolean;              // espeja TOOL_CAPABLE_MODELS
+  supportsTools: boolean;              // function calling — fuente de verdad de la capacidad (K.5)
   strengths: ModelStrengths;
   status: 'ready' | 'deprecated';
 }
@@ -64,4 +64,9 @@ export function getModel(id: string): ModelDescriptor | undefined {
 
 export function modelsByProvider(provider: string): ModelDescriptor[] {
   return MODEL_CATALOG.filter((m) => m.provider === provider);
+}
+
+// Precio del modelo (fuente de verdad para el coste). Fallback conservador si no está catalogado.
+export function priceOf(id: string): { in: number; out: number } {
+  return getModel(id)?.price ?? { in: 1.0, out: 5.0 };
 }

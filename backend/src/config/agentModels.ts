@@ -4,6 +4,8 @@
 
 // IDs verificados contra el catálogo en vivo de OpenRouter (openrouter.ai/api/v1/models).
 // Nota: OpenRouter usa "claude-sonnet-4.5" / "claude-haiku-4.5" (con punto), no con guion.
+import { getModel } from './modelCatalog.js';
+
 export const DEFAULT_MODEL = 'anthropic/claude-haiku-4.5';
 
 export const AGENT_MODELS: Record<string, string> = {
@@ -17,19 +19,10 @@ export const AGENT_MODELS: Record<string, string> = {
   hermes:       'anthropic/claude-haiku-4.5',
 };
 
-// Modelos con soporte real de function calling vía OpenRouter.
-// Llama 3.1 8B no soporta tools de forma fiable → se excluye.
-const TOOL_CAPABLE_MODELS = new Set([
-  'anthropic/claude-sonnet-4.5',
-  'anthropic/claude-haiku-4.5',
-  'google/gemini-2.5-flash',
-  'google/gemini-flash-1.5',
-]);
-
-// Tools disponibles por rol. Solo se incluyen en la llamada a OpenRouter
-// si el modelo del agente soporta function calling.
-// memory.write (Fase 3) y decision.create (Fase 4) solo van a roles tool-capable (ver
-// TOOL_CAPABLE_MODELS arriba). operaciones/soporte, en Llama 3.1 8B, se quedan permanentemente
+// Tools disponibles por rol. Solo se incluyen en la llamada al proveedor si el MODELO usado
+// soporta function calling (K.5: capacidad = dato del catálogo de modelos, no una lista aquí).
+// memory.write (Fase 3) y decision.create (Fase 4) solo van a roles tool-capable.
+// operaciones/soporte, en Llama 3.1 8B, se quedan permanentemente
 // en [MEMORIA: k=v] / [DECISION: ...] — no es una omisión temporal, es la realidad del modelo
 // (ver HOKAGE_CORE_SPECIFICATION_v1.md §2).
 export const AGENT_TOOLS: Record<string, string[]> = {
@@ -47,8 +40,9 @@ export function modelForRole(role: string): string {
   return AGENT_MODELS[role] || DEFAULT_MODEL;
 }
 
+// K.5: la capacidad de tools es dato del catálogo (fuente de verdad), no una Set duplicada.
 export function modelSupportsTools(model: string): boolean {
-  return TOOL_CAPABLE_MODELS.has(model);
+  return getModel(model)?.supportsTools ?? false;
 }
 
 export function toolsForRole(role: string): string[] {

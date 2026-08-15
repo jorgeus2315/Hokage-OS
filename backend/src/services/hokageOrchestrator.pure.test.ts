@@ -42,8 +42,9 @@ test('#12/#13 tools inexistentes o no permitidas: se IGNORAN, no se pueden expre
   };
   const { tasks } = validatePlan(raw, ALLOWED);
   assert.equal(tasks.length, 1);
-  // La tarea validada SOLO tiene estos campos — no hay forma de inyectar tools.
-  assert.deepEqual(Object.keys(tasks[0]).sort(), ['phase', 'prompt', 'role', 'title']);
+  // La tarea validada añade solo el profile (saneado por validateTaskProfile) — no hay forma de
+  // inyectar tools (K.5: la seguridad se mantiene; el profile NO contiene tools/permisos).
+  assert.deepEqual(Object.keys(tasks[0]).sort(), ['phase', 'profile', 'prompt', 'role', 'title']);
   assert.equal((tasks[0] as unknown as Record<string, unknown>).tools, undefined);
 });
 
@@ -53,7 +54,12 @@ test('#14 autonomía y presupuesto inyectados: se IGNORAN por completo', () => {
   };
   const { tasks } = validatePlan(raw, ALLOWED);
   assert.equal(tasks.length, 1);
-  assert.deepEqual(Object.keys(tasks[0]).sort(), ['phase', 'prompt', 'role', 'title']);
+  assert.deepEqual(Object.keys(tasks[0]).sort(), ['phase', 'profile', 'prompt', 'role', 'title']);
+  // K.5: autonomía/presupuesto/scope siguen sin poder inyectarse — el profile no los contiene.
+  const t14 = tasks[0] as unknown as Record<string, unknown>;
+  assert.equal(t14.autonomy, undefined);
+  assert.equal(t14.monthly_budget_usd, undefined);
+  assert.equal(t14.scope, undefined);
 });
 
 test('rol inexistente se rechaza', () => {

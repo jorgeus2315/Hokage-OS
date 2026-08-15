@@ -64,3 +64,15 @@ test('B0 router · contexto grande excluye modelos de ventana insuficiente', () 
   assert.ok(s.model.contextWindow >= 200_001);
   assert.notEqual(s.model.id, 'meta-llama/llama-3.1-8b-instruct');
 });
+
+test('K.5 router · sin modelo compatible → fallo EXPLÍCITO (no degrada en silencio)', () => {
+  assert.throws(() => selectModel(base({ kind: 'classify', complexity: 'low', importance: 'low' }), { catalog: [] }));
+});
+
+test('K.5 router · distintas tareas → distintos modelos (un mismo agente puede variar)', () => {
+  const trivial = selectModel(base({ kind: 'classify', complexity: 'low', importance: 'low' }));
+  const estrategia = selectModel(base({ kind: 'strategy', complexity: 'high', importance: 'high' }));
+  assert.notEqual(trivial.model.id, estrategia.model.id);
+  assert.equal(trivial.model.tier, 'B');
+  assert.equal(estrategia.model.tier, 'S');
+});

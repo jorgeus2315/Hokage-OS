@@ -5,29 +5,20 @@ import { autonomyAllowsTool } from '../config/rolePolicy.js';
 import { composeSystemContext } from './contextComposer.js';
 import { ventureOverRealBudget } from './ventureBudget.js';
 import * as registry from '../tools/registry.js';
+import { getModel, priceOf } from '../config/modelCatalog.js';
+import { getProvider, type ChatMessage } from './aiProvider.js';
 
-const OPENROUTER_BASE = 'https://openrouter.ai/api/v1';
-const AI_TIMEOUT_MS   = 120_000;
-const MAX_TOOL_TURNS  = 3; // máx iteraciones tool_call → resultado → LLM
+const MAX_TOOL_TURNS = 3; // máx iteraciones tool_call → resultado → LLM
 
-// Precios por millón de tokens (input/output) por modelo OpenRouter
-// Fuente: openrouter.ai/models — actualizar si cambian
-const MODEL_PRICES: Record<string, { in: number; out: number }> = {
-  'anthropic/claude-sonnet-4.5':          { in: 3.00,  out: 15.00 },
-  'anthropic/claude-haiku-4.5':           { in: 0.80,  out: 4.00  },
-  'google/gemini-2.5-flash':              { in: 0.15,  out: 0.60  },
-  'google/gemini-flash-1.5':              { in: 0.075, out: 0.30  },
-  'meta-llama/llama-3.1-8b-instruct':    { in: 0.06,  out: 0.06  },
-};
-const DEFAULT_PRICE = { in: 1.00, out: 5.00 }; // fallback conservador
-
+// K.5: el precio es dato del CATÁLOGO (fuente de verdad), no una tabla local. El dominio no
+// conoce OpenRouter ni precios de proveedor: los llama a través de AIProvider y del catálogo.
 function calcCostUsd(model: string, tokensIn: number, tokensOut: number): number {
-  const price = MODEL_PRICES[model] ?? DEFAULT_PRICE;
+  const price = priceOf(model);
   return (tokensIn * price.in + tokensOut * price.out) / 1_000_000;
 }
 
 // Estimación CONSERVADORA de coste (Fase 7) — NO es coste real, solo lo que una reserva
-// compromete por adelantado. Fuente de precios única (MODEL_PRICES). Redondeo a microdólar.
+// compromete por adelantado. Fuente de precios única (catálogo). Redondeo a microdólar.
 const EST_INPUT_TOKENS = 6000;
 const EST_OUTPUT_TOKENS = 2000; // = max_tokens por llamada
 function round6(n: number): number { return Math.round(n * 1e6) / 1e6; }
@@ -42,37 +33,18 @@ export function estimateTaskCostUsd(model: string): number {
   return round6(calcCostUsd(model, EST_INPUT_TOKENS, EST_OUTPUT_TOKENS) * (MAX_TOOL_TURNS + 1));
 }
 
-function openRouterHeaders(apiKey: string): Record<string, string> {
-  return {
-    'Content-Type': 'application/json',
-    Authorization: `Bearer ${apiKey}`,
-  };
-}
-
 export interface AskResult {
   ok: boolean;
   data?: { response: string; tokens: number };
   error?: string;
 }
 
-async function withAiTimeout<T>(promise: Promise<T>): Promise<T> {
-  const timeout = new Promise<never>((_, reject) => {
-    setTimeout(() => reject(new Error('AI_TIMEOUT')), AI_TIMEOUT_MS);
-  });
-  try {
-    return await Promise.race([promise, timeout]);
-  } catch (error: any) {
-    if (error?.message === 'AI_TIMEOUT') throw new Error('OpenRouter no respondió a tiempo');
-    throw error;
-  }
-}
-
-// OpenRouter exige nombres de función que cumplan ^[a-zA-Z0-9_-]{1,128}$
-// Los tool IDs internos usan puntos (google.trends) → convertir a guión bajo
+// OpenRouter exige nombres de función que cumplan ^[a-zA-Z0-9_-]{1,128}$ — los tool IDs internos
+// usan puntos (google.trends) → se convierten a guión bajo (detalle de formato del dominio de tools,
+// no del proveedor concreto).
 const toFnName = (id: string) => id.replace(/\./g, '_');
 const fromFnName = (name: string) => name.replace(/_/g, '.');
 
-// Convierte el inputSchema de un tool al formato OpenAI/OpenRouter
 function toolToOpenRouterSchema(tool: ReturnType<typeof registry.get>) {
   if (!tool) return null;
   return {
@@ -85,42 +57,41 @@ function toolToOpenRouterSchema(tool: ReturnType<typeof registry.get>) {
   };
 }
 
-export async function askAgent(agentId: number, userMessage: string, ventureId?: number | null): Promise<AskResult> {
+export async function askAgent(
+  agentId: number,
+  userMessage: string,
+  ventureId?: number | null,
+  modelOverride?: string | null,   // K.5: modelo elegido por el ModelRouter (cadena de Hokage). Sin él → estático.
+): Promise<AskResult> {
   try {
     const agentRow = await get<{ role: string; model: string | null; name: string }>(
       'SELECT role, model, name FROM agents WHERE id = ?', [agentId]
     );
 
-    const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-    // Definición de rol (modelo + tools + autonomía en una sola lectura). null si el rol no
-    // está en role_definitions todavía → se cae a los resolvers/fallback de siempre.
+    // Definición de rol (modelo + tools + autonomía en una sola lectura). null si el rol no está
+    // en role_definitions todavía → resolvers/fallback de siempre.
     const roleDef = agentRow?.role ? await getRoleDefinition(agentRow.role) : null;
     const autonomy = roleDef?.default_autonomy ?? 1;
-    // Modelo: override del agente > modelo del rol > AI_MODEL > default.
     const roleModel = agentRow?.role ? (roleDef?.model ?? await modelFor(agentRow.role)) : process.env.AI_MODEL;
-    const MODEL = agentRow?.model || roleModel || DEFAULT_MODEL;
+    // K.5: precedencia — modelo ENRUTADO (override del router) > override del agente > rol > default.
+    // Sin override, el comportamiento es exactamente el anterior (estático por rol).
+    const MODEL = modelOverride || agentRow?.model || roleModel || DEFAULT_MODEL;
 
-    if (!OPENROUTER_API_KEY) return { ok: false, error: 'Falta OPENROUTER_API_KEY en el entorno' };
+    // Frontera de proveedor: el proveedor sale del catálogo del modelo. El dominio no conoce
+    // detalles de OpenRouter ni gestiona su API key — eso vive en el proveedor.
+    const provider = getProvider(getModel(MODEL)?.provider ?? 'openrouter');
+    if (!provider.isConfigured()) return { ok: false, error: 'Proveedor de IA no configurado' };
 
-    // Defensa en profundidad (Fase 7): ninguna llamada a IA si la venture ya consumió su
-    // presupuesto REAL. Cubre CUALQUIER ruta (orquestador, autónomo, /ask), no solo el despacho.
+    // Defensa en profundidad (Fase 7): ninguna llamada a IA si la venture agotó su presupuesto REAL.
     if (await ventureOverRealBudget(ventureId)) {
       return { ok: false, error: 'Presupuesto de la venture agotado' };
     }
 
-    // Mensaje de SISTEMA por capas de confianza (Fase 3): Global → Rol → Venture → Memoria.
-    // El contexto temporal + la instrucción viajan en userMessage; los resultados de tools
-    // entran como mensajes 'tool'. El composer solo produce texto — no altera tools/autonomía.
-    const systemPrompt = await composeSystemContext({
-      agentId,
-      agentName: agentRow?.name ?? null,
-      ventureId,
-    });
+    // Mensaje de SISTEMA por capas (Fase 3). El composer solo produce texto — no altera tools/autonomía.
+    const systemPrompt = await composeSystemContext({ agentId, agentName: agentRow?.name ?? null, ventureId });
 
-    // Construir tools disponibles para este agente (solo si el modelo lo soporta).
-    // Tools del rol vía role_definitions (resolver con fallback); filtradas por la autonomía
-    // (Nivel 0 = solo lectura). La autonomía NUNCA amplía la lista del rol, solo la restringe.
-    // modelSupportsTools sigue siendo capacidad de runtime del MODELO, no del rol.
+    // Tools del rol ∩ autonomía. La autonomía NUNCA amplía la lista del rol. El modelo solo decide
+    // si SE OFRECEN (capacidad del modelo), nunca QUÉ tools tiene el agente (eso es rol+política).
     const roleTools = roleDef ? roleDef.tools : await toolsFor(agentRow?.role || '');
     const allowedTools = roleTools.filter((id) => autonomyAllowsTool(autonomy, id));
     const availableTools = modelSupportsTools(MODEL)
@@ -131,57 +102,30 @@ export async function askAgent(agentId: number, userMessage: string, ventureId?:
           .filter(Boolean)
       : [];
 
-    const messages: Array<Record<string, unknown>> = [
+    const messages: ChatMessage[] = [
       { role: 'system', content: systemPrompt },
       { role: 'user',   content: userMessage },
     ];
 
-    const url = `${OPENROUTER_BASE}/chat/completions`;
-    let totalTokens = 0;
-    let tokensIn = 0;
-    let tokensOut = 0;
+    let totalTokens = 0, tokensIn = 0, tokensOut = 0;
     let finalResponse = '';
 
-    // Loop de function calling (máx MAX_TOOL_TURNS iteraciones)
+    // Loop de function calling (máx MAX_TOOL_TURNS iteraciones) — vía el proveedor, no fetch directo.
     for (let turn = 0; turn <= MAX_TOOL_TURNS; turn++) {
-      const body: Record<string, unknown> = {
-        model:      MODEL,
-        max_tokens: 2000,
+      const resp = await provider.chat({
+        model: MODEL,
         messages,
-      };
-      if (availableTools.length > 0) body.tools = availableTools;
+        maxTokens: 2000,
+        tools: availableTools.length > 0 ? availableTools : undefined,
+      });
+      tokensIn    += resp.tokensIn;
+      tokensOut   += resp.tokensOut;
+      totalTokens += resp.totalTokens;
 
-      const res = await withAiTimeout(
-        fetch(url, { method: 'POST', headers: openRouterHeaders(OPENROUTER_API_KEY), body: JSON.stringify(body) })
-      );
+      if (resp.toolCalls.length === 0) { finalResponse = resp.content; break; }
 
-      if (!res.ok) {
-        const text = await res.text();
-        return { ok: false, error: `OpenRouter ${res.status}: ${text}` };
-      }
-
-      const data = (await res.json()) as any;
-      const usage    = data?.usage || {};
-      const turnIn   = usage.prompt_tokens     ?? 0;
-      const turnOut  = usage.completion_tokens ?? 0;
-      tokensIn    += turnIn;
-      tokensOut   += turnOut;
-      totalTokens += usage.total_tokens ?? (turnIn + turnOut);
-
-      const choice    = data?.choices?.[0];
-      const message   = choice?.message;
-      const toolCalls = message?.tool_calls as Array<{ id: string; function: { name: string; arguments: string } }> | undefined;
-
-      // Sin tool_calls → respuesta final de texto
-      if (!toolCalls || toolCalls.length === 0) {
-        finalResponse = message?.content || '';
-        break;
-      }
-
-      // Hay tool_calls: ejecutar cada uno y añadir resultados al hilo
-      messages.push({ role: 'assistant', content: message.content ?? null, tool_calls: toolCalls });
-
-      for (const call of toolCalls) {
+      messages.push({ role: 'assistant', content: resp.content || null, tool_calls: resp.toolCalls });
+      for (const call of resp.toolCalls) {
         let toolResult: string;
         try {
           const args    = JSON.parse(call.function.arguments || '{}');
@@ -193,29 +137,19 @@ export async function askAgent(agentId: number, userMessage: string, ventureId?:
         }
         messages.push({ role: 'tool', tool_call_id: call.id, content: toolResult });
       }
-
-      // Si llegamos al límite de turnos, forzar respuesta sin tools
-      if (turn === MAX_TOOL_TURNS) {
-        messages.push({ role: 'user', content: 'Resume con la respuesta final basada en los datos anteriores.' });
-        body.tools = undefined;
-      }
     }
 
     const costUsd = calcCostUsd(MODEL, tokensIn, tokensOut);
 
-    // Persistir en agent_runs
     await run(
       'INSERT INTO agent_runs (agent_id, action, status, tokens_used, cost) VALUES (?, ?, ?, ?, ?)',
       [agentId, 'ask', 'completed', totalTokens, costUsd]
     );
-
-    // Registrar coste en agent_costs — con venture_id (Fase 7) para el techo por venture.
+    // K.5: se registra el MODELO usado (control real del gasto por modelo/venture/agente).
     await run(
-      'INSERT INTO agent_costs (agent_id, venture_id, tokens_in, tokens_out, llm_cost_usd) VALUES (?, ?, ?, ?, ?)',
-      [agentId, ventureId ?? null, tokensIn, tokensOut, costUsd]
+      'INSERT INTO agent_costs (agent_id, venture_id, model, tokens_in, tokens_out, llm_cost_usd) VALUES (?, ?, ?, ?, ?, ?)',
+      [agentId, ventureId ?? null, MODEL, tokensIn, tokensOut, costUsd]
     ).catch(() => {});
-
-    // Actualizar gasto mensual en agent_budgets (upsert — crea la fila si no existe)
     await run(
       `INSERT INTO agent_budgets (agent_id, monthly_limit_usd, current_month_usd)
        VALUES (?, 5.0, ?)
@@ -225,54 +159,40 @@ export async function askAgent(agentId: number, userMessage: string, ventureId?:
 
     return { ok: true, data: { response: finalResponse, tokens: totalTokens } };
   } catch (error: any) {
-    return { ok: false, error: error?.message || 'Error al consultar OpenRouter' };
+    return { ok: false, error: error?.message || 'Error al consultar el proveedor de IA' };
   }
 }
 
-// Llamada directa a la IA para obtener JSON estructurado sin el sistema prompt del agente.
-// Usar solo para tareas internas del sistema (no conversaciones con el usuario).
-// costCtx (Fase 7, opcional): atribuye el coste real de esta llamada a una venture (planner/
-// replanner de Hokage). Registra en agent_costs (agent_id = actor, p.ej. el agente ceo) sin
-// tocar agent_budgets — la semántica del límite por-rol no cambia. Sin costCtx → como antes.
+// Llamada directa para obtener JSON estructurado (planner/replanner de Hokage) — sin tools ni el
+// system prompt del agente. También pasa por AIProvider (sin fetch duplicado). costCtx (Fase 7,
+// opcional) atribuye el coste a una venture registrando en agent_costs sin tocar agent_budgets.
 export async function callAIJson<T = unknown>(
   systemPrompt: string,
   userMessage: string,
   model?: string,
   costCtx?: { ventureId?: number | null; agentId: number },
 ): Promise<T | null> {
-  const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-  if (!OPENROUTER_API_KEY) return null;
   const MODEL = model || DEFAULT_MODEL;
+  const provider = getProvider(getModel(MODEL)?.provider ?? 'openrouter');
+  if (!provider.isConfigured()) return null;
   try {
-    const res = await withAiTimeout(
-      fetch(`${OPENROUTER_BASE}/chat/completions`, {
-        method: 'POST',
-        headers: openRouterHeaders(OPENROUTER_API_KEY),
-        body: JSON.stringify({
-          model: MODEL,
-          max_tokens: 2000,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userMessage },
-          ],
-        }),
-      })
-    );
-    if (!res.ok) return null;
-    const data = (await res.json()) as any;
+    const resp = await provider.chat({
+      model: MODEL,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userMessage },
+      ],
+      maxTokens: 2000,
+    });
 
-    // Atribución de coste del planner/replanner a la venture (Fase 7).
     if (costCtx) {
-      const usage = data?.usage || {};
-      const tin = usage.prompt_tokens ?? 0;
-      const tout = usage.completion_tokens ?? 0;
       await run(
-        'INSERT INTO agent_costs (agent_id, venture_id, tokens_in, tokens_out, llm_cost_usd) VALUES (?, ?, ?, ?, ?)',
-        [costCtx.agentId, costCtx.ventureId ?? null, tin, tout, calcCostUsd(MODEL, tin, tout)]
+        'INSERT INTO agent_costs (agent_id, venture_id, model, tokens_in, tokens_out, llm_cost_usd) VALUES (?, ?, ?, ?, ?, ?)',
+        [costCtx.agentId, costCtx.ventureId ?? null, MODEL, resp.tokensIn, resp.tokensOut, calcCostUsd(MODEL, resp.tokensIn, resp.tokensOut)]
       ).catch(() => {});
     }
 
-    const raw: string = data?.choices?.[0]?.message?.content || '';
+    const raw = resp.content || '';
     const jsonStart = raw.indexOf('{');
     const jsonEnd = raw.lastIndexOf('}');
     if (jsonStart < 0 || jsonEnd <= jsonStart) return null;

@@ -26,6 +26,8 @@ export interface AgentTask {
   // (p. ej. server.ts en /api/agents/:id/run) — mismo principio de compatibilidad
   // hacia atrás que askAgent() en aiService.ts.
   ventureId?: number | null;
+  // K.5: modelo elegido por el ModelRouter en el dispatch de Hokage. Sin él → selección estática.
+  modelOverride?: string | null;
 }
 
 export interface TaskResult {
@@ -197,7 +199,7 @@ class AgentRuntime {
 INSTRUCCIONES DE FORMATO:
 ${formatLines.join('\n')}`;
 
-      const result = await askAgent(task.agentId, taskPrompt, task.ventureId);
+      const result = await askAgent(task.agentId, taskPrompt, task.ventureId, task.modelOverride);
 
       if (!result.ok) {
         bus.publish({ type: 'agent.task.error', from: task.agentName, payload: { error: result.error } });
@@ -435,8 +437,8 @@ ${formatLines.join('\n')}`;
 
   // Etapa 3: ejecutar work_items in_progress (+ Etapa 5 inline: guardar resultado)
   private async stage3_executeAgents(): Promise<void> {
-    const inProgress = await all<{ id: number; agent_id: number; type: string; context: string | null; milestone_id: number | null; venture_id: number | null }>(
-      `SELECT w.id, w.agent_id, w.type, w.context, w.milestone_id, w.venture_id
+    const inProgress = await all<{ id: number; agent_id: number; type: string; context: string | null; milestone_id: number | null; venture_id: number | null; model: string | null }>(
+      `SELECT w.id, w.agent_id, w.type, w.context, w.milestone_id, w.venture_id, w.model
        FROM work_items w
        WHERE w.status = 'in_progress'
        ORDER BY w.priority DESC, w.created_at ASC
@@ -477,6 +479,7 @@ ${formatLines.join('\n')}`;
         taskType: item.type,
         context: taskContext,
         ventureId: item.venture_id,
+        modelOverride: item.model,   // K.5: modelo enrutado en el dispatch (null si no orquestado)
       });
 
       // Etapa 5 inline: persistir resultado

@@ -118,6 +118,7 @@ export interface HokageTask {
   result: string | null;
   error: string | null;
   reserved_usd: number;        // importe de presupuesto de venture reservado para esta tarea (Fase 7)
+  model: string | null;        // K.5: modelo elegido por el ModelRouter al crear el plan
   created_at: string;
   updated_at: string;
 }
