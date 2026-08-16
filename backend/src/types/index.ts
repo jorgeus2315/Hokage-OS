@@ -6,6 +6,10 @@ export interface Agent {
   model: string | null;
   venture_id: number | null;
   capabilities: string;
+  agent_type: string;
+  availability: string;
+  claimed_by_task: number | null;
+  claim_expires_at: string | null;
   created_at: string;
 }
 
@@ -14,6 +18,104 @@ export interface AgentCreatePayload {
   role: string;
   model?: string;
   venture_id?: number | null;
+  capabilities?: string;
+  agent_type?: string;
+  availability?: string;
+}
+
+// ADR-011 — Agent Registry types
+export type AgentType = 'permanent' | 'ephemeral' | 'reviewer';
+export type AgentCapability =
+  | 'web.browser'
+  | 'web.search'
+  | 'google.trends'
+  | 'trend.report'
+  | 'content.create'
+  | 'content.seo'
+  | 'decision.create'
+  | 'memory.remember'
+  | 'system.exec'
+  | 'system.shell'
+  | 'etsy.search'
+  | 'etsy.create_listing'
+  | 'etsy.get_shop'
+  | 'review.content'
+  | 'review.code'
+  | 'review.strategy'
+  | 'review.quality'
+  | 'analysis.financial'
+  | 'analysis.market'
+  | 'analysis.technical'
+  | 'code.generate'
+  | 'code.review'
+  | 'design.ui'
+  | 'design.graphic'
+  | 'research.web'
+  | 'research.trends'
+  | 'analysis.data'
+  | 'analysis.competitive'
+  | 'strategy.marketing'
+  | 'content.social';
+
+export type AgentCapabilities = AgentCapability[];
+
+export const AGENT_CAPABILITY_VOCABULARY: AgentCapability[] = [
+  'web.browser',
+  'web.search',
+  'google.trends',
+  'trend.report',
+  'content.create',
+  'content.seo',
+  'decision.create',
+  'memory.remember',
+  'system.exec',
+  'system.shell',
+  'etsy.search',
+  'etsy.create_listing',
+  'etsy.get_shop',
+  'review.content',
+  'review.code',
+  'review.strategy',
+  'review.quality',
+  'analysis.financial',
+  'analysis.market',
+  'analysis.technical',
+  'code.generate',
+  'code.review',
+  'design.ui',
+  'design.graphic',
+  // Legacy/test aliases (mapped in parseCapabilities or kept for compatibility)
+  'research.web',
+  'research.trends',
+  'analysis.data',
+  'analysis.competitive',
+  'strategy.marketing',
+  'content.social',
+];
+
+export interface SelectionCriteria {
+  ventureId?: number | null;
+  agentTypes?: AgentType[];
+  requiredCapabilities?: AgentCapability[];
+  preferredCapabilities?: AgentCapability[];
+  excludeAgentIds?: number[];
+  maxResults?: number;
+  requireReviewer?: boolean;
+}
+
+export interface SelectionResult {
+  agentId: number;
+  role: string;
+  capabilities: AgentCapabilities;
+  matchScore: number;
+  availability: 'available' | 'busy';
+  ventureId: number | null;
+  agentType: AgentType;
+}
+
+export interface ProvisionResult {
+  agentId: number;
+  capabilities: AgentCapabilities;
 }
 
 // Registry de roles (Fase 1, UI Implementation Plan.md). Fuente de verdad en runtime
@@ -35,6 +137,8 @@ export interface RoleDefinition {
   scope: 'business' | 'system';
   is_system: boolean;                // rol crítico, protegido de borrado/degradación
   status: 'active' | 'disabled';
+  capabilities: string;              // ADR-011: JSON array de AgentCapability (ej: '["research.web","analysis.data"]')
+  max_review_cycles: number;         // ADR-012: tope de ciclos de review por rol (default 2)
   created_at: string;
   updated_at: string;
 }
@@ -119,8 +223,35 @@ export interface HokageTask {
   error: string | null;
   reserved_usd: number;        // importe de presupuesto de venture reservado para esta tarea (Fase 7)
   model: string | null;        // K.5: modelo elegido por el ModelRouter al crear el plan
+  depends_on_count: number;    // ADR-012: aristas depends_on entrantes (cache de grafo)
+  handoff_input: string | null; // ADR-012: template de handoff resuelto desde tareas previas
+  handoff_from_role: string | null; // ADR-012: rol de la tarea que generó el handoff
+  review_cycles: number;       // ADR-012: ciclos de revisión ya ejecutados (tope en role_definitions.max_review_cycles)
+  review_verdict: string | null; // ADR-012: veredicto de la última review (pass|fail|needs_changes)
+  review_feedback: string | null; // ADR-012: feedback de la última review
   created_at: string;
   updated_at: string;
+}
+
+// ═══════════ ADR-012 — Task Graph DAG ═════════════════════════════════════════
+export type TaskEdgeType = 'depends_on' | 'handoff' | 'review_of';
+
+export interface TaskEdge {
+  id: number;
+  command_id: number;              // scope: todas las aristas de un command
+  from_task_id: number;            // predecesora
+  to_task_id: number;              // sucesora
+  type: TaskEdgeType;
+  payload: string;                 // JSON: para handoff = claves/template; para review_of = criterios
+  created_at: string;
+}
+
+export interface ValidatedTaskGraph {
+  tasks: HokageTask[];           // ya validados individualmente
+  edges: TaskEdge[];             // ya validados
+  topologicalOrder: number[];    // task_ids en orden de ejecución
+  phases: Map<number, number>;   // task_id → phase (nivel topológico)
+  hasReviewCycles: boolean;      // true si hay edges type='review_of'
 }
 
 // ═══════════ F11 — Pipeline de oportunidades ═══════════════════════════════════

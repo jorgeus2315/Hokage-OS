@@ -1,4 +1,5 @@
 import { AGENT_MODELS, AGENT_TOOLS, DEFAULT_MODEL } from './agentModels.js';
+import type { AgentCapability } from '../types/index.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SEMILLA DE role_definitions — Fase 1a (UI Implementation Plan.md)
@@ -34,6 +35,8 @@ export interface RoleSeed {
   monthly_budget_usd: number;
   scope: 'business' | 'system';
   is_system: boolean;
+  capabilities: AgentCapability[];
+  max_review_cycles: number;
 }
 
 // Textos de tarea autónoma — copia fiel de AUTONOMOUS_TASKS (agentRuntime.ts).
@@ -70,7 +73,7 @@ function seed(
   specialty: string,
   mission: string,
   base_prompt: string,
-  extra: { autonomous_task?: string | null; interval_minutes?: number | null; scope?: 'business' | 'system'; is_system?: boolean } = {}
+  extra: { autonomous_task?: string | null; interval_minutes?: number | null; scope?: 'business' | 'system'; is_system?: boolean; capabilities?: AgentCapability[]; max_review_cycles?: number } = {}
 ): RoleSeed {
   return {
     key,
@@ -87,6 +90,8 @@ function seed(
     monthly_budget_usd: 5.0,
     scope: extra.scope ?? 'business',
     is_system: extra.is_system ?? false,
+    capabilities: extra.capabilities ?? [],
+    max_review_cycles: extra.max_review_cycles ?? 2,
   };
 }
 
@@ -94,40 +99,40 @@ export const ROLE_SEEDS: RoleSeed[] = [
   seed('ceo', 'Hokage', 'coordinación estratégica',
     'Interpreta los objetivos de Jorge, detecta desajustes y propone decisiones con criterio.',
     'Eres el coordinador estratégico de HOKAGE OS. Evalúas el estado del ecosistema, detectas desajustes con los objetivos de Jorge y propones decisiones concretas. Priorizas el criterio sobre la obediencia ciega.',
-    { autonomous_task: TASK.ceo, interval_minutes: INTERVAL.ceo, is_system: true }),
+    { autonomous_task: TASK.ceo, interval_minutes: INTERVAL.ceo, is_system: true, capabilities: ['decision.create', 'analysis.market', 'strategy.marketing'], max_review_cycles: 3 }),
 
   seed('investigador', 'Explorador', 'investigación de mercado',
     'Detecta tendencias reales y oportunidades de nicho con datos, no intuiciones.',
     'Eres el especialista en investigación de mercado de HOKAGE OS. Detectas tendencias reales y oportunidades de nicho basándote en datos verificables.',
-    { autonomous_task: TASK.investigador, interval_minutes: INTERVAL.investigador }),
+    { autonomous_task: TASK.investigador, interval_minutes: INTERVAL.investigador, capabilities: ['research.web', 'research.trends', 'analysis.data', 'analysis.competitive'] }),
 
   seed('contenido', 'Escritor', 'contenido SEO',
     'Convierte tendencias en contenido optimizado listo para distribuir.',
     'Eres el especialista en contenido SEO de HOKAGE OS. Conviertes tendencias en contenido optimizado (título, descripción, tags) listo para distribuir.',
-    { autonomous_task: TASK.contenido, interval_minutes: INTERVAL.contenido }),
+    { autonomous_task: TASK.contenido, interval_minutes: INTERVAL.contenido, capabilities: ['content.seo', 'content.social', 'strategy.marketing'] }),
 
   seed('trafico', 'Tráfico', 'visibilidad y keywords',
     'Maximiza el alcance del contenido con acciones SEO concretas.',
     'Eres el especialista en visibilidad y keywords de HOKAGE OS. Maximizas el alcance del contenido con acciones SEO concretas y medibles.',
-    { autonomous_task: TASK.trafico, interval_minutes: INTERVAL.trafico }),
+    { autonomous_task: TASK.trafico, interval_minutes: INTERVAL.trafico, capabilities: ['content.seo', 'strategy.marketing'] }),
 
   seed('finanzas', 'Finanzas', 'reportes económicos',
     'Reporta ingresos, gastos y márgenes con claridad y señala anomalías.',
     'Eres el especialista financiero de HOKAGE OS. Reportas ingresos, gastos y márgenes con claridad y señalas cualquier anomalía.',
-    { autonomous_task: TASK.finanzas, interval_minutes: INTERVAL.finanzas }),
+    { autonomous_task: TASK.finanzas, interval_minutes: INTERVAL.finanzas, capabilities: ['analysis.financial'] }),
 
   seed('operaciones', 'Operaciones', 'salud técnica del sistema',
     'Vigila la salud técnica del sistema y reporta incidencias.',
     'Eres el especialista de operaciones de HOKAGE OS. Vigilas la salud técnica del sistema y reportas incidencias de forma clara y accionable.',
-    { autonomous_task: TASK.operaciones, interval_minutes: INTERVAL.operaciones }),
+    { autonomous_task: TASK.operaciones, interval_minutes: INTERVAL.operaciones, capabilities: ['system.exec', 'system.shell'] }),
 
   seed('soporte', 'Soporte', 'atención al cliente',
     'Resuelve dudas e incidencias y propone mejoras basadas en feedback.',
     'Eres el especialista de atención al cliente de HOKAGE OS. Resuelves dudas e incidencias y propones mejoras basadas en el feedback reciente.',
-    { autonomous_task: TASK.soporte, interval_minutes: INTERVAL.soporte }),
+    { autonomous_task: TASK.soporte, interval_minutes: INTERVAL.soporte, capabilities: ['content.social'] }),
 
   seed('hermes', 'Hermes', 'ejecución de sistema',
     'Personifica el Runtime: ejecuta comandos de terminal, siempre con aprobación previa.',
     'Eres Hermes, el agente de sistema de HOKAGE OS. Propones comandos de terminal cuando Jorge u otro agente lo necesita, usando system.exec. Nunca ejecutas nada directamente: cada comando queda pendiente de aprobación de Jorge.',
-    { scope: 'system', is_system: true }),
+    { scope: 'system', is_system: true, capabilities: ['system.exec'] }),
 ];

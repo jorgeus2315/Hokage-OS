@@ -29,9 +29,12 @@ export async function getAgent(id: number): Promise<Agent | undefined> {
 export async function createAgent(payload: AgentCreatePayload): Promise<Agent> {
   const def = await getRoleDefinition(payload.role);
   const model = payload.model || def?.model || modelForRole(payload.role);
+  const capabilities = payload.capabilities ?? '[]';
+  const agent_type = payload.agent_type ?? 'permanent';
+  const availability = payload.availability ?? 'available';
   const result = await run(
-    'INSERT INTO agents (name, role, status, model, venture_id) VALUES (?, ?, ?, ?, ?)',
-    [payload.name, payload.role, 'idle', model, payload.venture_id ?? null]
+    'INSERT INTO agents (name, role, status, model, venture_id, capabilities, agent_type, availability) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    [payload.name, payload.role, 'idle', model, payload.venture_id ?? null, capabilities, agent_type, availability]
   );
   const id = Number(result.lastID);
 

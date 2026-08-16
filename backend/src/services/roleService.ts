@@ -23,11 +23,13 @@ interface RoleDefinitionRow {
   model: string;
   fallback_model: string | null;
   tools: string;
+  capabilities: string;
   default_autonomy: number;
   monthly_budget_usd: number;
   scope: string;
   is_system: number;
   status: string;
+  max_review_cycles: number;
   created_at: string;
   updated_at: string;
 }
@@ -59,6 +61,8 @@ function hydrate(row: RoleDefinitionRow): RoleDefinition {
     scope: row.scope === 'system' ? 'system' : 'business',
     is_system: row.is_system === 1,
     status: row.status === 'disabled' ? 'disabled' : 'active',
+    capabilities: row.capabilities ?? '[]',
+    max_review_cycles: row.max_review_cycles ?? 2,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };

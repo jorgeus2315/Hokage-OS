@@ -103,6 +103,23 @@ async function runMigrations(): Promise<void> {
   if (!(await columnExists('agents', 'capabilities'))) {
     await run(`ALTER TABLE agents ADD COLUMN capabilities TEXT DEFAULT '[]'`);
   }
+  // ADR-011 Agent Registry columns
+  if (!(await columnExists('agents', 'agent_type'))) {
+    await run(`ALTER TABLE agents ADD COLUMN agent_type TEXT NOT NULL DEFAULT 'permanent'`);
+  }
+  if (!(await columnExists('agents', 'availability'))) {
+    await run(`ALTER TABLE agents ADD COLUMN availability TEXT NOT NULL DEFAULT 'available'`);
+  }
+  if (!(await columnExists('agents', 'claimed_by_task'))) {
+    await run(`ALTER TABLE agents ADD COLUMN claimed_by_task INTEGER`);
+  }
+  if (!(await columnExists('agents', 'claim_expires_at'))) {
+    await run(`ALTER TABLE agents ADD COLUMN claim_expires_at TEXT`);
+  }
+  // ADR-011: role_definitions.capabilities
+  if (!(await columnExists('role_definitions', 'capabilities'))) {
+    await run(`ALTER TABLE role_definitions ADD COLUMN capabilities TEXT NOT NULL DEFAULT '[]'`);
+  }
 
   // Columnas nuevas en decisions
   if (!(await columnExists('decisions', 'category'))) {
@@ -162,10 +179,11 @@ async function runMigrations(): Promise<void> {
       created_at       TEXT DEFAULT (datetime('now')),
       resolved_at      TEXT,
       venture_id       INTEGER REFERENCES ventures(id),
-      milestone_id     INTEGER REFERENCES obj_milestones(id)
+      milestone_id     INTEGER REFERENCES obj_milestones(id),
+      model            TEXT
     )`);
-    await run(`INSERT INTO work_items_v2 (id, agent_id, business_id, type, priority, status, context, result, locked_at, ttl_minutes, retry_count, created_at, resolved_at, venture_id, milestone_id)
-               SELECT id, agent_id, business_id, type, priority, status, context, result, locked_at, ttl_minutes, retry_count, created_at, resolved_at, venture_id, milestone_id FROM work_items`);
+    await run(`INSERT INTO work_items_v2 (id, agent_id, business_id, type, priority, status, context, result, locked_at, ttl_minutes, retry_count, created_at, resolved_at, venture_id, milestone_id, model)
+               SELECT id, agent_id, business_id, type, priority, status, context, result, locked_at, ttl_minutes, retry_count, created_at, resolved_at, venture_id, milestone_id, model FROM work_items`);
     await run(`DROP TABLE work_items`);
     await run(`ALTER TABLE work_items_v2 RENAME TO work_items`);
     await run(`CREATE INDEX IF NOT EXISTS idx_work_items_agent_status ON work_items(agent_id, status)`);
@@ -275,6 +293,50 @@ async function runMigrations(): Promise<void> {
     await run(`ALTER TABLE hokage_tasks ADD COLUMN reserved_usd REAL NOT NULL DEFAULT 0`);
   }
 
+  // ADR-012 Fase 5: columnas de Task Graph DAG en hokage_tasks
+  if (!(await columnExists('hokage_tasks', 'depends_on_count'))) {
+    await run(`ALTER TABLE hokage_tasks ADD COLUMN depends_on_count INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!(await columnExists('hokage_tasks', 'handoff_input'))) {
+    await run(`ALTER TABLE hokage_tasks ADD COLUMN handoff_input TEXT`);
+  }
+  if (!(await columnExists('hokage_tasks', 'handoff_from_role'))) {
+    await run(`ALTER TABLE hokage_tasks ADD COLUMN handoff_from_role TEXT`);
+  }
+  if (!(await columnExists('hokage_tasks', 'review_cycles'))) {
+    await run(`ALTER TABLE hokage_tasks ADD COLUMN review_cycles INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!(await columnExists('hokage_tasks', 'review_verdict'))) {
+    await run(`ALTER TABLE hokage_tasks ADD COLUMN review_verdict TEXT`);
+  }
+  if (!(await columnExists('hokage_tasks', 'review_feedback'))) {
+    await run(`ALTER TABLE hokage_tasks ADD COLUMN review_feedback TEXT`);
+  }
+
+  // ADR-012 Fase 5: tabla task_edges — fuente única de verdad del grafo de tareas
+  const taskEdgesExists = await get<{ name: string }>(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name='task_edges'"
+  );
+  if (!taskEdgesExists) {
+    await run(`
+      CREATE TABLE task_edges (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        command_id   INTEGER NOT NULL REFERENCES hokage_commands(id) ON DELETE CASCADE,
+        from_task_id INTEGER NOT NULL REFERENCES hokage_tasks(id) ON DELETE CASCADE,
+        to_task_id   INTEGER NOT NULL REFERENCES hokage_tasks(id) ON DELETE CASCADE,
+        type         TEXT NOT NULL, -- 'depends_on' | 'handoff' | 'review_of'
+        payload      TEXT NOT NULL DEFAULT '{}',
+        created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(command_id, from_task_id, to_task_id, type)
+      )
+    `);
+    await run(`CREATE INDEX IF NOT EXISTS idx_task_edges_command ON task_edges(command_id)`);
+    await run(`CREATE INDEX IF NOT EXISTS idx_task_edges_from ON task_edges(from_task_id)`);
+    await run(`CREATE INDEX IF NOT EXISTS idx_task_edges_to ON task_edges(to_task_id)`);
+    await run(`CREATE INDEX IF NOT EXISTS idx_task_edges_type ON task_edges(type)`);
+    console.log('[DB] Migración ADR-012: task_edges table + hokage_tasks DAG columns creadas');
+  }
+
   // Fase 9: columnas de correlación en event_log (aditivo, no destructivo, idempotente).
   for (const col of ['venture_id', 'command_id', 'task_id', 'work_item_id', 'agent_id']) {
     if (!(await columnExists('event_log', col))) {
@@ -308,12 +370,12 @@ async function seedRoleDefinitions(): Promise<void> {
     const res = await run(
       `INSERT OR IGNORE INTO role_definitions
         (key, label, specialty, mission, base_prompt, autonomous_task, interval_minutes,
-         model, fallback_model, tools, default_autonomy, monthly_budget_usd, scope, is_system, status)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'active')`,
+         model, fallback_model, tools, default_autonomy, monthly_budget_usd, scope, is_system, status, capabilities, max_review_cycles)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'active', ?, ?)`,
       [
         r.key, r.label, r.specialty, r.mission, r.base_prompt, r.autonomous_task, r.interval_minutes,
         r.model, r.fallback_model, JSON.stringify(r.tools), r.default_autonomy, r.monthly_budget_usd,
-        r.scope, r.is_system ? 1 : 0,
+        r.scope, r.is_system ? 1 : 0, JSON.stringify(r.capabilities ?? []), r.max_review_cycles,
       ]
     );
     inserted += res.changes;
@@ -365,6 +427,24 @@ async function seedAutomations(): Promise<void> {
   console.log('[DB] Automations sembradas: Tendencia→Escritor, Contenido→Tráfico');
 }
 
+export async function resetDb(): Promise<void> {
+  // Elimina todas las tablas de datos (mantiene schema) — útil para tests aislados
+  const tables = [
+    'agent_feedback', 'agent_prompts', 'agent_memory', 'agent_schedules', 'agent_runs',
+    'agent_budgets', 'agent_costs', 'tool_runs', 'audit_logs', 'work_items',
+    'market', 'content', 'messages', 'decisions', 'agents',
+    'business_proposals', 'opportunities', 'evidence',
+    'hokage_tasks', 'hokage_commands', 'task_edges',
+    'objectives', 'obj_milestones', 'projects', 'assets',
+    'ventures', 'automations', 'departments', 'role_definitions', 'memory_entries'
+  ];
+  for (const t of tables) {
+    await run(`DELETE FROM ${t}`);
+  }
+  // Resetear autoincrement
+  await run(`DELETE FROM sqlite_sequence`);
+}
+
 export async function initSchema(): Promise<void> {
   await run(`PRAGMA journal_mode = WAL;`);
   await run(`PRAGMA foreign_keys = ON;`);
@@ -374,6 +454,13 @@ export async function initSchema(): Promise<void> {
     name TEXT NOT NULL,
     role TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'idle',
+    model TEXT,
+    venture_id INTEGER REFERENCES ventures(id),
+    capabilities TEXT NOT NULL DEFAULT '[]',
+    agent_type TEXT NOT NULL DEFAULT 'permanent',
+    availability TEXT NOT NULL DEFAULT 'available',
+    claimed_by_task INTEGER,
+    claim_expires_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
 
@@ -501,7 +588,8 @@ export async function initSchema(): Promise<void> {
     ttl_minutes      INTEGER DEFAULT 30,
     retry_count      INTEGER DEFAULT 0,
     created_at       TEXT DEFAULT (datetime('now')),
-    resolved_at      TEXT
+    resolved_at      TEXT,
+    model            TEXT
   )`);
 
   await run(`CREATE INDEX IF NOT EXISTS idx_work_items_agent_status ON work_items(agent_id, status)`);
@@ -755,6 +843,8 @@ export async function initSchema(): Promise<void> {
     scope              TEXT NOT NULL DEFAULT 'business',
     is_system          INTEGER NOT NULL DEFAULT 0,
     status             TEXT NOT NULL DEFAULT 'active',
+    capabilities       TEXT NOT NULL DEFAULT '[]',
+    max_review_cycles  INTEGER NOT NULL DEFAULT 2,
     created_at         TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at         TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
@@ -793,6 +883,13 @@ export async function initSchema(): Promise<void> {
     result       TEXT,
     error        TEXT,
     reserved_usd REAL NOT NULL DEFAULT 0,
+    model        TEXT,
+    depends_on_count INTEGER NOT NULL DEFAULT 0,
+    handoff_input TEXT,
+    handoff_from_role TEXT,
+    review_cycles INTEGER NOT NULL DEFAULT 0,
+    review_verdict TEXT,
+    review_feedback TEXT,
     created_at   TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
