@@ -229,6 +229,10 @@ export interface HokageTask {
   review_cycles: number;       // ADR-012: ciclos de revisión ya ejecutados (tope en role_definitions.max_review_cycles)
   review_verdict: string | null; // ADR-012: veredicto de la última review (pass|fail|needs_changes)
   review_feedback: string | null; // ADR-012: feedback de la última review
+  // ADR-014 Slice A: contratos de evaluación determinista (opcionales — solo si el planner los fija)
+  output_schema: { required?: string[] } | null;
+  acceptance_criteria: string[] | null;
+  quality_floor: { minConfidence?: number } | null;
   created_at: string;
   updated_at: string;
 }
@@ -577,3 +581,76 @@ export interface AgentRuntimeState {
   updatedAt: string;           // sello de captura
   source: 'runtime';           // SIEMPRE backend
 }
+
+// ═══════════ ADR-014 Slice A — Task Evaluation (deterministic) ═══════════
+export type TaskVerdict = 'pass' | 'partial' | 'fail' | 'error';
+
+// Proyección mínima de work_item para evaluación — coincide con la SELECT en agentRuntime stage3.
+export interface WorkItemForEval {
+  id: number;
+  agent_id: number;
+  type: string;
+  context: string | null;
+  result: string | null;
+  error: string | null;
+  tokens_in?: number | null;
+  tokens_out?: number | null;
+  llm_cost_usd?: number | null;
+  tool_cost_usd?: number | null;
+  venture_id?: number | null;
+  model?: string | null;
+  milestone_id?: number | null;
+  retry_count?: number;
+  created_at?: string;
+  resolved_at?: string;
+}
+
+export interface TaskEvaluation {
+  workItemId: number;
+  taskId: number | null;
+  verdict: TaskVerdict;
+  confidence: number;              // 0..100
+  evidence: EvaluationEvidence[];
+  diagnosis: Diagnosis | null;
+  evaluator: 'automated' | 'llm' | 'human';
+  model: string | null;
+  costUsd: number;
+  createdAt: string;
+}
+
+export interface EvaluationEvidence {
+  type: 'schema' | 'criteria' | 'heuristic' | 'budget';
+  check: string;
+  passed: boolean;
+  details?: string;
+  weight: number;                  // 0..1, suma ≈1.0 en la evaluación
+  evaluable: boolean;              // true = check realizado; false = no hay datos para evaluar
+}
+
+export interface Diagnosis {
+  category: DiagnosisCategory;
+  rootCause: string;
+  suggestedRemediation: RemediationAction;
+  retryable: boolean;
+  context: Record<string, any>;
+}
+
+export type DiagnosisCategory =
+  | 'transient'          // rate limit, timeout, network blip
+  | 'tool_misuse'        // tool invocada mal, params inválidos
+  | 'output_invalid'     // schema violation, formato incorrecto
+  | 'quality_below_floor'// quality floor no alcanzado
+  | 'misaligned'         // resultado no responde al prompt/objetivo
+  | 'missing_capability' // agente no tiene tool/dominio necesario
+  | 'budget_exceeded'    // coste > reserved_usd o venture ceiling
+  | 'policy_violation'   // tool no grantable, autonomía insuficiente
+  | 'unknown';
+
+export type RemediationAction =
+  | 'retry_immediate'
+  | 'retry_with_feedback'
+  | 'escalate_model'
+  | 'reassign_agent'
+  | 'replan_task'
+  | 'replan_command'
+  | 'human_intervention';

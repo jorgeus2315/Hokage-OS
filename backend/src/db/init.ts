@@ -312,6 +312,69 @@ async function runMigrations(): Promise<void> {
   if (!(await columnExists('hokage_tasks', 'review_feedback'))) {
     await run(`ALTER TABLE hokage_tasks ADD COLUMN review_feedback TEXT`);
   }
+  // ADR-014 Slice A: columnas de contrato de evaluación en hokage_tasks (opcionales, fijadas por planner)
+  if (!(await columnExists('hokage_tasks', 'output_schema'))) {
+    await run(`ALTER TABLE hokage_tasks ADD COLUMN output_schema TEXT`);
+  }
+  if (!(await columnExists('hokage_tasks', 'acceptance_criteria'))) {
+    await run(`ALTER TABLE hokage_tasks ADD COLUMN acceptance_criteria TEXT`);
+  }
+  if (!(await columnExists('hokage_tasks', 'quality_floor'))) {
+    await run(`ALTER TABLE hokage_tasks ADD COLUMN quality_floor TEXT`);
+  }
+
+  // ADR-014 Slice A: columnas espejo de evaluación en work_items (observacional, no afecta flujo)
+  if (!(await columnExists('work_items', 'evaluation_verdict'))) {
+    await run(`ALTER TABLE work_items ADD COLUMN evaluation_verdict TEXT CHECK (evaluation_verdict IN ('pass','partial','fail','error'))`);
+  }
+  if (!(await columnExists('work_items', 'evaluation_confidence'))) {
+    await run(`ALTER TABLE work_items ADD COLUMN evaluation_confidence INTEGER DEFAULT 0`);
+  }
+  if (!(await columnExists('work_items', 'evaluation_evidence'))) {
+    await run(`ALTER TABLE work_items ADD COLUMN evaluation_evidence TEXT DEFAULT '[]'`);
+  }
+  // Columns for token/cost tracking (used by evaluation and runtime)
+  if (!(await columnExists('work_items', 'tokens_in'))) {
+    await run(`ALTER TABLE work_items ADD COLUMN tokens_in INTEGER DEFAULT 0`);
+  }
+  if (!(await columnExists('work_items', 'tokens_out'))) {
+    await run(`ALTER TABLE work_items ADD COLUMN tokens_out INTEGER DEFAULT 0`);
+  }
+  if (!(await columnExists('work_items', 'llm_cost_usd'))) {
+    await run(`ALTER TABLE work_items ADD COLUMN llm_cost_usd REAL DEFAULT 0`);
+  }
+  if (!(await columnExists('work_items', 'tool_cost_usd'))) {
+    await run(`ALTER TABLE work_items ADD COLUMN tool_cost_usd REAL DEFAULT 0`);
+  }
+  if (!(await columnExists('work_items', 'error'))) {
+    await run(`ALTER TABLE work_items ADD COLUMN error TEXT`);
+  }
+
+  // ADR-014 Slice A: tabla task_evaluations — registro de evaluación determinista de resultados
+  const taskEvaluationsExists = await get<{ name: string }>(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name='task_evaluations'"
+  );
+  if (!taskEvaluationsExists) {
+    await run(`
+      CREATE TABLE task_evaluations (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        work_item_id    INTEGER NOT NULL REFERENCES work_items(id) ON DELETE CASCADE,
+        task_id         INTEGER REFERENCES hokage_tasks(id) ON DELETE SET NULL,
+        verdict         TEXT NOT NULL CHECK (verdict IN ('pass','partial','fail','error')),
+        confidence      INTEGER NOT NULL DEFAULT 0,     -- 0..100
+        evidence        TEXT NOT NULL DEFAULT '[]',     -- JSON EvaluationEvidence[]
+        diagnosis       TEXT,                           -- JSON Diagnosis (NULL si pass)
+        evaluator       TEXT NOT NULL CHECK (evaluator IN ('automated','llm','human')),
+        model           TEXT,                           -- modelo usado si evaluator='llm'
+        cost_usd        REAL NOT NULL DEFAULT 0,
+        created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+      )
+    `);
+    await run(`CREATE INDEX IF NOT EXISTS idx_task_evaluations_workitem ON task_evaluations(work_item_id)`);
+    await run(`CREATE INDEX IF NOT EXISTS idx_task_evaluations_task ON task_evaluations(task_id)`);
+    await run(`CREATE INDEX IF NOT EXISTS idx_task_evaluations_verdict ON task_evaluations(verdict)`);
+    console.log('[DB] Migración ADR-014 Slice A: task_evaluations table + work_items eval columns creadas');
+  }
 
   // ADR-012 Fase 5: tabla task_edges — fuente única de verdad del grafo de tareas
   const taskEdgesExists = await get<{ name: string }>(
