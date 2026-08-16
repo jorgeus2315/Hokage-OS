@@ -213,3 +213,87 @@ test('B3 #16 completion duplicada: idempotente', async () => {
   const stable = await fullTask(t2.id);
   assert.equal(stable.work_item_id, reopened.work_item_id); // sin cambios: no-op
 });
+
+// ═══ Fix yellow #1 — counter/history phantom: contar SOLO si el dispatch creó un work_item. ═══
+
+const histLen = (t: HokageTask) => (JSON.parse(String((t as unknown as { remediation_history?: unknown }).remediation_history ?? '[]')) as unknown[]).length;
+const auditCount = async (taskId: number, type: string) =>
+  (await all<{ id: number }>('SELECT id FROM event_log WHERE task_id = ? AND type = ?', [taskId, type])).length;
+
+// A. Dispatch exitoso → retry_count +1, remediation_count 0, history +1, nuevo work_item, audit executed.
+test('Fix#1 A dispatch exitoso: counter/history +1 y audit executed', async () => {
+  const t = await oneDispatchedTask();
+  const before = await countWorkItems();
+  await remediateTask(t, makeEval('fail', 'transient', true)); // → retry_immediate
+  const after = await fullTask(t.id);
+  assert.equal(after.status, 'dispatched');
+  assert.equal(after.retry_count, 1);
+  assert.equal(after.remediation_count, 0);
+  assert.equal(histLen(after), 1);
+  assert.equal((await countWorkItems()) - before, 1);
+  assert.equal(await auditCount(t.id, 'task.remediation.executed'), 1);
+});
+
+// B. Dispatch bloqueado → blocked, counters/history SIN cambio, sin executed, con audit blocked.
+test('Fix#1 B dispatch bloqueado: sin counter/history phantom', async () => {
+  const t = await oneDispatchedTask('trafico');
+  await run(`UPDATE role_definitions SET status = 'disabled' WHERE key = 'trafico'`);
+  const beforeWi = await countWorkItems();
+  try {
+    await remediateTask(t, makeEval('fail', 'transient', true)); // retry_immediate → dispatch bloqueado (rol off)
+    const after = await fullTask(t.id);
+    assert.equal(after.status, 'blocked');
+    assert.equal(after.retry_count, 0);             // NO incrementado
+    assert.equal(after.remediation_count, 0);
+    assert.equal(histLen(after), 0);                // history intacto
+    assert.equal(await countWorkItems(), beforeWi); // sin nuevo work_item
+    assert.equal(await auditCount(t.id, 'task.remediation.executed'), 0);
+    assert.ok((await auditCount(t.id, 'task.remediation.blocked')) >= 1);
+  } finally {
+    await run(`UPDATE role_definitions SET status = 'active' WHERE key = 'trafico'`);
+  }
+});
+
+// C. Reassign sigue funcionando → remediation_count +1 solo tras dispatch exitoso.
+test('Fix#1 C reassign: remediation_count +1 tras dispatch exitoso', async () => {
+  const t = await oneDispatchedTask();
+  await createAgent({ name: `alt reassign #${Date.now()}`, role: 'investigador', venture_id: 1 });
+  const before = await countWorkItems();
+  await remediateTask(t, makeEval('fail', 'missing_capability', true)); // → reassign_agent
+  const after = await fullTask(t.id);
+  assert.equal(after.status, 'dispatched');
+  assert.equal(after.remediation_count, 1);
+  assert.equal(after.retry_count, 0);
+  assert.equal(histLen(after), 1);
+  assert.equal((await countWorkItems()) - before, 1);
+});
+
+// D. Idempotencia (vía el punto de entrada real): completion tardía del work_item viejo = no-op.
+test('Fix#1 D idempotencia: sin doble dispatch ni doble incremento', async () => {
+  const t = await oneDispatchedTask();
+  await run(`UPDATE hokage_tasks SET output_schema = ? WHERE id = ?`, ['{"required":["k"]}', t.id]);
+  const oldWi = t.work_item_id!;
+  await onHokageTaskCompleted(oldWi, true, '{}'); // output_invalid → retry_with_feedback → re-dispatch
+  const mid = await fullTask(t.id);
+  assert.equal(mid.remediation_count, 1);
+  assert.notEqual(mid.work_item_id, oldWi);
+  const wiMid = await countWorkItems();
+
+  await onHokageTaskCompleted(oldWi, true, '{}'); // completion tardía del wi ANTIGUO → no-op
+  const after = await fullTask(t.id);
+  assert.equal(after.remediation_count, 1);              // sin doble incremento
+  assert.equal(after.work_item_id, mid.work_item_id);    // sin segundo dispatch
+  assert.equal(await countWorkItems(), wiMid);
+});
+
+// E. Transient → retry_immediate: exactamente un incremento de retry_count/history.
+test('Fix#1 E transient → retry_immediate incrementa exactamente una vez', async () => {
+  const t = await oneDispatchedTask();
+  const before = await countWorkItems();
+  await onHokageTaskCompleted(t.work_item_id!, false, 'OpenRouter 429: rate limited', 'transient');
+  const after = await fullTask(t.id);
+  assert.equal(after.retry_count, 1);
+  assert.equal(after.remediation_count, 0);
+  assert.equal(histLen(after), 1);
+  assert.equal((await countWorkItems()) - before, 1);
+});

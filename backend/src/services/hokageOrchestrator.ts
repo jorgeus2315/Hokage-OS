@@ -637,9 +637,9 @@ function escalatedModelId(task: HokageTask): string | undefined {
   }
 }
 
-// Re-abre la tarea y la devuelve al dispatcher EXISTENTE. Atómico e idempotente: solo actúa si la
-// tarea SIGUE 'dispatched' (evita doble dispatch frente a completion duplicado). Incrementa el
-// counter correspondiente y añade la acción a remediation_history (fuente de los topes del engine).
+// Re-abre la tarea y la devuelve al dispatcher EXISTENTE. Contador/history se contabilizan SOLO si
+// el dispatch creó realmente un nuevo work_item (evita el contador phantom cuando el dispatch queda
+// bloqueado por rol/presupuesto). Idempotente: el reopen solo actúa si la tarea SIGUE 'dispatched'.
 async function reopenAndDispatch(
   task: HokageTask,
   action: RemediationAction,
@@ -649,7 +649,6 @@ async function reopenAndDispatch(
   const cmd = await getCommandRow(task.command_id);
   if (!cmd) { await safeFailTerminal(task, 'command inexistente'); return true; }
 
-  const newHistory: RemediationAttempt[] = [...history, { action, workItemId: task.work_item_id ?? 0, createdAt: new Date().toISOString() }];
   const counterCol = action === 'retry_immediate' ? 'retry_count' : 'remediation_count';
   const newPrompt = opts.feedback
     ? `${task.prompt}\n\n[REMEDIACIÓN · ${action}] ${opts.feedback}`.slice(0, PROMPT_MAX)
@@ -657,19 +656,43 @@ async function reopenAndDispatch(
   const newModel = opts.modelOverride ?? task.model;
   const newAgent = opts.clearAgent ? null : task.agent_id;
 
+  // PASO 1 — reopen atómico SIN counters/history (idempotencia: solo si sigue 'dispatched').
   const upd = await run(
     `UPDATE hokage_tasks
        SET status = 'pending', work_item_id = NULL, agent_id = ?, prompt = ?, model = ?,
-           error = NULL, ${counterCol} = ${counterCol} + 1, remediation_history = ?, updated_at = datetime('now')
+           error = NULL, updated_at = datetime('now')
      WHERE id = ? AND status = 'dispatched'`,
-    [newAgent, newPrompt, newModel, JSON.stringify(newHistory), task.id]
+    [newAgent, newPrompt, newModel, task.id]
   );
-  if (upd.changes !== 1) return true; // otra transición ya movió la tarea → NO re-despachar (sin doble dispatch)
+  if (upd.changes !== 1) return true; // otra transición ya movió la tarea → sin dispatch, sin counter
 
-  await recordAudit({ type: 'task.remediation.executed', ventureId: cmd.venture_id, commandId: cmd.id, taskId: task.id, agentId: task.agent_id, meta: { action, attempts: newHistory.length } });
-  bus.publish({ type: 'hokage.task.remediation', from: 'Hokage', payload: { commandId: cmd.id, taskId: task.id, ventureId: cmd.venture_id, action, attempt: newHistory.length } });
+  // PASO 2 — dispatch por el dispatcher existente (sin cambios). Con specificIds=[task.id] devuelve
+  // 0 o 1: 1 = se creó el nuevo work_item; 0 = quedó bloqueada (rol/presupuesto) sin work_item.
+  const dispatched = await dispatchReadyTasks(cmd, [task.id], opts.excludeAgentIds);
 
-  await dispatchReadyTasks(cmd, [task.id], opts.excludeAgentIds);
+  // PASO 4 — dispatch bloqueado: NO contar, NO history, solo audit de bloqueo.
+  if (dispatched !== 1) {
+    await recordAudit({ type: 'task.remediation.blocked', ventureId: cmd.venture_id, commandId: cmd.id, taskId: task.id, agentId: task.agent_id, meta: { action, reason: 'dispatch_blocked' } });
+    return true;
+  }
+
+  // PASO 3 — dispatch exitoso: counter + history en UNA sentencia (atómicos), protegido por estado.
+  const fresh = await get<{ work_item_id: number | null }>('SELECT work_item_id FROM hokage_tasks WHERE id = ?', [task.id]);
+  const newHistory: RemediationAttempt[] = [...history, { action, workItemId: fresh?.work_item_id ?? task.work_item_id ?? 0, createdAt: new Date().toISOString() }];
+  const upd3 = await run(
+    `UPDATE hokage_tasks
+       SET ${counterCol} = ${counterCol} + 1, remediation_history = ?, updated_at = datetime('now')
+     WHERE id = ? AND status = 'dispatched'`,
+    [JSON.stringify(newHistory), task.id]
+  );
+  // Invariante executed ⟺ counter incrementado: si la tarea cambió de estado tras el dispatch
+  // (p.ej. cancelCommand externo en la micro-ventana), el counter NO subió → no se emite 'executed'.
+  if (upd3.changes === 1) {
+    await recordAudit({ type: 'task.remediation.executed', ventureId: cmd.venture_id, commandId: cmd.id, taskId: task.id, agentId: task.agent_id, meta: { action, attempts: newHistory.length } });
+    bus.publish({ type: 'hokage.task.remediation', from: 'Hokage', payload: { commandId: cmd.id, taskId: task.id, ventureId: cmd.venture_id, action, attempt: newHistory.length } });
+  } else {
+    await recordAudit({ type: 'task.remediation.superseded', ventureId: cmd.venture_id, commandId: cmd.id, taskId: task.id, agentId: task.agent_id, meta: { action, reason: 'task_state_changed_after_dispatch' } });
+  }
   return true;
 }
 
