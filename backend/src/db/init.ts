@@ -323,6 +323,17 @@ async function runMigrations(): Promise<void> {
     await run(`ALTER TABLE hokage_tasks ADD COLUMN quality_floor TEXT`);
   }
 
+  // ADR-014 Slice B: contadores de remediación y política declarativa
+  if (!(await columnExists('hokage_tasks', 'retry_count'))) {
+    await run(`ALTER TABLE hokage_tasks ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!(await columnExists('hokage_tasks', 'remediation_count'))) {
+    await run(`ALTER TABLE hokage_tasks ADD COLUMN remediation_count INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!(await columnExists('hokage_tasks', 'remediation_policy'))) {
+    await run(`ALTER TABLE hokage_tasks ADD COLUMN remediation_policy TEXT`);
+  }
+
   // ADR-014 Slice A: columnas espejo de evaluación en work_items (observacional, no afecta flujo)
   if (!(await columnExists('work_items', 'evaluation_verdict'))) {
     await run(`ALTER TABLE work_items ADD COLUMN evaluation_verdict TEXT CHECK (evaluation_verdict IN ('pass','partial','fail','error'))`);

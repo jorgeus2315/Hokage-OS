@@ -233,6 +233,10 @@ export interface HokageTask {
   output_schema: { required?: string[] } | null;
   acceptance_criteria: string[] | null;
   quality_floor: { minConfidence?: number } | null;
+  // ADR-014 Slice B: contadores de remediación
+  retry_count: number;         // reintentos de transporte/ejecución (recuperación técnica)
+  remediation_count: number;   // intentos de remediación por calidad (escalera)
+  remediation_policy: RemediationPolicy | null; // política declarativa (JSON en TEXT), NULL = usar default global
   created_at: string;
   updated_at: string;
 }
@@ -654,3 +658,35 @@ export type RemediationAction =
   | 'replan_task'
   | 'replan_command'
   | 'human_intervention';
+
+// ═══════════ ADR-014 Slice B — Remediation Policy (declarative config) ═══════════
+// Configuración declarativa de la escalera de remediación por tarea/rol.
+// B1: solo tipos y migración; B2+ implementará el motor que la consume.
+export interface RemediationPolicy {
+  // Tope de reintentos inmediatos (transient, tool_misuse) — retry_count
+  maxRetries: number;
+  // Tope total de escalones de remediación — remediation_count
+  maxRemediations: number;
+  // Ruta de escalada ordenada. El motor avanza al siguiente cuando se agota el actual.
+  // Valores válidos: subconjunto de RemediationAction
+  escalationPath: RemediationAction[];
+  // Si true, respeta el límite de review_cycles (ADR-012) antes de reintentar tras review fail
+  respectReviewCycles: boolean;
+  // Opcional: política específica por categoría de diagnosis
+  // Si ausente, se usa escalationPath genérica
+  byCategory?: Partial<Record<DiagnosisCategory, { maxRetries: number; escalationPath: RemediationAction[] }>>;
+}
+
+// Defaults globales seguros (B2 los usará como fallback si la tarea no tiene policy propia)
+export const DEFAULT_REMEDIATION_POLICY: RemediationPolicy = {
+  maxRetries: 2,
+  maxRemediations: 4,
+  escalationPath: [
+    'retry_immediate',
+    'retry_with_feedback',
+    'reassign_agent',
+    'replan_task',
+    'human_intervention'
+  ],
+  respectReviewCycles: true,
+};
