@@ -662,6 +662,11 @@ export type RemediationAction =
   | 'replan_command'
   | 'human_intervention';
 
+// ADR-014 — Clasificación del error de EJECUCIÓN/transporte (ok=false). La produce el proveedor
+// de IA (frontera aiService) y viaja hasta el orquestador. Solo 'transient' entra en remediación
+// (retry_immediate); el resto conserva el camino de fallo existente. Ante ambigüedad → 'permanent'.
+export type AgentErrorClass = 'transient' | 'permanent' | 'policy' | 'budget' | 'config';
+
 // ═══════════ ADR-014 Slice B — Remediation Policy (declarative config) ═══════════
 // Configuración declarativa de la escalera de remediación por tarea/rol.
 // B1: solo tipos y migración; B2+ implementará el motor que la consume.

@@ -1,6 +1,6 @@
 import { run, get, all } from '../db/init.js';
 import type { HokageCommand, HokageTask, HokageCommandStatus, RoleDefinition, TaskEdge, TaskEdgeType } from '../types/index.js';
-import type { TaskEvaluation, WorkItemForEval, RemediationPolicy, RemediationAction } from '../types/index.js';
+import type { TaskEvaluation, WorkItemForEval, RemediationPolicy, RemediationAction, AgentErrorClass } from '../types/index.js';
 import { DEFAULT_REMEDIATION_POLICY } from '../types/index.js';
 import { getRoleDefinition, listRoleDefinitions, modelFor } from './roleService.js';
 import { createAgent } from './agentService.js';
@@ -760,7 +760,7 @@ export async function remediateTask(task: HokageTask, evaluation: TaskEvaluation
 // ── Avance del DAG: se llama cuando una tarea termina (hook desde stage3) ──────
 // El agentRuntime procesa work_items secuencialmente dentro de un tick, así que estas
 // transiciones no se solapan → no hacen falta locks.
-export async function onHokageTaskCompleted(workItemId: number, ok: boolean, resultText: string): Promise<void> {
+export async function onHokageTaskCompleted(workItemId: number, ok: boolean, resultText: string, errorClass?: AgentErrorClass): Promise<void> {
   // SELECT * → HokageTask completo (incluye output_schema/acceptance_criteria/quality_floor y los
   // contadores/política/historial de remediación) que el TASK_SELECT reducido no trae.
   const task = await get<HokageTask>(`SELECT * FROM hokage_tasks WHERE work_item_id = ?`, [workItemId]);
@@ -769,12 +769,30 @@ export async function onHokageTaskCompleted(workItemId: number, ok: boolean, res
   // ADR-014 B3: evaluación determinista integrada (antes observacional en agentRuntime stage3).
   // Corre para toda completion de hokage_task; persistir es best-effort (aislado del flujo).
   const evaluation = await evaluateCompletion(task, workItemId, ok, resultText);
+
+  // ADR-014 transient: el evaluador de contenido NO puede emitir 'transient' (la señal viene del
+  // transporte). Si el fallo de ejecución (ok=false) llega clasificado como transient, se convierte
+  // en un diagnóstico transient estructurado → la escalera lo tratará como retry_immediate.
+  const isTransient = !ok && errorClass === 'transient';
+  if (isTransient) {
+    evaluation.verdict = 'error';
+    evaluation.diagnosis = {
+      category: 'transient',
+      rootCause: resultText || 'transient transport error',
+      suggestedRemediation: 'retry_immediate',
+      retryable: true,
+      context: {},
+    };
+  }
+
   try { await insertTaskEvaluation(evaluation); } catch (e) { console.error('[EVAL] persistencia:', (e as Error).message); }
 
-  // ADR-014 B3: remediación SOLO si el agente ejecutó OK pero el resultado no supera la evaluación.
-  // ok=false conserva el camino de fallo existente (semántica DAG/replan intacta). Las revisoras
-  // (ADR-012) no se remedian aquí. Si la remediación toma el control → return (sin doble dispatch).
-  if (ok && evaluation.verdict !== 'pass' && !(await isReviewerTask(task))) {
+  // ADR-014: remediación si (B3) el agente ejecutó OK pero el resultado no supera la evaluación,
+  // O (transient) el fallo de transporte es reintentable. Todo lo demás de ok=false (permanent/
+  // policy/budget/config/undefined) conserva el camino de fallo existente (semántica DAG/replan
+  // intacta). Las revisoras (ADR-012) no se remedian aquí. Si remedia → return (sin doble dispatch).
+  const needsRemediation = (ok && evaluation.verdict !== 'pass') || isTransient;
+  if (needsRemediation && !(await isReviewerTask(task))) {
     const handled = await remediateTask(task, evaluation);
     if (handled) return;
   }

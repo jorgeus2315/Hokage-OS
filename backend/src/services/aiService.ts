@@ -7,6 +7,7 @@ import { ventureOverRealBudget } from './ventureBudget.js';
 import * as registry from '../tools/registry.js';
 import { getModel, priceOf } from '../config/modelCatalog.js';
 import { getProvider, type ChatMessage } from './aiProvider.js';
+import type { AgentErrorClass } from '../types/index.js';
 
 const MAX_TOOL_TURNS = 3; // máx iteraciones tool_call → resultado → LLM
 
@@ -37,6 +38,32 @@ export interface AskResult {
   ok: boolean;
   data?: { response: string; tokens: number };
   error?: string;
+  errorClass?: AgentErrorClass;   // ADR-014: clasificación del error (solo en ok=false)
+}
+
+// ADR-014: clasifica un error del proveedor de IA en una clase estable. Usa las señales realmente
+// disponibles (código de error de red en err.code/cause.code y el número de estado / texto que el
+// proveedor incrusta en el mensaje). Conservador: ante ambigüedad devuelve 'permanent' — nunca
+// clasifica como 'transient' salvo señal clara (rate-limit, timeout, red, gateway 502/503/504).
+export function classifyProviderError(err: unknown): AgentErrorClass {
+  const e = err as { message?: unknown; code?: unknown; cause?: { code?: unknown } };
+  const msg = (typeof e?.message === 'string' ? e.message : String(err ?? '')).toLowerCase();
+  const code = String(e?.code ?? e?.cause?.code ?? '').toUpperCase();
+
+  const NET_CODES = ['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN', 'EPIPE', 'ECONNABORTED'];
+  if (NET_CODES.includes(code)) return 'transient';
+
+  // Auth/permiso: no reintentable con el mismo estado.
+  if (/\b40[13]\b/.test(msg) || /unauthor|forbidden|authenticat|invalid api key|invalid key|api key/.test(msg)) return 'policy';
+
+  // Transitorios claros.
+  if (/\b429\b/.test(msg) || /rate.?limit|too many requests/.test(msg)) return 'transient';
+  if (/timeout|timed out|no respondió a tiempo|ai_timeout/.test(msg)) return 'transient';
+  if (/fetch failed|error de red|\bde red\b|network|socket hang up|econn|enotfound|eai_again|etimedout/.test(msg)) return 'transient';
+  if (/\b(502|503|504)\b/.test(msg) || /bad gateway|service unavailable|gateway timeout/.test(msg)) return 'transient';
+
+  // Regla de seguridad: cualquier otra cosa (incl. 400/404/500 y desconocidos) → permanent.
+  return 'permanent';
 }
 
 // OpenRouter exige nombres de función que cumplan ^[a-zA-Z0-9_-]{1,128}$ — los tool IDs internos
@@ -80,11 +107,11 @@ export async function askAgent(
     // Frontera de proveedor: el proveedor sale del catálogo del modelo. El dominio no conoce
     // detalles de OpenRouter ni gestiona su API key — eso vive en el proveedor.
     const provider = getProvider(getModel(MODEL)?.provider ?? 'openrouter');
-    if (!provider.isConfigured()) return { ok: false, error: 'Proveedor de IA no configurado' };
+    if (!provider.isConfigured()) return { ok: false, error: 'Proveedor de IA no configurado', errorClass: 'config' };
 
     // Defensa en profundidad (Fase 7): ninguna llamada a IA si la venture agotó su presupuesto REAL.
     if (await ventureOverRealBudget(ventureId)) {
-      return { ok: false, error: 'Presupuesto de la venture agotado' };
+      return { ok: false, error: 'Presupuesto de la venture agotado', errorClass: 'budget' };
     }
 
     // Mensaje de SISTEMA por capas (Fase 3). El composer solo produce texto — no altera tools/autonomía.
@@ -159,7 +186,7 @@ export async function askAgent(
 
     return { ok: true, data: { response: finalResponse, tokens: totalTokens } };
   } catch (error: any) {
-    return { ok: false, error: error?.message || 'Error al consultar el proveedor de IA' };
+    return { ok: false, error: error?.message || 'Error al consultar el proveedor de IA', errorClass: classifyProviderError(error) };
   }
 }
 

@@ -12,6 +12,7 @@ import { closeMilestoneOnResult } from '../services/objectiveService.js';
 import { onHokageTaskCompleted, onHokageWorkItemCancelled } from '../services/hokageOrchestrator.js';
 import { claimAgent, releaseAgent, cleanupExpiredClaims } from '../services/agentSelector.js';
 import { get, run, all } from '../db/init.js';
+import type { AgentErrorClass } from '../types/index.js';
 
 // ═══════════════════════════════════════════════════════
 // AGENT RUNTIME — Motor de ejecucion autonoma (8 etapas)
@@ -37,6 +38,7 @@ export interface TaskResult {
   decision?: { title: string; risk_level: string };
   message?: { to?: number; content: string };
   error?: string;
+  errorClass?: AgentErrorClass;   // ADR-014: clase del error de transporte (solo en ok=false vía askAgent)
 }
 
 // Las tareas autónomas por rol (task + interval) ya no viven aquí — su casa canónica es
@@ -208,7 +210,7 @@ ${formatLines.join('\n')}`;
 
       if (!result.ok) {
         bus.publish({ type: 'agent.task.error', from: task.agentName, payload: { error: result.error } });
-        return { ok: false, error: result.error };
+        return { ok: false, error: result.error, errorClass: result.errorClass };
       }
 
       const response = result.data?.response || '';
@@ -525,7 +527,7 @@ ${formatLines.join('\n')}`;
       // evaluación determinista + remediación ahora ocurren DENTRO de onHokageTaskCompleted
       // (integration layer). El runtime no participa del flujo de remediación (evita doble eval).
       if (item.type === 'hokage_task') {
-        await onHokageTaskCompleted(item.id, result.ok, result.response ?? result.error ?? '')
+        await onHokageTaskCompleted(item.id, result.ok, result.response ?? result.error ?? '', result.errorClass)
           .catch((err) => console.error('[HOKAGE] Error avanzando comando:', err.message));
       }
     }
