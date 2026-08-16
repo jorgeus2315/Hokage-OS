@@ -1,6 +1,7 @@
 # ROADMAP HOKAGE OS
-> Actualizado: 2026-08-02  
-> Referencia: ARCHITECTURE.md v2.0 · docs/research/world-engine/
+> Actualizado: 2026-08-16  
+> Referencia: ARCHITECTURE.md v2.0 · ADR-011 (Agent Registry) · ADR-012 (Task Graph DAG) · docs/research/world-engine/  
+> Commits de referencia: `6b0c4eb` (ADR-011 + ADR-012) · `555666d` (Agent Runtime ↔ ADR-011, claims unificados)
 
 ---
 
@@ -11,7 +12,9 @@
 - Frontend: React + Vite + TypeScript + PixiJS
 - Agentes con prompts reales en BD (207–276 chars)
 - Event Bus (HokageBus) operativo con broadcast WebSocket
-- Tool Runtime construido (registry, runtime, manager, types, base) — desconectado
+- Tool Runtime construido (registry, runtime, manager, types, base) — **conectado** a `aiService.ts` (function calling con OpenRouter)
+- Agent Registry + selección por capabilities + claim/release atómico (ADR-011)
+- Orquestación DAG de tareas: dependencies, handoffs, review cycles, replanning (ADR-012)
 
 ### Frontend ✅
 - MapView con edificios y tokens de agentes con animaciones
@@ -19,56 +22,57 @@
 - WebSocket conectado, recibe eventos del backend
 - CrewView, AlertsView operativas
 
-### Deuda técnica activa 🔴
+### Deuda técnica — estado tras `6b0c4eb` / `555666d`
 
-| Problema | Impacto | Sección ARCH |
-|----------|---------|-------------|
-| `agent_schedules` PK es `agent_role TEXT` | Bloquea multi-business | §10 |
-| Tool pipeline desconectado (0 imports desde aiService.ts) | Agentes sin herramientas | §9 |
-| Decision → ejecución no cierra el loop | Aprobaciones sin efecto | §6 |
-| Event Bus persiste a SQLite en algunos paths | Viola su contrato | §7 |
-| No existe tabla `work_items` | Sin scheduler real | §5 |
-| bcrypt + jsonwebtoken instalados, nunca usados | Dependencias muertas | §11 |
-| UNIQUE constraint falta en agent_memory(agent_id, key) | Duplicados posibles | §10 |
+| Problema original | Impacto | Estado real (verificado en código) |
+|----------|---------|--------|
+| `agent_schedules` PK era `agent_role TEXT` | Bloqueaba multi-business | ✅ migrado a `agent_id INTEGER PRIMARY KEY REFERENCES agents(id)` |
+| Tool pipeline desconectado (0 imports desde aiService.ts) | Agentes sin herramientas | ✅ conectado — `aiService.ts` importa `tools/registry` y ejecuta el loop de function calling |
+| Decision → ejecución no cerraba el loop | Aprobaciones sin efecto | ✅ `stage7_closeDecisionLoop` crea work_item `decision_execution` (P9) para `decisions.status='approved'` |
+| No existía tabla `work_items` | Sin scheduler real | ✅ existe con modelo completo (tipos, estados, `locked_at`, `ttl_minutes`, `retry_count`, `venture_id`, `model`) |
+| bcrypt + jsonwebtoken instalados, sin usar | Dependencias muertas | ✅ ya no están en `package.json` |
+| Faltaba UNIQUE en `agent_memory(agent_id, key)` | Duplicados posibles | ✅ `CREATE UNIQUE INDEX … ON agent_memory(agent_id, venture_id, key)` (aislado por venture, F8) |
+| Event Bus persiste a SQLite en algunos paths | ¿Viola su contrato? | 🟡 `history[]` sigue in-memory, pero `bus.publish` invoca `recordBusEvent` (audit saneado en SQLite) por evento — confirmar si es sidecar deliberado o deuda a limpiar |
 
 ---
 
-## Fase 1 — Scheduler real
+## Fase 1 — Scheduler real ✅ COMPLETADA (y superada por ADR-011 / ADR-012)
 
-> **Objetivo:** el runtime de agentes pasa de setInterval a un scheduler basado en work items con tick de 8 etapas fijas y active agents set.  
-> **Criterio de éxito:** los agentes ejecutan, sus resultados persisten en work_items y las decisiones aprobadas disparan automáticamente la ejecución.
+> **Objetivo original:** el runtime pasa de setInterval a un scheduler basado en work_items con tick de etapas fijas.  
+> **Estado:** implementado en `6b0c4eb` (ADR-011 + ADR-012) y `555666d` (Agent Runtime ↔ ADR-011). El scheduler real **ya no es "algo por construir desde cero"**: ejecuta work_items con `claimAgent` como gate atómico de exclusión, y la orquestación DAG de Hokage está operativa. La exclusión mutua vive en la BD, no en memoria.
 
-### 1.1 — Migración de agent_schedules
-- [ ] PK: `agent_role TEXT PRIMARY KEY` → `agent_id INTEGER PRIMARY KEY REFERENCES agents(id)`
-- [ ] Actualizar agentRuntime.ts para usar agent_id en todas las consultas de schedule
+### ✅ COMPLETADO
 
-### 1.2 — Tabla work_items
-- [ ] Crear tabla en init.ts (schema en ARCHITECTURE.md §5)
-- [ ] Tipos: `autonomous_run` | `event_triggered` | `decision_execution` | `delegated`
-- [ ] Estados: `pending` | `in_progress` | `done` | `failed` | `cancelled`
-- [ ] Locking: campo `locked_at` + TTL de 30 minutos por defecto
+**Scheduler / Runtime autónomo** — `agentRuntime.ts`
+- `work_items` como cola real (tabla con modelo completo; ver tabla de deuda arriba).
+- Tick de etapas fijas en `pollTick()`: `stage1` drenar bus → `stage2` asignar → `stage3` ejecutar (+ persistir resultado inline) → `stage4` TTL → `stage7` cerrar loop de decisión → `stage8` métricas → `stage9` broadcast de estado.
+- **`claimAgent` como GATE ATÓMICO `pending → in_progress`** (identidad del claim = `work_item.id`), sin ventana SELECT-comprobar+UPDATE.
+- **`releaseAgent` en éxito y error** (`stage3`), **TTL requeue/cancel** (`stage4`), **presupuesto** (`stage2`) y **cancelación de comando** (Hokage).
+- **`cleanupExpiredClaims` una vez por tick** (red anti-deadlock: resetea `availability` tras expiración sin release).
+- **Ejecución coordinada** entre runtime autónomo, Hokage y endpoints manuales (`/run`, `/ask`) sobre **una única primitiva** de exclusión.
+- `activeAgents` **ya NO es barrera de exclusión** → solo métrica derivada efímera; la exclusión durable vive en `agents.claimed_by_task`.
+- Migración `agent_schedules` → PK `agent_id`.
+- Cierre del loop **decisión → acción**: `stage7` crea work_item `decision_execution` (P9) para decisiones aprobadas.
 
-### 1.3 — Tick con 8 etapas fijas
-- [ ] Refactorizar `pollTick()` en agentRuntime.ts con las 8 etapas nombradas
-- [ ] Active agents set: `Set<number>` que controla quién se procesa este ciclo
-- [ ] Etapa 1: eventos del bus → work_items `event_triggered`
-- [ ] Etapa 2: escanear cola → asignar, marcar `in_progress` con `locked_at`
-- [ ] Etapa 3: ejecutar async con timeout = TTL
-- [ ] Etapa 4: verificar TTL expirados → devolver a `pending`
-- [ ] Etapa 5: recoger resultados → actualizar work_items + agent_runs
-- [ ] Etapa 6: generar work_items derivados (pipeline Explorador → Diseñador → Vendedor)
-- [ ] Etapa 7: decisions `approved` sin work_item de ejecución → crear uno con P9
-- [ ] Etapa 8: actualizar agent_costs + agent_budgets
+**Agent Registry + selección** — ADR-011 (🔒 congelado 2026-08-16) · `agentSelector.ts` · 33 tests
+- Agent Registry (capa de dato entre `role_definitions` y `agents`).
+- Capabilities atómicas (vocabulario cerrado) + **selección por matching determinista** (`selectAgent`, no creación implícita).
+- Tipos de agente (`permanent | temporary | reviewer`) + **disponibilidad** (`availability`).
+- **Claim/release atómico** + **lifecycle de claims** (`claimed_by_task`, `claim_expires_at`, `cleanupExpiredClaims`).
 
-### 1.4 — Cierre del loop decisión → acción
-- [ ] Cuando `decisions.status = 'approved'`: Etapa 7 crea work_item `{ type: 'decision_execution', priority: 9 }`
-- [ ] El agente emisor de la decision es el receptor del work_item de ejecución
+**Orquestación DAG** — ADR-012 (🔒 congelado 2026-08-15) · `taskGraph.ts` + `hokageOrchestrator.ts` · 13 tests
+- **DAG explícito** de tareas (`task_edges`: `depends_on`, `handoff`, `review_of`); `phase` queda como orden topológico derivado, no fuente de verdad.
+- **Dispatch de tareas READY** (`depends_on_count === 0`) vía `dispatchReadyTasks`.
+- **Directed hand-offs** (payload estructurado propagado del `result` de la predecesora al prompt de la sucesora).
+- **Review cycles / verdicts** (`review_of`, `max_review_cycles`).
+- **Replanning** acotado del supervisor ante fallo (tope `MAX_REPLANS`).
 
-### 1.5 — Limpieza de deuda técnica
-- [ ] Eliminar bcrypt y jsonwebtoken del package.json
-- [ ] Añadir `UNIQUE(agent_id, key)` en agent_memory
-- [ ] Drop tablas muertas: achievements, agent_progress, tools (schema legacy)
-- [ ] Event Bus: eliminar cualquier escritura a SQLite — solo in-memory history[]
+### 🟡 PENDIENTE / DEUDA (real, verificada — no inventada)
+- **Caminos legacy vivos:** `dispatchPhase` / `advanceCommand` (dispatch por fase) conviven con el dispatch DAG (`dispatchReadyTasks`). Consolidar o retirar el camino fase-based.
+- **Etapas del runtime sin consolidar:** la Etapa 5 va *inline* dentro de `stage3` y la Etapa 6 (pipeline derivado) vive en el drenaje de bus de `stage1`; la numeración `stage1..stage9` tiene huecos y conviene nombrarla/estructurarla explícitamente.
+- **Event Bus ↔ SQLite:** `bus.publish` escribe un audit saneado por evento (`recordBusEvent`). Confirmar el contrato: ¿sidecar de auditoría deliberado o escritura a eliminar? (ver tabla de deuda).
+- **Métricas / observabilidad:** `stage8` solo hace `console.log` de contadores de cola; no hay métricas persistidas ni endpoint de observabilidad del runtime.
+- **3 tests pre-existentes en rojo** en `hokageOrchestrator.db.test.ts` (`#6` dependencias, `#7/#8` continuación segura, `#13` replanificación) — integración del DAG, **ajenos a los claims**; fallan idénticos desde `6b0c4eb` (probado con `git stash`). No se tocan en este ciclo.
 
 ---
 
