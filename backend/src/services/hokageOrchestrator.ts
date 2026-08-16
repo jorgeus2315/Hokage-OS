@@ -604,12 +604,33 @@ function parseRemediationHistory(raw: unknown): RemediationAttempt[] {
   return [];
 }
 
-// escalate_model: el TaskProfile NO se persiste (solo el model id resuelto). Reconstrucción
-// conservadora del perfil para forzar un tier superior en el ModelRouter determinista. Si algo
-// falla, mantiene el modelo actual (peor caso = comportamiento de retry_with_feedback).
+// Deserialización segura del TaskProfile persistido (frontera única de lectura).
+// NULL/legacy → null (no se fabrica perfil). JSON válido → se sanea con validateTaskProfile
+// (reutilizado, sin segundo validador). JSON corrupto → null, sin lanzar.
+export function parseTaskProfile(raw: unknown): TaskProfile | null {
+  if (raw === null || raw === undefined || raw === '') return null;
+  let parsed: unknown = raw;
+  if (typeof raw === 'string') {
+    try { parsed = JSON.parse(raw); } catch { return null; }
+  }
+  return validateTaskProfile(parsed);
+}
+
+// Fallback conservador para tareas legacy SIN task_profile (comportamiento previo a la persistencia).
+// No se elimina todavía: sigue vivo mientras existan tareas antiguas sin perfil.
+const CONSERVATIVE_ESCALATION_PROFILE: TaskProfile = {
+  kind: 'analysis', complexity: 'medium', importance: 'high', needs: { reasoning: true }, risk: 'medium',
+};
+
+// escalate_model: usa el TaskProfile REAL si la tarea lo tiene persistido; si es legacy (NULL),
+// mantiene el fallback conservador previo. Sube un tier vía ModelRouter determinista. Si algo
+// falla, conserva el modelo actual (peor caso = comportamiento de retry_with_feedback).
+// NUNCA sobrescribe task_profile: solo devuelve el model resuelto para esta ejecución.
 function escalatedModelId(task: HokageTask): string | undefined {
   try {
-    const escalated = getEscalatedModelProfile({ kind: 'analysis', complexity: 'medium', importance: 'high', needs: { reasoning: true }, risk: 'medium' });
+    const real = parseTaskProfile((task as unknown as { task_profile?: unknown }).task_profile);
+    const base = real ?? CONSERVATIVE_ESCALATION_PROFILE;
+    const escalated = getEscalatedModelProfile(base as unknown as Parameters<typeof getEscalatedModelProfile>[0]);
     return selectModel(escalated as unknown as TaskProfile).model.id;
   } catch {
     return task.model ?? undefined;
@@ -877,8 +898,8 @@ export async function attemptReplan(
   const base = (maxPhaseRow?.m ?? 0) + 1; // las tareas nuevas van a fases posteriores a todo lo anterior
   for (const vt of tasks) {
     await run(
-      `INSERT INTO hokage_tasks (command_id, phase, role, title, prompt, status, model) VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
-      [commandId, base + vt.phase, vt.role, vt.title, vt.prompt, routeModelFor(vt)]
+      `INSERT INTO hokage_tasks (command_id, phase, role, title, prompt, status, model, task_profile) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)`,
+      [commandId, base + vt.phase, vt.role, vt.title, vt.prompt, routeModelFor(vt), JSON.stringify(vt.profile)]
     );
   }
 
@@ -1022,8 +1043,8 @@ export async function createCommand(
 
   for (const vt of validTasks) {
     const ins = await run(
-      `INSERT INTO hokage_tasks (command_id, phase, role, title, prompt, status, model) VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
-      [commandId, vt.phase, vt.role, vt.title, vt.prompt, routeModelFor(vt)]
+      `INSERT INTO hokage_tasks (command_id, phase, role, title, prompt, status, model, task_profile) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)`,
+      [commandId, vt.phase, vt.role, vt.title, vt.prompt, routeModelFor(vt), JSON.stringify(vt.profile)]
     );
     await recordAudit({ type: 'task.created', ventureId, commandId, taskId: ins.lastID, meta: { role: vt.role, phase: vt.phase } });
   }

@@ -237,6 +237,9 @@ export interface HokageTask {
   retry_count: number;         // reintentos de transporte/ejecución (recuperación técnica)
   remediation_count: number;   // intentos de remediación por calidad (escalera)
   remediation_policy: RemediationPolicy | null; // política declarativa (JSON en TEXT), NULL = usar default global
+  // ADR-014 Persistencia de TaskProfile: perfil validado que resolvió el modelo al planificar.
+  // JSON en TEXT; NULL = perfil desconocido/legacy (el consumidor usa fallback, no lo fabrica).
+  task_profile: TaskProfile | null;
   created_at: string;
   updated_at: string;
 }

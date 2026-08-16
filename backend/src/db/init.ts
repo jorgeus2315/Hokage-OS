@@ -339,6 +339,12 @@ async function runMigrations(): Promise<void> {
   if (!(await columnExists('hokage_tasks', 'remediation_history'))) {
     await run(`ALTER TABLE hokage_tasks ADD COLUMN remediation_history TEXT NOT NULL DEFAULT '[]'`);
   }
+  // ADR-014 Persistencia de TaskProfile: el perfil validado que produjo el ModelRouter al planificar.
+  // NULLable a propósito: NULL = perfil desconocido/legacy (tareas creadas antes de esta migración) →
+  // el consumidor usa su fallback conservador, nunca fabrica un perfil. No guarda el model derivado.
+  if (!(await columnExists('hokage_tasks', 'task_profile'))) {
+    await run(`ALTER TABLE hokage_tasks ADD COLUMN task_profile TEXT`);
+  }
 
   // ADR-014 Slice A: columnas espejo de evaluación en work_items (observacional, no afecta flujo)
   if (!(await columnExists('work_items', 'evaluation_verdict'))) {
