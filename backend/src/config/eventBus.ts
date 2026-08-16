@@ -26,6 +26,7 @@ export type AgentEventType =
   | 'hokage.task.dispatched'   // Tarea de Hokage convertida en work_item
   | 'hokage.phase.completed'   // Todas las tareas de una fase terminaron OK
   | 'hokage.command.replanned' // Supervisor generó un plan alternativo tras un fallo
+  | 'hokage.task.remediation'  // ADR-014 B3: acción de remediación ejecutada sobre una tarea
   | 'hokage.command.completed' // Orden finalizada (completed/partial/failed)
   | 'agent.state.changed';     // K.4: cambio de AgentRuntimeState (delta hacia el frontend)
 

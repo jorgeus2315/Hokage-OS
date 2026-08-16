@@ -12,9 +12,6 @@ import { closeMilestoneOnResult } from '../services/objectiveService.js';
 import { onHokageTaskCompleted, onHokageWorkItemCancelled } from '../services/hokageOrchestrator.js';
 import { claimAgent, releaseAgent, cleanupExpiredClaims } from '../services/agentSelector.js';
 import { get, run, all } from '../db/init.js';
-import { evaluateAutomated, insertTaskEvaluation } from '../services/taskEvaluator.js';
-import { getRoleDefinition } from '../services/roleService.js';
-import type { HokageTask, WorkItemForEval } from '../types/index.js';
 
 // ═══════════════════════════════════════════════════════
 // AGENT RUNTIME — Motor de ejecucion autonoma (8 etapas)
@@ -524,36 +521,12 @@ ${formatLines.join('\n')}`;
       }
 
       // Avanzar el plan del orquestador si este work_item era una tarea de Hokage (Fase 5).
-      // Aditivo y gateado por tipo: no afecta a ningún work_item existente.
+      // Aditivo y gateado por tipo: no afecta a ningún work_item existente. ADR-014 B3: la
+      // evaluación determinista + remediación ahora ocurren DENTRO de onHokageTaskCompleted
+      // (integration layer). El runtime no participa del flujo de remediación (evita doble eval).
       if (item.type === 'hokage_task') {
         await onHokageTaskCompleted(item.id, result.ok, result.response ?? result.error ?? '')
           .catch((err) => console.error('[HOKAGE] Error avanzando comando:', err.message));
-
-        // ADR-014 Slice A: evaluación determinista OBSERVACIONAL (no remedia, no altera flujo).
-        // Se ejecuta tras liberar el claim y tras el hook del orquestador. Solo persiste veredicto
-        // + espejo en work_items. Cualquier fallo queda aislado: el ciclo sigue intacto.
-        try {
-          const workItem = await get<WorkItemForEval>(
-            `SELECT id, agent_id, type, context, result, error,
-                    tokens_in, tokens_out, llm_cost_usd, tool_cost_usd, venture_id, model,
-                    milestone_id, retry_count, created_at, resolved_at
-             FROM work_items WHERE id = ?`,
-            [item.id]
-          );
-          if (workItem) {
-            const task = await get<HokageTask>(
-              `SELECT * FROM hokage_tasks WHERE work_item_id = ?`,
-              [item.id]
-            );
-            const roleDef = await getRoleDefinition(agent.role);
-            if (roleDef) {
-              const evaluation = await evaluateAutomated(workItem, task, roleDef);
-              await insertTaskEvaluation(evaluation);
-            }
-          }
-        } catch (evalErr) {
-          console.error('[EVAL] Error en evaluación observacional:', (evalErr as Error).message);
-        }
       }
     }
   }

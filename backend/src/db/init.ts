@@ -333,6 +333,12 @@ async function runMigrations(): Promise<void> {
   if (!(await columnExists('hokage_tasks', 'remediation_policy'))) {
     await run(`ALTER TABLE hokage_tasks ADD COLUMN remediation_policy TEXT`);
   }
+  // ADR-014 Slice B3: historial de acciones de remediación por tarea (JSON RemediationAttempt[]).
+  // Es el attempt_history que ADR-014 §5 diseñó: planRemediation() lo necesita para avanzar la
+  // escalera y aplicar maxRemediations (sin él, la escalera se atasca y no respeta límites → bucle).
+  if (!(await columnExists('hokage_tasks', 'remediation_history'))) {
+    await run(`ALTER TABLE hokage_tasks ADD COLUMN remediation_history TEXT NOT NULL DEFAULT '[]'`);
+  }
 
   // ADR-014 Slice A: columnas espejo de evaluación en work_items (observacional, no afecta flujo)
   if (!(await columnExists('work_items', 'evaluation_verdict'))) {

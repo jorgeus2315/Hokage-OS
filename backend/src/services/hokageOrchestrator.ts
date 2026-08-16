@@ -1,8 +1,14 @@
 import { run, get, all } from '../db/init.js';
 import type { HokageCommand, HokageTask, HokageCommandStatus, RoleDefinition, TaskEdge, TaskEdgeType } from '../types/index.js';
+import type { TaskEvaluation, WorkItemForEval, RemediationPolicy, RemediationAction } from '../types/index.js';
+import { DEFAULT_REMEDIATION_POLICY } from '../types/index.js';
 import { getRoleDefinition, listRoleDefinitions, modelFor } from './roleService.js';
 import { createAgent } from './agentService.js';
 import { selectAgent, releaseAgent } from './agentSelector.js'; // ADR-011: selección + release. El CLAIM lo hace stage2 (gate pending→in_progress, decisión #5).
+import { evaluateAutomated, insertTaskEvaluation } from './taskEvaluator.js'; // ADR-014: evaluación determinista
+import { planRemediation, getEscalatedModelProfile } from './remediationEngine.js'; // ADR-014 B2: motor puro de remediación
+import type { RemediationAttempt, ReviewContext, TaskCounters } from './remediationEngine.js';
+import { createDecision } from './decisionService.js'; // ADR-014: human_intervention
 import { callAIJson, estimateTaskCostUsd } from './aiService.js';
 import { createMemoryEntry } from './memoryService.js';
 import { reserveVentureBudget, releaseVentureBudget, ventureOverRealBudget } from './ventureBudget.js';
@@ -170,7 +176,10 @@ Reglas:
 // in_progress (gate único pending→in_progress, decisión #5) por work_item.id — así claim y release
 // comparten identidad. Aquí solo se elige/crea el agente; la selección respeta ADR-011 (selectAgent
 // ya excluye agentes reclamados) y el fallback nunca reutiliza un agente ocupado (decisión #11).
-async function selectOrCreateSpecialist(role: string, ventureId: number | null, commandId?: number, taskId?: number): Promise<number> {
+async function selectOrCreateSpecialist(role: string, ventureId: number | null, commandId?: number, taskId?: number, excludeAgentIds?: number[]): Promise<number> {
+  // ADR-014 reassign_agent: filtro SQL para excluir al agente anterior en la ruta legacy.
+  const excludeSql = excludeAgentIds && excludeAgentIds.length ? ` AND id NOT IN (${excludeAgentIds.join(',')})` : '';
+
   // Si hay taskId, preferir selección por capability matching (excluye agentes ya reclamados).
   if (taskId != null) {
     const def = await getRoleDefinition(role);
@@ -179,6 +188,7 @@ async function selectOrCreateSpecialist(role: string, ventureId: number | null, 
       ventureId,
       requiredCapabilities: baseCaps as any,
       agentTypes: ['permanent'],
+      excludeAgentIds, // ADR-014: reassign excluye al agente que falló
       maxResults: 1,
     });
     if (result.length > 0) {
@@ -193,11 +203,11 @@ async function selectOrCreateSpecialist(role: string, ventureId: number | null, 
   const CLAIMABLE = `availability = 'available' AND (claimed_by_task IS NULL OR claim_expires_at < datetime('now'))`;
   let agentId: number | null = null;
   if (ventureId != null) {
-    const scoped = await get<{ id: number }>(`SELECT id FROM agents WHERE role = ? AND venture_id = ? AND ${CLAIMABLE} LIMIT 1`, [role, ventureId]);
+    const scoped = await get<{ id: number }>(`SELECT id FROM agents WHERE role = ? AND venture_id = ? AND ${CLAIMABLE}${excludeSql} LIMIT 1`, [role, ventureId]);
     if (scoped) agentId = scoped.id;
   }
   if (agentId == null) {
-    const global = await get<{ id: number }>(`SELECT id FROM agents WHERE role = ? AND venture_id IS NULL AND ${CLAIMABLE} LIMIT 1`, [role]);
+    const global = await get<{ id: number }>(`SELECT id FROM agents WHERE role = ? AND venture_id IS NULL AND ${CLAIMABLE}${excludeSql} LIMIT 1`, [role]);
     if (global) agentId = global.id;
   }
   let created = false;
@@ -369,7 +379,7 @@ async function handleReviewVerdict(commandId: number, reviewTask: HokageTask, re
 // ── Despacho de tareas listas (ADR-012: DAG por depends_on_count) ─────────────
 // Reemplaza el dispatch por fase: una tarea está LISTA cuando depends_on_count === 0.
 // Si `specificIds` se pasa, solo esas tareas se consideran (para re-despacho tras review).
-async function dispatchReadyTasks(cmd: HokageCommand, specificIds?: number[]): Promise<number> {
+async function dispatchReadyTasks(cmd: HokageCommand, specificIds?: number[], excludeAgentIds?: number[]): Promise<number> {
   const ready = await all<HokageTask>(
     `${TASK_SELECT} WHERE command_id = ? AND status = 'pending' AND depends_on_count = 0 ${specificIds && specificIds.length ? `AND id IN (${specificIds.join(',')})` : ''}`,
     [cmd.id]
@@ -386,7 +396,8 @@ async function dispatchReadyTasks(cmd: HokageCommand, specificIds?: number[]): P
       continue;
     }
 
-    const agentId = await selectOrCreateSpecialist(t.role, cmd.venture_id, cmd.id, t.id);
+    // ADR-014 reassign_agent: excluir al agente anterior (solo aplica al re-despacho de una tarea).
+    const agentId = await selectOrCreateSpecialist(t.role, cmd.venture_id, cmd.id, t.id, excludeAgentIds);
 
     const budget = await budgetBlocked(agentId);
     if (budget.blocked) {
@@ -531,12 +542,221 @@ async function releaseTaskReservation(taskId: number): Promise<void> {
   await recordAudit({ type: 'budget.released', ventureId: cmd?.venture_id ?? null, commandId: t.command_id, taskId, meta: { amount: t.reserved_usd } });
 }
 
+// ═══════════ ADR-014 Slice B3 — Evaluación + Remediación (integration layer) ═══════════
+// El engine (remediationEngine) es PURO: solo decide. La EJECUCIÓN de las acciones vive aquí,
+// en el orquestador. Un retry/reassign vuelve al dispatcher existente (dispatchReadyTasks); no
+// hay un segundo sistema de asignación. Los topes (maxRetries/maxRemediations, review_cycles) y
+// el historial persistido (remediation_history) garantizan terminación (nunca retry→eval→retry…).
+
+// Evalúa el resultado de una completion. Usa `resultText` como resultado autoritativo de ESTE
+// intento (no work_items.result de BD, que en tests puede estar vacío); tokens/coste vienen del
+// work_item si existen. Pura respecto a estado de tareas (solo lee work_items).
+async function evaluateCompletion(task: HokageTask, workItemId: number, ok: boolean, resultText: string): Promise<TaskEvaluation> {
+  const wiRow = await get<WorkItemForEval>(
+    `SELECT id, agent_id, type, context, result, error, tokens_in, tokens_out, llm_cost_usd, tool_cost_usd,
+            venture_id, model, milestone_id, retry_count, created_at, resolved_at
+     FROM work_items WHERE id = ?`,
+    [workItemId]
+  );
+  const workItem: WorkItemForEval = {
+    id: workItemId,
+    agent_id: wiRow?.agent_id ?? task.agent_id ?? 0,
+    type: wiRow?.type ?? 'hokage_task',
+    context: wiRow?.context ?? null,
+    result: ok ? resultText : (wiRow?.result ?? resultText ?? null),
+    error: ok ? (wiRow?.error ?? null) : resultText,
+    tokens_in: wiRow?.tokens_in ?? null,
+    tokens_out: wiRow?.tokens_out ?? null,
+    llm_cost_usd: wiRow?.llm_cost_usd ?? null,
+    tool_cost_usd: wiRow?.tool_cost_usd ?? null,
+    venture_id: wiRow?.venture_id ?? null,
+    model: wiRow?.model ?? task.model ?? null,
+    milestone_id: wiRow?.milestone_id ?? null,
+    retry_count: wiRow?.retry_count ?? 0,
+    created_at: wiRow?.created_at,
+    resolved_at: wiRow?.resolved_at,
+  };
+  const roleDef = await getRoleDefinition(task.role);
+  return evaluateAutomated(workItem, task, roleDef);
+}
+
+// ¿Es esta tarea una REVISORA (ADR-012)? Tiene un edge review_of entrante. Las revisoras NO se
+// remedian aquí: su veredicto lo procesa handleReviewVerdict (no romper el ciclo de review).
+async function isReviewerTask(task: HokageTask): Promise<boolean> {
+  const e = await get<TaskEdge>(`${EDGE_SELECT} WHERE command_id = ? AND to_task_id = ? AND type = 'review_of'`, [task.command_id, task.id]);
+  return !!e;
+}
+
+function parseRemediationPolicy(raw: RemediationPolicy | string | null | undefined): RemediationPolicy {
+  if (!raw) return DEFAULT_REMEDIATION_POLICY;
+  if (typeof raw === 'string') {
+    try { return JSON.parse(raw) as RemediationPolicy; } catch { return DEFAULT_REMEDIATION_POLICY; }
+  }
+  return raw;
+}
+
+function parseRemediationHistory(raw: unknown): RemediationAttempt[] {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw as RemediationAttempt[];
+  if (typeof raw === 'string') {
+    try { const p = JSON.parse(raw); return Array.isArray(p) ? p : []; } catch { return []; }
+  }
+  return [];
+}
+
+// escalate_model: el TaskProfile NO se persiste (solo el model id resuelto). Reconstrucción
+// conservadora del perfil para forzar un tier superior en el ModelRouter determinista. Si algo
+// falla, mantiene el modelo actual (peor caso = comportamiento de retry_with_feedback).
+function escalatedModelId(task: HokageTask): string | undefined {
+  try {
+    const escalated = getEscalatedModelProfile({ kind: 'analysis', complexity: 'medium', importance: 'high', needs: { reasoning: true }, risk: 'medium' });
+    return selectModel(escalated as unknown as TaskProfile).model.id;
+  } catch {
+    return task.model ?? undefined;
+  }
+}
+
+// Re-abre la tarea y la devuelve al dispatcher EXISTENTE. Atómico e idempotente: solo actúa si la
+// tarea SIGUE 'dispatched' (evita doble dispatch frente a completion duplicado). Incrementa el
+// counter correspondiente y añade la acción a remediation_history (fuente de los topes del engine).
+async function reopenAndDispatch(
+  task: HokageTask,
+  action: RemediationAction,
+  history: RemediationAttempt[],
+  opts: { feedback?: string; modelOverride?: string; clearAgent?: boolean; excludeAgentIds?: number[] }
+): Promise<boolean> {
+  const cmd = await getCommandRow(task.command_id);
+  if (!cmd) { await safeFailTerminal(task, 'command inexistente'); return true; }
+
+  const newHistory: RemediationAttempt[] = [...history, { action, workItemId: task.work_item_id ?? 0, createdAt: new Date().toISOString() }];
+  const counterCol = action === 'retry_immediate' ? 'retry_count' : 'remediation_count';
+  const newPrompt = opts.feedback
+    ? `${task.prompt}\n\n[REMEDIACIÓN · ${action}] ${opts.feedback}`.slice(0, PROMPT_MAX)
+    : task.prompt;
+  const newModel = opts.modelOverride ?? task.model;
+  const newAgent = opts.clearAgent ? null : task.agent_id;
+
+  const upd = await run(
+    `UPDATE hokage_tasks
+       SET status = 'pending', work_item_id = NULL, agent_id = ?, prompt = ?, model = ?,
+           error = NULL, ${counterCol} = ${counterCol} + 1, remediation_history = ?, updated_at = datetime('now')
+     WHERE id = ? AND status = 'dispatched'`,
+    [newAgent, newPrompt, newModel, JSON.stringify(newHistory), task.id]
+  );
+  if (upd.changes !== 1) return true; // otra transición ya movió la tarea → NO re-despachar (sin doble dispatch)
+
+  await recordAudit({ type: 'task.remediation.executed', ventureId: cmd.venture_id, commandId: cmd.id, taskId: task.id, agentId: task.agent_id, meta: { action, attempts: newHistory.length } });
+  bus.publish({ type: 'hokage.task.remediation', from: 'Hokage', payload: { commandId: cmd.id, taskId: task.id, ventureId: cmd.venture_id, action, attempt: newHistory.length } });
+
+  await dispatchReadyTasks(cmd, [task.id], opts.excludeAgentIds);
+  return true;
+}
+
+// Terminal seguro: propone Decision a Jorge y deja la tarea 'failed'. El guard de completion
+// impide re-entrada → sin bucle. createDecision dedupea por (entity_type, entity_id).
+async function escalateRemediationToHuman(task: HokageTask, evaluation: TaskEvaluation, action: RemediationAction, reason: string): Promise<boolean> {
+  const cmd = await getCommandRow(task.command_id);
+  try {
+    await createDecision({
+      title: `Remediación requiere intervención: ${task.title}`.slice(0, TITLE_MAX),
+      description: `Tarea ${task.id} no superó la evaluación (${evaluation.verdict}). Causa: ${evaluation.diagnosis?.rootCause ?? 'desconocida'}. Acción: ${action}. ${reason}`.slice(0, PROMPT_MAX),
+      venture_id: cmd?.venture_id ?? null,
+      entity_type: 'hokage_task',
+      entity_id: task.id,
+      risk_level: 'medium',
+    });
+  } catch (e) { console.error('[REMEDIATION] createDecision:', (e as Error).message); }
+
+  await run(`UPDATE hokage_tasks SET status = 'failed', error = ?, updated_at = datetime('now') WHERE id = ? AND status = 'dispatched'`,
+    [`remediación: ${action} (${reason})`.slice(0, RESULT_MAX), task.id]);
+  await recordAudit({ type: 'task.remediation.human', ventureId: cmd?.venture_id ?? null, commandId: task.command_id, taskId: task.id, agentId: task.agent_id, meta: { action, reason, verdict: evaluation.verdict } });
+  if (cmd) await dispatchReadyTasks(cmd); // avanzar hermanas listas (no re-despacha esta, ya failed)
+  return true;
+}
+
+// Salida de emergencia si la ejecución de remediación lanza: la tarea queda 'failed' (observable),
+// nunca se propaga el error al flujo principal del orquestador.
+async function safeFailTerminal(task: HokageTask, reason: string): Promise<void> {
+  try {
+    await run(`UPDATE hokage_tasks SET status = 'failed', error = ?, updated_at = datetime('now') WHERE id = ? AND status IN ('dispatched','pending')`,
+      [`remediación abortada: ${reason}`.slice(0, RESULT_MAX), task.id]);
+    await recordAudit({ type: 'task.remediation.error', commandId: task.command_id, taskId: task.id, meta: { reason } });
+    const cmd = await getCommandRow(task.command_id);
+    if (cmd) await dispatchReadyTasks(cmd);
+  } catch (e) { console.error('[REMEDIATION] safeFailTerminal:', (e as Error).message); }
+}
+
+// Punto de entrada de remediación (integration layer). Decide con el engine PURO y ejecuta la
+// acción. Nunca lanza: cualquier error interno cae en safeFailTerminal. Devuelve true cuando toma
+// el control del flujo (re-despacho o terminal), para que onHokageTaskCompleted NO haga doble dispatch.
+export async function remediateTask(task: HokageTask, evaluation: TaskEvaluation): Promise<boolean> {
+  try {
+    // Liberar reserva y claim del intento anterior antes de re-despachar (idempotentes).
+    await releaseTaskReservation(task.id);
+    if (task.agent_id != null && task.work_item_id != null) await releaseAgent(task.agent_id, task.work_item_id);
+
+    const policy = parseRemediationPolicy(task.remediation_policy);
+    const counters: TaskCounters = { retryCount: task.retry_count ?? 0, remediationCount: task.remediation_count ?? 0 };
+    const history = parseRemediationHistory((task as unknown as { remediation_history?: unknown }).remediation_history);
+    const roleDef = await getRoleDefinition(task.role);
+    const reviewContext: ReviewContext | null = policy.respectReviewCycles
+      ? { cycles: task.review_cycles ?? 0, maxCycles: roleDef?.max_review_cycles ?? 2, lastVerdict: (task.review_verdict as ReviewContext['lastVerdict']) ?? null, lastFeedback: task.review_feedback ?? null }
+      : null;
+
+    const decision = planRemediation(evaluation, task, policy, counters, history, reviewContext);
+    const cmdRow = await getCommandRow(task.command_id);
+    await recordAudit({ type: 'task.remediation.planned', ventureId: cmdRow?.venture_id ?? null, commandId: task.command_id, taskId: task.id, agentId: task.agent_id, meta: { verdict: evaluation.verdict, category: evaluation.diagnosis?.category ?? 'unknown', action: decision.action, reason: decision.reason } });
+
+    switch (decision.action) {
+      case 'retry_immediate':
+        return await reopenAndDispatch(task, 'retry_immediate', history, {});
+      case 'retry_with_feedback':
+        return await reopenAndDispatch(task, 'retry_with_feedback', history, { feedback: decision.injectFeedback });
+      case 'escalate_model':
+        return await reopenAndDispatch(task, 'escalate_model', history, { feedback: decision.injectFeedback, modelOverride: escalatedModelId(task) });
+      case 'reassign_agent':
+        return await reopenAndDispatch(task, 'reassign_agent', history, {
+          feedback: decision.injectFeedback,
+          clearAgent: true,
+          excludeAgentIds: decision.excludedAgentIds ?? (task.agent_id != null ? [task.agent_id] : undefined),
+        });
+      case 'replan_task':
+      case 'replan_command':
+        // NO IMPLEMENTADO: no hay replanSingleTask ni TaskProfile persistido → una replanificación
+        // LLM por-tarea sería improvisar. Terminal humano seguro (ver informe B3).
+        return await escalateRemediationToHuman(task, evaluation, decision.action, decision.reason);
+      case 'human_intervention':
+      default:
+        return await escalateRemediationToHuman(task, evaluation, 'human_intervention', decision.reason);
+    }
+  } catch (err) {
+    console.error('[REMEDIATION] error, salida segura:', (err as Error).message);
+    await safeFailTerminal(task, (err as Error).message);
+    return true;
+  }
+}
+
 // ── Avance del DAG: se llama cuando una tarea termina (hook desde stage3) ──────
 // El agentRuntime procesa work_items secuencialmente dentro de un tick, así que estas
 // transiciones no se solapan → no hacen falta locks.
 export async function onHokageTaskCompleted(workItemId: number, ok: boolean, resultText: string): Promise<void> {
-  const task = await get<HokageTask>(`${TASK_SELECT} WHERE work_item_id = ?`, [workItemId]);
+  // SELECT * → HokageTask completo (incluye output_schema/acceptance_criteria/quality_floor y los
+  // contadores/política/historial de remediación) que el TASK_SELECT reducido no trae.
+  const task = await get<HokageTask>(`SELECT * FROM hokage_tasks WHERE work_item_id = ?`, [workItemId]);
   if (!task || task.status !== 'dispatched') return; // no es nuestra, o ya resuelta/cancelada (idempotente)
+
+  // ADR-014 B3: evaluación determinista integrada (antes observacional en agentRuntime stage3).
+  // Corre para toda completion de hokage_task; persistir es best-effort (aislado del flujo).
+  const evaluation = await evaluateCompletion(task, workItemId, ok, resultText);
+  try { await insertTaskEvaluation(evaluation); } catch (e) { console.error('[EVAL] persistencia:', (e as Error).message); }
+
+  // ADR-014 B3: remediación SOLO si el agente ejecutó OK pero el resultado no supera la evaluación.
+  // ok=false conserva el camino de fallo existente (semántica DAG/replan intacta). Las revisoras
+  // (ADR-012) no se remedian aquí. Si la remediación toma el control → return (sin doble dispatch).
+  if (ok && evaluation.verdict !== 'pass' && !(await isReviewerTask(task))) {
+    const handled = await remediateTask(task, evaluation);
+    if (handled) return;
+  }
 
   await run(
     `UPDATE hokage_tasks SET status = ?, result = ?, error = ?, updated_at = datetime('now') WHERE id = ?`,
