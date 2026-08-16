@@ -10,6 +10,7 @@ import { createContent } from '../services/contentService.js';
 import { createMarket } from '../services/marketService.js';
 import { closeMilestoneOnResult } from '../services/objectiveService.js';
 import { onHokageTaskCompleted, onHokageWorkItemCancelled } from '../services/hokageOrchestrator.js';
+import { claimAgent, releaseAgent, cleanupExpiredClaims } from '../services/agentSelector.js';
 import { get, run, all } from '../db/init.js';
 
 // ═══════════════════════════════════════════════════════
@@ -111,6 +112,10 @@ class AgentRuntime {
   private listenersReady = false;
   private pollTimer: NodeJS.Timeout | null = null;
   private busEventQueue: AgentEvent[] = [];
+  // activeAgents (decisión #10): SOLO métrica derivada efímera para agentRuntimeState. NUNCA se
+  // usa para decidir si un agente puede ejecutar — esa exclusión vive en la BD (agents.claimed_by_task
+  // vía claimAgent). La fuente de verdad durable es work_items.status='in_progress' (sobrevive a
+  // reinicio; este Set no). Se mantiene sincronizado en stage2/stage3/stage4 como refuerzo vivo.
   private activeAgents: Set<number> = new Set();
   private lastStateSignature = new Map<number, string>();  // K.4: dedup de deltas de estado
 
@@ -395,9 +400,11 @@ ${formatLines.join('\n')}`;
       );
     }
 
-    // Bloquear pending: uno por agente, prioridad mayor primero
-    const pending = await all<{ id: number; agent_id: number }>(
-      `SELECT w.id, w.agent_id FROM work_items w
+    // Bloquear pending: uno por agente, prioridad mayor primero. El claim (ADR-011) es el gate
+    // atómico real de exclusión; el NOT EXISTS(in_progress) es solo un pre-filtro que evita
+    // intentar claims sobre agentes ya trabajando.
+    const pending = await all<{ id: number; agent_id: number; ttl_minutes: number | null }>(
+      `SELECT w.id, w.agent_id, w.ttl_minutes FROM work_items w
        WHERE w.status = 'pending'
        AND NOT EXISTS (
          SELECT 1 FROM work_items w2
@@ -408,7 +415,8 @@ ${formatLines.join('\n')}`;
     );
 
     for (const item of pending) {
-      // Verificar presupuesto antes de asignar
+      // Verificar presupuesto antes de asignar (aún sin claim → nada que liberar en autónomo;
+      // en hokage_task el claim lo hace stage2 más abajo, así que tampoco hay claim aquí todavía).
       const budget = await get<{ monthly_limit_usd: number; current_month_usd: number; status: string }>(
         'SELECT monthly_limit_usd, current_month_usd, status FROM agent_budgets WHERE agent_id = ?',
         [item.agent_id]
@@ -427,11 +435,24 @@ ${formatLines.join('\n')}`;
         }
       }
 
-      await run(
+      // GATE ATÓMICO (ADR-011, decisión #5): claimAgent decide quién ejecuta. No hay ventana
+      // SELECT-comprobar-libre + UPDATE: claimAgent es un UPDATE condicional atómico. Identidad
+      // del claim = work_item.id (decisión #4), la misma que usa releaseAgent en stage3/stage4.
+      // TTL del claim alineado con ttl_minutes del work_item (decisión #9): no menos que su ejecución.
+      const ttl = item.ttl_minutes ?? 30;
+      const won = await claimAgent(item.agent_id, item.id, ttl);
+      if (!won) continue; // agente ya reclamado (runtime/Hokage/manual) → reintento en el próximo tick
+
+      const promoted = await run(
         `UPDATE work_items SET status = 'in_progress', locked_at = ? WHERE id = ? AND status = 'pending'`,
         [nowIso(), item.id]
       );
-      this.activeAgents.add(item.agent_id);
+      if (promoted.changes !== 1) {
+        // El work_item dejó de estar pending entre el SELECT y aquí → soltar el claim recién ganado.
+        await releaseAgent(item.agent_id, item.id);
+        continue;
+      }
+      this.activeAgents.add(item.agent_id); // métrica derivada efímera, NUNCA barrera de exclusión (esa es el claim en BD)
     }
   }
 
@@ -487,6 +508,11 @@ ${formatLines.join('\n')}`;
         `UPDATE work_items SET status = ?, result = ?, resolved_at = ?, locked_at = NULL WHERE id = ?`,
         [result.ok ? 'done' : 'failed', (result.response ?? result.error ?? '').slice(0, 2000), nowIso(), item.id]
       );
+      // ADR-011 (decisión #7): liberar el claim SIEMPRE — éxito o error. runAgent captura sus
+      // excepciones y devuelve {ok:false}, así que este punto se alcanza en ambos casos.
+      // Identidad = work_item.id, la misma con la que se reclamó en stage2. Idempotente: el
+      // releaseAgent interno de onHokageTaskCompleted (para hokage_task) queda como no-op.
+      await releaseAgent(item.agent_id, item.id);
       this.activeAgents.delete(item.agent_id);
 
       // Cerrar milestone si este work_item estaba vinculado a uno
@@ -503,24 +529,40 @@ ${formatLines.join('\n')}`;
     }
   }
 
-  // Etapa 4: TTL expirados → devolver a pending (o cancelar tras 3 reintentos)
+  // Etapa 4: TTL expirados → devolver a pending (o cancelar tras 3 reintentos). Se procesa por
+  // ítem (no en bloque) porque cada TTL vencido DEBE liberar el claim del agente (bug B): un
+  // work_item que expira no puede dejar al agente reclamado. releaseAgent es idempotente y usa
+  // work_item.id, la misma identidad que el claim de stage2.
   private async stage4_checkTTLs(): Promise<void> {
-    await run(
-      `UPDATE work_items
-       SET status = 'pending', locked_at = NULL, retry_count = retry_count + 1
+    const timedOut = await all<{ id: number; agent_id: number; type: string; retry_count: number }>(
+      `SELECT id, agent_id, type, retry_count FROM work_items
        WHERE status = 'in_progress'
        AND locked_at IS NOT NULL
-       AND datetime(locked_at, '+' || ttl_minutes || ' minutes') < datetime('now')
-       AND retry_count < 3`
+       AND datetime(locked_at, '+' || ttl_minutes || ' minutes') < datetime('now')`
     );
-    await run(
-      `UPDATE work_items
-       SET status = 'cancelled', resolved_at = datetime('now')
-       WHERE status = 'in_progress'
-       AND locked_at IS NOT NULL
-       AND datetime(locked_at, '+' || ttl_minutes || ' minutes') < datetime('now')
-       AND retry_count >= 3`
-    );
+
+    for (const item of timedOut) {
+      await releaseAgent(item.agent_id, item.id);
+      this.activeAgents.delete(item.agent_id);
+      if (item.retry_count < 3) {
+        await run(
+          `UPDATE work_items SET status = 'pending', locked_at = NULL, retry_count = retry_count + 1 WHERE id = ?`,
+          [item.id]
+        );
+      } else {
+        await run(`UPDATE work_items SET status = 'cancelled', resolved_at = datetime('now') WHERE id = ?`, [item.id]);
+        // Tarea de Hokage cancelada por TTL: liberar reserva + marcar blocked + avanzar DAG
+        // (mismo hook que la cancelación por presupuesto de stage2). Evita que la orden cuelgue.
+        if (item.type === 'hokage_task') {
+          await onHokageWorkItemCancelled(item.id).catch((err) => console.error('[HOKAGE] Error liberando en TTL:', err.message));
+        }
+      }
+    }
+
+    // ADR-011 (bug A): sanear claims expirados una vez por tick. Es el ÚNICO mecanismo que
+    // resetea availability='busy'→'available' tras una expiración sin release (p. ej. muerte del
+    // proceso a mitad de ejecución). Sin esto, un claim expirado dejaría al agente inclamable.
+    await cleanupExpiredClaims();
   }
 
   // Etapa 7: decisiones aprobadas sin work_item de ejecucion → crear P9

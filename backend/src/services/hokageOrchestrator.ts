@@ -2,7 +2,7 @@ import { run, get, all } from '../db/init.js';
 import type { HokageCommand, HokageTask, HokageCommandStatus, RoleDefinition, TaskEdge, TaskEdgeType } from '../types/index.js';
 import { getRoleDefinition, listRoleDefinitions, modelFor } from './roleService.js';
 import { createAgent } from './agentService.js';
-import { selectAgent, claimAgent, releaseAgent } from './agentSelector.js'; // ADR-011: claim/release atómico del agente
+import { selectAgent, releaseAgent } from './agentSelector.js'; // ADR-011: selección + release. El CLAIM lo hace stage2 (gate pending→in_progress, decisión #5).
 import { callAIJson, estimateTaskCostUsd } from './aiService.js';
 import { createMemoryEntry } from './memoryService.js';
 import { reserveVentureBudget, releaseVentureBudget, ventureOverRealBudget } from './ventureBudget.js';
@@ -166,9 +166,12 @@ Reglas:
 // Reutilizar un agente global entre ventures es SEGURO desde F8: su agent_memory PRIVADA está
 // scopeada por (agent_id, venture_id), así que un especialista que trabaja en V1 y V2 no cruza
 // sus facts privados. La memoria de NEGOCIO (memory_entries) sigue aislada por venture (F4).
-// ADR-011: usa selectAgent (capability matching) + claimAgent (atómico) cuando hay taskId.
+// ADR-011: SELECCIÓN (no claim). El claim atómico lo hace stage2 al promover el work_item a
+// in_progress (gate único pending→in_progress, decisión #5) por work_item.id — así claim y release
+// comparten identidad. Aquí solo se elige/crea el agente; la selección respeta ADR-011 (selectAgent
+// ya excluye agentes reclamados) y el fallback nunca reutiliza un agente ocupado (decisión #11).
 async function selectOrCreateSpecialist(role: string, ventureId: number | null, commandId?: number, taskId?: number): Promise<number> {
-  // Si hay taskId, intentar selección por capability + claim atómico (ADR-011)
+  // Si hay taskId, preferir selección por capability matching (excluye agentes ya reclamados).
   if (taskId != null) {
     const def = await getRoleDefinition(role);
     const baseCaps = def ? JSON.parse(def.capabilities) : [];
@@ -179,24 +182,22 @@ async function selectOrCreateSpecialist(role: string, ventureId: number | null, 
       maxResults: 1,
     });
     if (result.length > 0) {
-      const agentId = result[0].agentId;
-      const claimed = await claimAgent(agentId, taskId, 30); // 30 min TTL
-      if (claimed) {
-        await recordAudit({ type: 'agent.claimed', ventureId, commandId, taskId, agentId, meta: { role } });
-        return agentId;
-      }
-      // Si no se pudo claimar (carrera), seguir con fallback legacy
+      await recordAudit({ type: 'agent.selected', ventureId, commandId, taskId, agentId: result[0].agentId, meta: { role, via: 'capability' } });
+      return result[0].agentId;
     }
   }
 
-  // Fallback legacy: preferir agente scoped/venture, luego global, luego crear
+  // Fallback legacy: preferir agente scoped/venture, luego global — pero SOLO realmente disponibles
+  // (decisión #11: nunca reutilizar un agente reclamado/busy saltándose ADR-011). Si el elegido lo
+  // reclama otro antes de que stage2 lo tome, el claim de stage2 fallará y el work_item reintentará.
+  const CLAIMABLE = `availability = 'available' AND (claimed_by_task IS NULL OR claim_expires_at < datetime('now'))`;
   let agentId: number | null = null;
   if (ventureId != null) {
-    const scoped = await get<{ id: number }>('SELECT id FROM agents WHERE role = ? AND venture_id = ? LIMIT 1', [role, ventureId]);
+    const scoped = await get<{ id: number }>(`SELECT id FROM agents WHERE role = ? AND venture_id = ? AND ${CLAIMABLE} LIMIT 1`, [role, ventureId]);
     if (scoped) agentId = scoped.id;
   }
   if (agentId == null) {
-    const global = await get<{ id: number }>('SELECT id FROM agents WHERE role = ? AND venture_id IS NULL LIMIT 1', [role]);
+    const global = await get<{ id: number }>(`SELECT id FROM agents WHERE role = ? AND venture_id IS NULL AND ${CLAIMABLE} LIMIT 1`, [role]);
     if (global) agentId = global.id;
   }
   let created = false;
@@ -853,8 +854,8 @@ export async function cancelCommand(commandId: number): Promise<CommandResult | 
   if (!cmd) return null;
   if (TERMINAL_CMD.includes(cmd.status)) return { command: cmd, tasks: await tasksOf(commandId) };
 
-  const openTasks = await all<{ id: number; work_item_id: number | null }>(
-    "SELECT id, work_item_id FROM hokage_tasks WHERE command_id = ? AND status IN ('pending','dispatched')",
+  const openTasks = await all<{ id: number; work_item_id: number | null; agent_id: number | null }>(
+    "SELECT id, work_item_id, agent_id FROM hokage_tasks WHERE command_id = ? AND status IN ('pending','dispatched')",
     [commandId]
   );
   for (const t of openTasks) {
@@ -862,6 +863,9 @@ export async function cancelCommand(commandId: number): Promise<CommandResult | 
     // LLM); su resultado se ignora porque la tarea queda 'cancelled' y el hook sale temprano.
     if (t.work_item_id != null) {
       await run("UPDATE work_items SET status = 'cancelled', resolved_at = datetime('now') WHERE id = ? AND status IN ('pending','in_progress')", [t.work_item_id]);
+      // ADR-011 (decisión #7): liberar el claim del agente si esta tarea lo tenía reclamado
+      // (identidad = work_item.id). Idempotente: no-op si stage2 aún no lo había reclamado.
+      if (t.agent_id != null) await releaseAgent(t.agent_id, t.work_item_id);
     }
     await run(`UPDATE hokage_tasks SET status = 'cancelled', updated_at = datetime('now') WHERE id = ?`, [t.id]);
     await releaseTaskReservation(t.id); // devolver el presupuesto reservado de la tarea cancelada

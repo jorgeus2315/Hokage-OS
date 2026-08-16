@@ -57,6 +57,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { run, get, all, initSchema } from './db/init.js';
 import type { Department, DepartmentUpdatePayload } from './types/index.js';
 import { listAgents, createAgent } from './services/agentService.js';
+import { claimAgent, releaseAgent } from './services/agentSelector.js';
 import {
   listRoleDefinitions, getRoleDefinition, createRoleDefinition, updateRoleDefinition, setRoleStatus,
 } from './services/roleService.js';
@@ -316,34 +317,58 @@ app.post('/api/agents', requireAdmin, async (req, res) => {
   } catch (e: any) { sendError(res, 400, e, 'Error creando agente'); }
 });
 
+// MANUAL_CLAIM: identidad de claim para las ejecuciones manuales admin (/ask y /run). No tienen
+// work_item, así que reclaman con un sentinela negativo (no colisiona con work_item.id, que es
+// autoincrement positivo). Compartido por ambos endpoints → también son mutuamente excluyentes
+// entre sí. ADR-011 (decisión #12) + cierre del criterio de readiness #5 (ninguna vía ejecuta un
+// agente saltándose claimAgent): askAgent corre el loop de tools reales y gasta presupuesto.
+// ponytail: sentinela en vez de crear un work_item — evita una cuarta vía y no ensucia la cola.
+const MANUAL_CLAIM = -1;
+
 app.post('/api/agents/:id/ask', requireAdmin, async (req, res) => {
   try {
     const agentId = Number(req.params.id);
     const { message } = req.body;
     if (!message) return res.status(400).json({ ok: false, error: 'Falta message' });
-    const result = await askAgent(agentId, String(message));
-    if (!result.ok) {
-      return res.status(400).json({ ok: false, error: result.error || 'Error en askAgent' });
+
+    const claimed = await claimAgent(agentId, MANUAL_CLAIM, 5); // exclusión mutua con runtime/Hokage/otro manual
+    if (!claimed) return res.status(409).json({ ok: false, error: 'Agente ocupado por otra ejecución' });
+    try {
+      const result = await askAgent(agentId, String(message));
+      if (!result.ok) {
+        return res.status(400).json({ ok: false, error: result.error || 'Error en askAgent' });
+      }
+      res.json({ ok: true, data: { response: result.data?.response || '', tokens: result.data?.tokens ?? 0 } });
+    } finally {
+      await releaseAgent(agentId, MANUAL_CLAIM);
     }
-    res.json({ ok: true, data: { response: result.data?.response || '', tokens: result.data?.tokens ?? 0 } });
   } catch (e: any) { sendError(res, 500, e, 'Error en askAgent'); }
 });
 
-// Ejecutar agente de forma autonoma (manual trigger)
+// Ejecutar agente de forma autonoma (manual trigger, admin). Coordinado con la MISMA exclusión
+// mutua que runtime/Hokage vía MANUAL_CLAIM (ADR-011, decisión #12): si el agente ya está
+// reclamado → 409 en vez de doble ejecución. El release en finally cubre éxito, error y throw.
 app.post('/api/agents/:id/run', requireAdmin, async (req, res) => {
   try {
     const agentId = Number(req.params.id);
     const agents = await listAgents();
     const agent = agents.find(a => a.id === agentId);
     if (!agent) return res.status(404).json({ ok: false, error: 'Agente no encontrado' });
-    const result = await runtime.runAgent({
-      agentId: agent.id,
-      agentName: agent.name,
-      agentRole: agent.role,
-      taskType: 'manual',
-      context: req.body.task,
-    });
-    res.json({ ok: result.ok, data: result });
+
+    const claimed = await claimAgent(agentId, MANUAL_CLAIM, 5); // 5 min TTL: red de seguridad
+    if (!claimed) return res.status(409).json({ ok: false, error: 'Agente ocupado por otra ejecución' });
+    try {
+      const result = await runtime.runAgent({
+        agentId: agent.id,
+        agentName: agent.name,
+        agentRole: agent.role,
+        taskType: 'manual',
+        context: req.body.task,
+      });
+      res.json({ ok: result.ok, data: result });
+    } finally {
+      await releaseAgent(agentId, MANUAL_CLAIM);
+    }
   } catch (e: any) { sendError(res, 500, e, 'Error ejecutando agente'); }
 });
 
