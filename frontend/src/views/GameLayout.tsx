@@ -7,7 +7,7 @@ import { Toast } from '../modals';
 import { useAppData } from '../hooks/useAppData';
 import { useWorldState } from '../hooks/useWorldState';
 import { WorldCanvas } from '../world/WorldCanvas';
-import { PanelRegistry } from '../registries/PanelRegistry';
+import { PanelRegistry, PanelContext } from '../registries/PanelRegistry';
 import { BuildingView } from './BuildingView';
 import { CommsView } from './CommsView';
 import { CrewView } from './CrewView';
@@ -20,12 +20,6 @@ import { MenuView } from './MenuView';
 
 const RECENT_MS = 5 * 60 * 1000;
 
-// Overlays uniformes de pantalla completa que dependían de showOverlay — BuildingView
-// y MenuView quedan fuera a propósito (Fase 4, UI Implementation Plan.md): no son
-// estructuralmente equivalentes (BuildingView depende de un objeto seleccionado,
-// MenuView es un overlay-sobre-overlay con su propio booleano). Verificado: setScreen()
-// en todo este archivo, incluida la navegación desde MenuView, nunca usa 'boot' ni
-// 'menu' — estos 6 cubren el 100% de lo que showOverlay puede mostrar en la práctica.
 type OverlayScreen = 'crew' | 'alerts' | 'comms' | 'ventures' | 'objetivos' | 'config' | 'hokage';
 
 export function GameLayout() {
@@ -75,11 +69,7 @@ export function GameLayout() {
     onEnterBuilding: enterBuilding,
   });
 
-  // Fase 5 — restaurar layout persistido. Se pide una vez al montar; se aplica
-  // en cuanto allDepts contenga la sala real (al principio allDepts puede ser
-  // el fallback BUILDINGS, sin todas las salas — ver useWorldState.ts). Si el
-  // usuario ya navegó manualmente antes de que la restauración esté lista, se
-  // respeta su acción y no se pisa.
+  // Fase 5 — restaurar layout persistido
   const [pendingLayout, setPendingLayout] = useState<{ screen: Screen; buildingKey: string | null } | null>(null);
   const layoutAppliedRef = useRef(false);
 
@@ -92,7 +82,7 @@ export function GameLayout() {
     if (screen !== 'map') { layoutAppliedRef.current = true; return; }
     if (pendingLayout.screen === 'building' && pendingLayout.buildingKey) {
       const building = allDepts.find((b) => b.id === pendingLayout.buildingKey);
-      if (!building) return; // esperar al siguiente render con allDepts real
+      if (!building) return;
       enterBuilding(building);
     } else if (pendingLayout.screen !== 'map') {
       setScreen(pendingLayout.screen);
@@ -101,7 +91,7 @@ export function GameLayout() {
   }, [pendingLayout, allDepts, screen]);
 
   useEffect(() => {
-    if (!layoutAppliedRef.current) return; // no persistir el estado inicial antes de restaurar
+    if (!layoutAppliedRef.current) return;
     api.setLayout(screen, screen === 'building' ? (activeBuilding?.id ?? null) : null);
   }, [screen, activeBuilding]);
 
@@ -170,9 +160,247 @@ export function GameLayout() {
   const buildingAgent = activeBuilding ? agents.find((a) => a.role === activeBuilding.role) : undefined;
   const pendingForAgent = buildingAgent ? pending.filter((d) => d.agent_id === buildingAgent.id) : [];
 
-  const showBuildingPanel = screen === 'building' && !!activeBuilding;
-  const showOverlay = screen !== 'map' && screen !== 'building';
+  // ═══════════════════════════════════════════════════════════════════
+  // REGISTRO DE PANELES — Fase 4: cada panel es una entrada de registro,
+  // no una rama condicional en el JSX. El estado (qué está abierto) sigue
+  // siendo React local; la Fase 5 persistirá en backend.
+  // ═══════════════════════════════════════════════════════════════════
 
+  const panelRegistry = new PanelRegistry<string>();
+
+  // Contexto compartido que todos los paneles pueden leer
+  const panelContext: PanelContext = {
+    agents, ventures, runs, messages, liveEvents, departments, objectives, metrics,
+    runtimeOn, wsConnected, clock, pending, activeBuilding, buildingAgent, pendingForAgent,
+    section, chatByAgent, chatInput, chatLoading,
+    onChangeSection: setSection, onChangeChatInput: setChatInput, onSendChat: sendChat,
+    onApprove: approve, onReject: reject, onRunNow: runNow, onAgentUpdated: reload.loadAgents,
+    reload, setScreen, setShowMenu, setActiveBuilding, setSection, setChatByAgent,
+    setChatInput, setChatLoading, enterBuilding, approve, reject, expireAll,
+    toggleRuntime, runNow, sendChat, showToast: show, roleColors,
+  };
+
+  // LEFT — Rail de agentes (Ship Crew)
+  panelRegistry.register('left-rail', {
+    title: 'Ship Crew',
+    position: 'left',
+    render: () => (
+      <div className="hk-game-overlay hk-game-overlay--left">
+        <div className="hk-game-glass" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', maxHeight: '100%' }}>
+          <div className="hk-game-rail-title">
+            <Led state={wsConnected ? 'on' : 'idle'} />
+            SHIP CREW · {agents.length}
+          </div>
+          <div style={{ overflowY: 'auto', flex: 1 }}>
+            {agents.map((a) => {
+              const building = allDepts.find((b) => b.role === a.role);
+              const last = runs.find((r) => r.agent_id === a.id);
+              const working = isWorking(a.id);
+              const color = building?.color || 'var(--signal)';
+              const activity = agentStates[a.id]?.activity ?? (working ? 1 : 0);
+              let timeAgo = '';
+              if (last) {
+                const mins = Math.round((Date.now() - new Date(last.started_at).getTime()) / 60000);
+                timeAgo = mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h`;
+              }
+              return (
+                <div
+                  key={a.id}
+                  className={`hk-game-agent-row${working ? ' hk-game-agent-row--active' : ''}`}
+                  style={{ borderLeftColor: working ? color : 'transparent' }}
+                  onClick={() => building && enterBuilding(building)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if ((e.key === 'Enter' || e.key === ' ') && building) {
+                      e.preventDefault();
+                      enterBuilding(building);
+                    }
+                  }}
+                >
+                  <span
+                    className={`hk-game-agent-dot${working ? ' hk-game-agent-dot--active' : ''}`}
+                    style={working ? { background: color, boxShadow: `0 0 5px ${color}` } : {}}
+                  />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="hk-game-agent-name" style={{ color: working ? color : undefined }}>
+                      {a.name}
+                    </div>
+                    <div className="hk-game-agent-role">{a.role}</div>
+                    {last && (
+                      <div className="hk-game-agent-action">
+                        {(last.action || 'En espera').slice(0, 26)}
+                      </div>
+                    )}
+                    <div
+                      className="hk-bar"
+                      style={{
+                        marginTop: 4, height: 3, background: 'var(--void-deep)',
+                        border: '1px solid var(--line)', borderRadius: 2, overflow: 'hidden',
+                      }}
+                    >
+                      <div
+                        className="hk-bar-fill"
+                        style={{
+                          width: `${Math.round(activity * 100)}%`, height: '100%',
+                          background: `linear-gradient(90deg, var(--good-dim), var(--good))`,
+                          boxShadow: `0 0 6px var(--good)`, transition: 'width 0.4s ease',
+                        }}
+                      />
+                    </div>
+                  </div>
+                  {working ? (
+                    <span className="hk-game-badge hk-game-badge--live">LIVE</span>
+                  ) : timeAgo ? (
+                    <span className="hk-game-badge hk-game-badge--idle">{timeAgo}</span>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    ),
+  });
+
+  // BOTTOM-LEFT — Acciones rápidas
+  panelRegistry.register('bottom-actions', {
+    title: 'Acciones',
+    position: 'bottom-left',
+    render: () => (
+      <div className="hk-game-overlay hk-game-overlay--bottom-left">
+        <div className="hk-game-actions-row">
+          <button
+            className={`hk-game-action-btn${pending.length > 0 ? ' hk-game-action-btn--alert' : ''}`}
+            onClick={() => setScreen('alerts')}
+          >
+            ⚠{pending.length > 0 ? ` ${pending.length}` : ' 0'}
+            <span className="hk-game-action-label">ALERTAS</span>
+          </button>
+          <button className="hk-game-action-btn" onClick={() => setScreen('comms')}>
+            ◈
+            <span className="hk-game-action-label">COMMS</span>
+          </button>
+          <button
+            className={`hk-game-action-btn${objectives.filter((o) => o.status === 'active').length > 0 ? ' hk-game-action-btn--signal' : ''}`}
+            onClick={() => setScreen('objetivos')}
+          >
+            ◎
+            <span className="hk-game-action-label">OBJETIVOS</span>
+          </button>
+          <button className="hk-game-action-btn" onClick={() => setScreen('ventures')}>
+            ⬡
+            <span className="hk-game-action-label">VENTURES</span>
+          </button>
+        </div>
+      </div>
+    ),
+  });
+
+  // RIGHT — Log de sistema
+  panelRegistry.register('system-log', {
+    title: 'Sistema en vivo',
+    position: 'right',
+    render: () => (
+      <div className={`hk-game-overlay hk-game-overlay--log${screen === 'building' && !!activeBuilding ? ' hk-game-overlay--log-hidden' : ''}`}>
+        <div className="hk-game-log">
+          <div className="hk-game-log-header">
+            <span
+              className="hk-led"
+              style={{
+                background: wsConnected ? 'var(--good)' : 'var(--ember)',
+                boxShadow: wsConnected ? '0 0 5px var(--good)' : '0 0 5px var(--ember)',
+              }}
+            />
+            <span>SISTEMA EN VIVO</span>
+            <span style={{ marginLeft: 'auto', color: 'var(--ink-faint)', fontSize: 8 }}>
+              {liveEvents.length}
+            </span>
+          </div>
+          <div className="hk-game-log-body">
+            {liveEvents.length === 0 ? (
+              <div className="hk-game-log-empty">Sin actividad…</div>
+            ) : (
+              liveEvents.slice(0, 28).map((e) => {
+                const isError = e.type?.includes('error');
+                const isDone = e.type?.includes('done') || e.type?.includes('created');
+                const iconColor = isError ? 'var(--ember)' : isDone ? 'var(--good)' : 'var(--signal)';
+                const icon = isError ? '✕' : isDone ? '✓' : '▶';
+                let timeAgo = '';
+                if (e.timestamp) {
+                  const ms = Date.now() - new Date(e.timestamp).getTime();
+                  const secs = Math.floor(ms / 1000);
+                  if (secs < 60) timeAgo = `${secs}s`;
+                  else if (secs < 3600) timeAgo = `${Math.floor(secs / 60)}m`;
+                  else timeAgo = `${Math.floor(secs / 3600)}h`;
+                }
+                return (
+                  <div key={e._cid ?? `${e.type}-${e.timestamp}`} className="hk-game-log-entry">
+                    <span className="hk-game-log-icon" style={{ color: iconColor }}>{icon}</span>
+                    <div className="hk-game-log-content">
+                      <div className="hk-game-log-type" style={{ color: iconColor }}>
+                        {e.type}
+                      </div>
+                      {e.from && <div className="hk-game-log-from">{e.from}</div>}
+                    </div>
+                    {timeAgo && <span className="hk-game-log-time">{timeAgo}</span>}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      </div>
+    ),
+  });
+
+  // BUILDING — Panel de sala seleccionada
+  const showBuildingPanel = screen === 'building' && !!activeBuilding;
+  panelRegistry.register('building-panel', {
+    title: activeBuilding?.name ?? 'Sala',
+    position: 'building',
+    render: () => showBuildingPanel ? (
+      <div className="hk-game-overlay hk-game-overlay--panel">
+        <div className="hk-game-right-panel">
+          <div className="hk-game-panel-header">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span
+                style={{
+                  display: 'inline-block', width: 8, height: 8, borderRadius: '50%',
+                  background: activeBuilding.color, boxShadow: `0 0 8px ${activeBuilding.color}`,
+                }}
+              />
+              <span className="hk-game-panel-title">{activeBuilding.name}</span>
+            </div>
+            <button className="hk-game-panel-close" onClick={() => setScreen('map')} aria-label="Cerrar panel">
+              ✕
+            </button>
+          </div>
+          <div className="hk-game-panel-body">
+            <BuildingView
+              building={activeBuilding}
+              agent={buildingAgent}
+              section={section}
+              onChangeSection={setSection}
+              chatMsgs={buildingAgent ? chatByAgent[buildingAgent.id] || [] : []}
+              chatInput={chatInput}
+              chatLoading={chatLoading}
+              onChangeChatInput={setChatInput}
+              onSendChat={sendChat}
+              liveEvents={liveEvents}
+              pendingForAgent={pendingForAgent}
+              onApprove={approve}
+              onReject={reject}
+              onRunNow={runNow}
+              onAgentUpdated={reload.loadAgents}
+            />
+          </div>
+        </div>
+      </div>
+    ) : null,
+  });
+
+  // OVERLAYS — Pantallas secundarias de pantalla completa
   const overlayRegistry = new PanelRegistry<OverlayScreen>();
   overlayRegistry.register('objetivos', {
     title: 'Objetivos',
@@ -212,6 +440,7 @@ export function GameLayout() {
     render: () => <HokageConsoleView ventures={ventures} liveEvents={liveEvents} />,
   });
 
+  const showOverlay = screen !== 'map' && screen !== 'building';
   const activeOverlay = showOverlay ? overlayRegistry.get(screen as OverlayScreen) : undefined;
   const overlayTitle = activeOverlay?.title ?? '';
 
@@ -233,252 +462,31 @@ export function GameLayout() {
         onCrew={() => { setShowMenu(false); setScreen('crew'); }}
         onObjectives={() => { setShowMenu(false); setScreen('objetivos'); }}
         onConfig={() => { setShowMenu(false); setScreen('config'); }}
+        onApprove={approve}
+        onReject={reject}
       />
 
       <div className="hk-game-scene">
-        {/* Canvas siempre visible como fondo */}
+        {/* Canvas siempre visible como fondo — nunca se desmonta */}
         <WorldCanvas hub={hub} rooms={rooms} tokens={tokens} events={rippleEvents} />
 
-        {/* Rail izquierdo: agentes */}
-        <div className="hk-game-overlay hk-game-overlay--left">
-          <div className="hk-game-glass" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', maxHeight: '100%' }}>
-            <div className="hk-game-rail-title">
-              <Led state={wsConnected ? 'on' : 'idle'} />
-              SHIP CREW · {agents.length}
-            </div>
-            <div style={{ overflowY: 'auto', flex: 1 }}>
-              {agents.map((a) => {
-                const building = allDepts.find((b) => b.role === a.role);
-                const last = runs.find((r) => r.agent_id === a.id);
-                const working = isWorking(a.id);
-                const color = building?.color || 'var(--signal)';
-                // Barra de actividad neón (CLAUDE.md: "barras verdes neón" en Ship Crew).
-                // Fuente real: activity del backend (AgentRuntimeState), no heurística.
-                const activity = agentStates[a.id]?.activity ?? (working ? 1 : 0);
-                let timeAgo = '';
-                if (last) {
-                  const mins = Math.round(
-                    (Date.now() - new Date(last.started_at).getTime()) / 60000,
-                  );
-                  timeAgo = mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h`;
-                }
-                return (
-                  <div
-                    key={a.id}
-                    className={`hk-game-agent-row${working ? ' hk-game-agent-row--active' : ''}`}
-                    style={{ borderLeftColor: working ? color : 'transparent' }}
-                    onClick={() => building && enterBuilding(building)}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(e) => {
-                      if ((e.key === 'Enter' || e.key === ' ') && building) {
-                        e.preventDefault();
-                        enterBuilding(building);
-                      }
-                    }}
-                  >
-                    <span
-                      className={`hk-game-agent-dot${working ? ' hk-game-agent-dot--active' : ''}`}
-                      style={working ? { background: color, boxShadow: `0 0 5px ${color}` } : {}}
-                    />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div
-                        className="hk-game-agent-name"
-                        style={{ color: working ? color : undefined }}
-                      >
-                        {a.name}
-                      </div>
-                      <div className="hk-game-agent-role">{a.role}</div>
-                      {last && (
-                        <div className="hk-game-agent-action">
-                          {(last.action || 'En espera').slice(0, 26)}
-                        </div>
-                      )}
-                      {/* Barra de actividad neón (Ship Crew spec) */}
-                      <div
-                        className="hk-bar"
-                        style={{
-                          marginTop: 4,
-                          height: 3,
-                          background: 'var(--void-deep)',
-                          border: '1px solid var(--line)',
-                          borderRadius: 2,
-                          overflow: 'hidden',
-                        }}
-                      >
-                        <div
-                          className="hk-bar-fill"
-                          style={{
-                            width: `${Math.round(activity * 100)}%`,
-                            height: '100%',
-                            background: `linear-gradient(90deg, var(--good-dim), var(--good))`,
-                            boxShadow: `0 0 6px var(--good)`,
-                            transition: 'width 0.4s ease',
-                          }}
-                        />
-                      </div>
-                    </div>
-                    {working ? (
-                      <span className="hk-game-badge hk-game-badge--live">LIVE</span>
-                    ) : timeAgo ? (
-                      <span className="hk-game-badge hk-game-badge--idle">{timeAgo}</span>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-
-        {/* Acciones rápidas: abajo-izquierda */}
-        <div className="hk-game-overlay hk-game-overlay--bottom-left">
-          <div className="hk-game-actions-row">
-            <button
-              className={`hk-game-action-btn${pending.length > 0 ? ' hk-game-action-btn--alert' : ''}`}
-              onClick={() => setScreen('alerts')}
-            >
-              ⚠{pending.length > 0 ? ` ${pending.length}` : ' 0'}
-              <span className="hk-game-action-label">ALERTAS</span>
-            </button>
-            <button className="hk-game-action-btn" onClick={() => setScreen('comms')}>
-              ◈
-              <span className="hk-game-action-label">COMMS</span>
-            </button>
-            <button
-              className={`hk-game-action-btn${objectives.filter((o) => o.status === 'active').length > 0 ? ' hk-game-action-btn--signal' : ''}`}
-              onClick={() => setScreen('objetivos')}
-            >
-              ◎
-              <span className="hk-game-action-label">OBJETIVOS</span>
-            </button>
-            <button className="hk-game-action-btn" onClick={() => setScreen('ventures')}>
-              ⬡
-              <span className="hk-game-action-label">VENTURES</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Log de sistema: panel derecho permanente */}
-        <div className={`hk-game-overlay hk-game-overlay--log${showBuildingPanel ? ' hk-game-overlay--log-hidden' : ''}`}>
-          <div className="hk-game-log">
-            <div className="hk-game-log-header">
-              <span
-                className="hk-led"
-                style={{
-                  background: wsConnected ? 'var(--good)' : 'var(--ember)',
-                  boxShadow: wsConnected ? '0 0 5px var(--good)' : '0 0 5px var(--ember)',
-                }}
-              />
-              <span>SISTEMA EN VIVO</span>
-              <span style={{ marginLeft: 'auto', color: 'var(--ink-faint)', fontSize: 8 }}>
-                {liveEvents.length}
-              </span>
-            </div>
-            <div className="hk-game-log-body">
-              {liveEvents.length === 0 ? (
-                <div className="hk-game-log-empty">Sin actividad…</div>
-              ) : (
-                liveEvents.slice(0, 28).map((e) => {
-                  const isError = e.type?.includes('error');
-                  const isDone = e.type?.includes('done') || e.type?.includes('created');
-                  const iconColor = isError
-                    ? 'var(--ember)'
-                    : isDone
-                      ? 'var(--good)'
-                      : 'var(--signal)';
-                  const icon = isError ? '✕' : isDone ? '✓' : '▶';
-                  let timeAgo = '';
-                  if (e.timestamp) {
-                    const ms = Date.now() - new Date(e.timestamp).getTime();
-                    const secs = Math.floor(ms / 1000);
-                    if (secs < 60) timeAgo = `${secs}s`;
-                    else if (secs < 3600) timeAgo = `${Math.floor(secs / 60)}m`;
-                    else timeAgo = `${Math.floor(secs / 3600)}h`;
-                  }
-                  return (
-                    <div key={e._cid ?? `${e.type}-${e.timestamp}`} className="hk-game-log-entry">
-                      <span className="hk-game-log-icon" style={{ color: iconColor }}>{icon}</span>
-                      <div className="hk-game-log-content">
-                        <div className="hk-game-log-type" style={{ color: iconColor }}>
-                          {e.type}
-                        </div>
-                        {e.from && <div className="hk-game-log-from">{e.from}</div>}
-                      </div>
-                      {timeAgo && (
-                        <span className="hk-game-log-time">{timeAgo}</span>
-                      )}
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Panel derecho: sala seleccionada */}
-        {showBuildingPanel && (
-          <div className="hk-game-overlay hk-game-overlay--panel">
-            <div className="hk-game-right-panel">
-              <div className="hk-game-panel-header">
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span
-                    style={{
-                      display: 'inline-block',
-                      width: 8,
-                      height: 8,
-                      borderRadius: '50%',
-                      background: activeBuilding.color,
-                      boxShadow: `0 0 8px ${activeBuilding.color}`,
-                    }}
-                  />
-                  <span className="hk-game-panel-title">{activeBuilding.name}</span>
-                </div>
-                <button
-                  className="hk-game-panel-close"
-                  onClick={() => setScreen('map')}
-                  aria-label="Cerrar panel"
-                >
-                  ✕
-                </button>
-              </div>
-              <div className="hk-game-panel-body">
-                <BuildingView
-                  building={activeBuilding}
-                  agent={buildingAgent}
-                  section={section}
-                  onChangeSection={setSection}
-                  chatMsgs={buildingAgent ? chatByAgent[buildingAgent.id] || [] : []}
-                  chatInput={chatInput}
-                  chatLoading={chatLoading}
-                  onChangeChatInput={setChatInput}
-                  onSendChat={sendChat}
-                  liveEvents={liveEvents}
-                  pendingForAgent={pendingForAgent}
-                  onApprove={approve}
-                  onReject={reject}
-                  onRunNow={runNow}
-                  onAgentUpdated={reload.loadAgents}
-                />
-              </div>
-            </div>
-          </div>
-        )}
+        {/* Paneles registrados: izquierda, abajo-izquierda, derecha, edificio */}
+        {panelRegistry.getByPosition('left').map((p) => p.render(panelContext))}
+        {panelRegistry.getByPosition('bottom-left').map((p) => p.render(panelContext))}
+        {panelRegistry.getByPosition('right').map((p) => p.render(panelContext))}
+        {panelRegistry.getByPosition('building').map((p) => p.render(panelContext))}
 
         {/* Overlay de pantalla secundaria */}
         {showOverlay && (
           <div className="hk-game-screen-overlay">
             <div className="hk-game-screen-header">
               <span className="hk-game-screen-title">{overlayTitle}</span>
-              <button
-                className="hk-game-panel-close"
-                onClick={() => setScreen('map')}
-                aria-label="Volver al mapa"
-              >
+              <button className="hk-game-panel-close" onClick={() => setScreen('map')} aria-label="Volver al mapa">
                 ✕
               </button>
             </div>
             <div className="hk-game-screen-body">
-              {activeOverlay?.render()}
+              {activeOverlay?.render(panelContext)}
             </div>
           </div>
         )}
@@ -501,11 +509,7 @@ export function GameLayout() {
                 setScreen(s);
               }}
             />
-            <button
-              className="hk-game-menu-close"
-              onClick={() => setShowMenu(false)}
-              aria-label="Cerrar menú"
-            >
+            <button className="hk-game-menu-close" onClick={() => setShowMenu(false)} aria-label="Cerrar menú">
               ✕ CERRAR
             </button>
           </div>

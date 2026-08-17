@@ -293,3 +293,12 @@ export function SectionIcon({ section, className }: { section: string; className
   const Cmp = SECTION_ICONS[section] || IconChat;
   return <Cmp className={className} />;
 }
+
+export function IconSend({ className }: IconProps) {
+  return (
+    <svg {...base} className={className}>
+      <path d="M4 12 20 4l-6 16-3-7-7-1Z" />
+      <path d="m11 13 6-9" />
+    </svg>
+  );
+}

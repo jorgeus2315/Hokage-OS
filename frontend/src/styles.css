@@ -1224,6 +1224,198 @@ svg { display: block; flex-shrink: 0; }
   white-space: nowrap;
 }
 
+/* ── Alerts dropdown (Fase 6) ── */
+.hk-game-hud-alerts {
+  position: relative;
+}
+
+.hk-game-alerts-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 320px;
+  max-height: 60vh;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--line-bright);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+  z-index: 200;
+  font-family: var(--font-mono);
+}
+
+.hk-game-alerts-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  color: var(--ink-faint);
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+}
+
+.hk-game-alerts-link {
+  background: none;
+  border: none;
+  color: var(--signal);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 0.12em;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+.hk-game-alerts-link:hover { text-shadow: 0 0 6px var(--signal); }
+
+.hk-game-alerts-empty {
+  padding: 20px 12px;
+  text-align: center;
+  font-size: 10px;
+  color: var(--ink-faint);
+}
+
+.hk-game-alert-row {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.hk-game-alert-row:last-child { border-bottom: none; }
+
+.hk-game-alert-row-title {
+  font-size: 11px;
+  color: var(--ink);
+  line-height: 1.3;
+  margin-bottom: 4px;
+}
+
+.hk-game-alert-row-amount {
+  font-size: 11px;
+  color: var(--amber);
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.hk-game-alert-row-meta {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.hk-game-alert-risk,
+.hk-game-alert-cat {
+  font-size: 7.5px;
+  letter-spacing: 0.1em;
+  padding: 1px 5px;
+  border-radius: 2px;
+  border: 1px solid var(--line);
+  color: var(--ink-faint);
+}
+.hk-game-alert-risk--low { color: var(--good); border-color: var(--good-dim); }
+.hk-game-alert-risk--medium { color: var(--amber); border-color: var(--amber); }
+.hk-game-alert-risk--high { color: var(--ember); border-color: var(--ember); }
+
+.hk-game-alert-row-actions {
+  display: flex;
+  gap: 6px;
+}
+.hk-game-alert-approve,
+.hk-game-alert-reject {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  padding: 5px 0;
+  border-radius: 2px;
+  cursor: pointer;
+  background: transparent;
+  transition: all 0.12s ease;
+}
+.hk-game-alert-approve {
+  color: var(--good);
+  border: 1px solid var(--good-dim);
+}
+.hk-game-alert-approve:hover { background: var(--good-dim); box-shadow: 0 0 8px var(--good); }
+.hk-game-alert-reject {
+  color: var(--ember);
+  border: 1px solid var(--ember);
+}
+.hk-game-alert-reject:hover { background: rgba(231, 76, 60, 0.14); }
+
+/* ── Hokage direct input (Fase 6) ── */
+.hk-game-hokage {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 220px;
+  max-width: 360px;
+}
+
+.hk-game-hokage-form {
+  display: flex;
+  align-items: center;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.hk-game-hokage-form:focus-within {
+  border-color: var(--signal);
+  box-shadow: 0 0 10px var(--signal-glow);
+}
+
+.hk-game-hokage-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink);
+  padding: 6px 10px;
+  caret-color: var(--signal);
+}
+.hk-game-hokage-input::placeholder { color: var(--ink-faint); }
+
+.hk-game-hokage-send {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-left: 1px solid var(--line);
+  padding: 0 10px;
+  height: 100%;
+  cursor: pointer;
+  color: var(--signal);
+  transition: color 0.12s ease;
+}
+.hk-game-hokage-send:disabled { color: var(--ink-faint); cursor: default; }
+.hk-game-hokage-send:not(:disabled):hover { color: #fff; text-shadow: 0 0 6px var(--signal); }
+.hk-game-hokage-send-icon { width: 14px; height: 14px; }
+
+.hk-game-hokage-reply {
+  display: flex;
+  gap: 6px;
+  font-size: 9px;
+  line-height: 1.4;
+  padding: 0 4px;
+  max-width: 100%;
+  overflow: hidden;
+}
+.hk-game-hokage-reply-label {
+  color: var(--ember);
+  letter-spacing: 0.1em;
+  flex-shrink: 0;
+}
+.hk-game-hokage-reply-text {
+  color: var(--ink-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* ── Overlays posicionados sobre el canvas ── */
 
 .hk-game-overlay {
