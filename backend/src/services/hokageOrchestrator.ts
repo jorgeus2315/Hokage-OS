@@ -1,6 +1,6 @@
 import { run, get, all } from '../db/init.js';
 import type { HokageCommand, HokageTask, HokageCommandStatus, RoleDefinition, TaskEdge, TaskEdgeType } from '../types/index.js';
-import type { TaskEvaluation, WorkItemForEval, RemediationPolicy, RemediationAction, AgentErrorClass } from '../types/index.js';
+import type { TaskEvaluation, WorkItemForEval, RemediationPolicy, RemediationAction, AgentErrorClass, Diagnosis } from '../types/index.js';
 import { DEFAULT_REMEDIATION_POLICY } from '../types/index.js';
 import { getRoleDefinition, listRoleDefinitions, modelFor } from './roleService.js';
 import { createAgent } from './agentService.js';
@@ -644,25 +644,33 @@ async function reopenAndDispatch(
   task: HokageTask,
   action: RemediationAction,
   history: RemediationAttempt[],
-  opts: { feedback?: string; modelOverride?: string; clearAgent?: boolean; excludeAgentIds?: number[] }
+  opts: { feedback?: string; modelOverride?: string; clearAgent?: boolean; excludeAgentIds?: number[]; roleOverride?: string; promptOverride?: string; profileOverride?: TaskProfile }
 ): Promise<boolean> {
   const cmd = await getCommandRow(task.command_id);
   if (!cmd) { await safeFailTerminal(task, 'command inexistente'); return true; }
 
   const counterCol = action === 'retry_immediate' ? 'retry_count' : 'remediation_count';
-  const newPrompt = opts.feedback
-    ? `${task.prompt}\n\n[REMEDIACIÓN · ${action}] ${opts.feedback}`.slice(0, PROMPT_MAX)
-    : task.prompt;
+  // promptOverride reemplaza el prompt completo (replan_task); feedback lo ANEXA (retry/escalate/reassign).
+  const newPrompt = opts.promptOverride !== undefined
+    ? opts.promptOverride.slice(0, PROMPT_MAX)
+    : opts.feedback
+      ? `${task.prompt}\n\n[REMEDIACIÓN · ${action}] ${opts.feedback}`.slice(0, PROMPT_MAX)
+      : task.prompt;
   const newModel = opts.modelOverride ?? task.model;
   const newAgent = opts.clearAgent ? null : task.agent_id;
 
   // PASO 1 — reopen atómico SIN counters/history (idempotencia: solo si sigue 'dispatched').
+  // SET dinámico: role/task_profile SOLO se escriben en replan_task (roleOverride/profileOverride);
+  // retry/reassign/escalate NO tocan role ni task_profile. depends_on_count NUNCA se toca (sidestepea #13).
+  const sets = [`status = 'pending'`, `work_item_id = NULL`, `agent_id = ?`, `prompt = ?`, `model = ?`, `error = NULL`];
+  const params: unknown[] = [newAgent, newPrompt, newModel];
+  if (opts.roleOverride !== undefined) { sets.push(`role = ?`); params.push(opts.roleOverride); }
+  if (opts.profileOverride !== undefined) { sets.push(`task_profile = ?`); params.push(JSON.stringify(opts.profileOverride)); }
+  sets.push(`updated_at = datetime('now')`);
+  params.push(task.id);
   const upd = await run(
-    `UPDATE hokage_tasks
-       SET status = 'pending', work_item_id = NULL, agent_id = ?, prompt = ?, model = ?,
-           error = NULL, updated_at = datetime('now')
-     WHERE id = ? AND status = 'dispatched'`,
-    [newAgent, newPrompt, newModel, task.id]
+    `UPDATE hokage_tasks SET ${sets.join(', ')} WHERE id = ? AND status = 'dispatched'`,
+    params
   );
   if (upd.changes !== 1) return true; // otra transición ya movió la tarea → sin dispatch, sin counter
 
@@ -730,10 +738,47 @@ async function safeFailTerminal(task: HokageTask, reason: string): Promise<void>
   } catch (e) { console.error('[REMEDIATION] safeFailTerminal:', (e as Error).message); }
 }
 
+// ADR-014 replan_task: re-planifica UNA tarea (LLM) reformulando prompt/rol/perfil a partir del
+// diagnóstico. Reutiliza EXACTAMENTE la validación existente (validatePlan → validateTaskProfile);
+// no crea una segunda ruta de validación. Devuelve el plan de la tarea o null (LLM falla/vacío/
+// inválido/no supera validación) → el executor cae al fallback humano seguro. Puro respecto a la BD
+// salvo la lectura del command para el ventureId. decomposeFn es inyectable SOLO para tests.
+export async function replanSingleTask(
+  task: HokageTask,
+  diagnosis: Diagnosis | null,
+  decomposeFn: (text: string, ventureId: number | null) => Promise<RawPlan | null> = decompose
+): Promise<{ role: string; prompt: string; profile: TaskProfile } | null> {
+  const cmd = await getCommandRow(task.command_id);
+  const ventureId = cmd?.venture_id ?? null;
+  const currentProfile = parseTaskProfile((task as unknown as { task_profile?: unknown }).task_profile);
+  const context =
+    `Tarea original (rol actual: ${task.role}): ${task.prompt}\n\n` +
+    `[REPLANIFICACIÓN] La tarea NO superó la evaluación. Causa raíz: ${diagnosis?.rootCause ?? 'desconocida'}. ` +
+    `Perfil actual: ${currentProfile ? JSON.stringify(currentProfile) : 'desconocido'}. ` +
+    `Reformula esta ÚNICA tarea (puedes cambiar de rol/enfoque/perfil) para resolver la causa. Genera UNA sola tarea.`;
+  let raw: RawPlan | null;
+  try {
+    raw = await decomposeFn(context, ventureId);
+  } catch (e) {
+    console.error('[REPLAN] LLM error:', (e as Error).message);
+    return null;
+  }
+  // MISMA validación determinista que el planner (validatePlan ya invoca validateTaskProfile).
+  const { tasks } = validatePlan(raw, await allowedRoleKeySet());
+  if (tasks.length === 0) return null;
+  const vt = tasks[0];
+  return { role: vt.role, prompt: vt.prompt, profile: vt.profile };
+}
+
 // Punto de entrada de remediación (integration layer). Decide con el engine PURO y ejecuta la
 // acción. Nunca lanza: cualquier error interno cae en safeFailTerminal. Devuelve true cuando toma
 // el control del flujo (re-despacho o terminal), para que onHokageTaskCompleted NO haga doble dispatch.
-export async function remediateTask(task: HokageTask, evaluation: TaskEvaluation): Promise<boolean> {
+// decomposeFn es inyectable SOLO para tests de replan_task (default = planner real).
+export async function remediateTask(
+  task: HokageTask,
+  evaluation: TaskEvaluation,
+  decomposeFn: (text: string, ventureId: number | null) => Promise<RawPlan | null> = decompose
+): Promise<boolean> {
   try {
     // Liberar reserva y claim del intento anterior antes de re-despachar (idempotentes).
     await releaseTaskReservation(task.id);
@@ -764,10 +809,25 @@ export async function remediateTask(task: HokageTask, evaluation: TaskEvaluation
           clearAgent: true,
           excludeAgentIds: decision.excludedAgentIds ?? (task.agent_id != null ? [task.agent_id] : undefined),
         });
-      case 'replan_task':
+      case 'replan_task': {
+        // Reopen-in-place: re-planifica la MISMA fila (nuevo rol/prompt/perfil), sin INSERT, sin
+        // tocar depends_on_count, sin generateImplicitEdges/attemptReplan → sidestepea #13.
+        const replan = await replanSingleTask(task, evaluation.diagnosis, decomposeFn);
+        if (!replan) {
+          // LLM falla/inválido → fallback humano seguro (comportamiento previo).
+          return await escalateRemediationToHuman(task, evaluation, 'replan_task', decision.reason);
+        }
+        const newModel = routeModelFor({ phase: task.phase, role: replan.role, title: task.title, prompt: replan.prompt, profile: replan.profile });
+        return await reopenAndDispatch(task, 'replan_task', history, {
+          roleOverride: replan.role,
+          promptOverride: replan.prompt,
+          profileOverride: replan.profile,
+          modelOverride: newModel,
+          clearAgent: true, // el rol puede cambiar → re-seleccionar especialista en el dispatch
+        });
+      }
       case 'replan_command':
-        // NO IMPLEMENTADO: no hay replanSingleTask ni TaskProfile persistido → una replanificación
-        // LLM por-tarea sería improvisar. Terminal humano seguro (ver informe B3).
+        // Sin cambios: replan a nivel command depende de attemptReplan, bloqueado por #13 → fallback humano.
         return await escalateRemediationToHuman(task, evaluation, decision.action, decision.reason);
       case 'human_intervention':
       default:
