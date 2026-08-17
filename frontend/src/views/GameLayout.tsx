@@ -252,6 +252,9 @@ export function GameLayout() {
                 const last = runs.find((r) => r.agent_id === a.id);
                 const working = isWorking(a.id);
                 const color = building?.color || 'var(--signal)';
+                // Barra de actividad neón (CLAUDE.md: "barras verdes neón" en Ship Crew).
+                // Fuente real: activity del backend (AgentRuntimeState), no heurística.
+                const activity = agentStates[a.id]?.activity ?? (working ? 1 : 0);
                 let timeAgo = '';
                 if (last) {
                   const mins = Math.round(
@@ -291,6 +294,29 @@ export function GameLayout() {
                           {(last.action || 'En espera').slice(0, 26)}
                         </div>
                       )}
+                      {/* Barra de actividad neón (Ship Crew spec) */}
+                      <div
+                        className="hk-bar"
+                        style={{
+                          marginTop: 4,
+                          height: 3,
+                          background: 'var(--void-deep)',
+                          border: '1px solid var(--line)',
+                          borderRadius: 2,
+                          overflow: 'hidden',
+                        }}
+                      >
+                        <div
+                          className="hk-bar-fill"
+                          style={{
+                            width: `${Math.round(activity * 100)}%`,
+                            height: '100%',
+                            background: `linear-gradient(90deg, var(--good-dim), var(--good))`,
+                            boxShadow: `0 0 6px var(--good)`,
+                            transition: 'width 0.4s ease',
+                          }}
+                        />
+                      </div>
                     </div>
                     {working ? (
                       <span className="hk-game-badge hk-game-badge--live">LIVE</span>
