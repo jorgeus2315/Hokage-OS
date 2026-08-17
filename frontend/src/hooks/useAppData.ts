@@ -104,6 +104,9 @@ export function useAppData(): AppData {
           id: d.key, name: d.name, desc: d.desc, role: d.role,
           glyph: d.glyph, color: d.color, db_id: d.id,
           pos_x: d.pos_x, pos_y: d.pos_y, is_hub: d.is_hub === 1,
+          // Fase 8: sin esto, building.type queda undefined tras conectar el WS y la
+          // Sala de Máquinas dejaría de detectarse como 'system' (regresión Fase 7→8).
+          type: d.type ?? 'business',
         }))
       );
       return;

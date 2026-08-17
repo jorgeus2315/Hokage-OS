@@ -154,13 +154,22 @@ export interface Objective {
   plan?: ObjPlan;
 }
 
-export type BuildingSection = 'chat' | 'feed' | 'stats' | 'pipeline' | 'outputs' | 'terminal' | 'alerts' | 'config';
+export type BuildingSection = 'chat' | 'feed' | 'stats' | 'pipeline' | 'outputs' | 'terminal' | 'alerts' | 'config' | 'system';
 
 export interface MetricsSummary {
   ai_cost_today_usd: number;
   messages_today: number;
   pending_decisions: number;
   urgent_decisions: number;
+}
+
+// Fase 8 — forma real de GET /api/runtime/status (runtime.getStatus()). Tipado
+// aditivo: `running` ya se consumía; el resto lo usa el SystemStatusPanel de Hermes.
+export interface RuntimeStatus {
+  running: boolean;
+  activeAgents: string[];
+  queuedEvents: number;
+  recentEvents: WsEvent[];
 }
 
 // ═══════════ HERMES ══════════════════════════════════════════════════════════

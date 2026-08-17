@@ -10,7 +10,10 @@ import { OutputsPanel } from '../panels/OutputsPanel';
 import { TerminalPanel } from '../panels/TerminalPanel';
 import { AlertsPanel } from '../panels/AlertsPanel';
 import { AgentConfigPanel } from '../panels/AgentConfigPanel';
+import { SystemStatusPanel } from '../panels/SystemStatusPanel';
 
+// Salas de negocio (type='business'): interfaz genérica de agente. El Chat permanece
+// como modo Debug (decisión P4) hasta que exista el orquestador C.5.
 const BASE_SECTIONS: Array<{ id: BuildingSection; label: string }> = [
   { id: 'chat', label: 'Chat' },
   { id: 'outputs', label: 'Outputs' },
@@ -21,7 +24,15 @@ const BASE_SECTIONS: Array<{ id: BuildingSection; label: string }> = [
   { id: 'config', label: 'Configurar' },
 ];
 
-const TERMINAL_TAB: { id: BuildingSection; label: string } = { id: 'terminal', label: 'Terminal' };
+// Sala de Máquinas (type='system', Hermes = runtime/kernel): set curado. Sin Chat
+// (decisión C2), sin Outputs/Feed/Pipeline/Config (interfaz de agente que no aplica
+// a un kernel). Ver [[Edificios - Definición Consolidada 2026-08-18]].
+const SYSTEM_SECTIONS: Array<{ id: BuildingSection; label: string }> = [
+  { id: 'system', label: 'Sistema' },
+  { id: 'terminal', label: 'Terminal' },
+  { id: 'stats', label: 'Stats' },
+  { id: 'alerts', label: 'Alertas' },
+];
 
 export function BuildingView({
   building,
@@ -57,10 +68,9 @@ export function BuildingView({
   onAgentUpdated?: () => void;
 }) {
   const agentEvents = liveEvents.filter((e) => e.from === agent?.name);
-  const isHermes = agent?.role === 'hermes';
-  const SECTIONS = isHermes
-    ? [BASE_SECTIONS[0], TERMINAL_TAB, ...BASE_SECTIONS.slice(1)]
-    : BASE_SECTIONS;
+  // Detección tipada (Fase 7→8): la sala de sistema se identifica por type, no por role.
+  const isSystem = building.type === 'system';
+  const SECTIONS = isSystem ? SYSTEM_SECTIONS : BASE_SECTIONS;
 
   return (
     <div className="hk-interior">
@@ -145,6 +155,7 @@ export function BuildingView({
             />
           )}
           {section === 'outputs' && <OutputsPanel agentId={agent?.id} />}
+          {section === 'system' && <SystemStatusPanel />}
           {section === 'terminal' && <TerminalPanel />}
           {section === 'feed' && <LiveFeedPanel events={agentEvents} />}
           {section === 'stats' && <StatsPanel agentId={agent?.id} />}

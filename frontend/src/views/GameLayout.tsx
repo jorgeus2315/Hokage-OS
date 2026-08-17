@@ -55,7 +55,9 @@ export function GameLayout() {
 
   function enterBuilding(b: Building) {
     setActiveBuilding(b);
-    setSection(b.role === 'hermes' ? 'terminal' : 'chat');
+    // Fase 8: sección inicial tipada. La Sala de Máquinas (type='system') abre en Sistema;
+    // el resto en Chat. Sin ramas hardcodeadas por role/nombre.
+    setSection(b.type === 'system' ? 'system' : 'chat');
     setScreen('building');
   }
 

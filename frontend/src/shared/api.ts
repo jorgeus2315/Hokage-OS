@@ -88,7 +88,7 @@ export const api = {
     pending_decisions: number; last_run_at: string | null;
   }>(`/agents/${agentId}/stats`),
 
-  runtimeStatus: () => req<{ running: boolean }>('/runtime/status'),
+  runtimeStatus: () => req<import('./types').RuntimeStatus>('/runtime/status'),
   runtimeStart: () => req('/runtime/start', { method: 'POST' }),
   runtimeStop: () => req('/runtime/stop', { method: 'POST' }),
 

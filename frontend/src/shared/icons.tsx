@@ -287,6 +287,7 @@ const SECTION_ICONS: Record<string, (p: IconProps) => JSX.Element> = {
   terminal: IconTerminal,
   alerts: IconAlert,
   config: IconConfig,
+  system: IconWorkshop,
 };
 
 export function SectionIcon({ section, className }: { section: string; className?: string }) {
