@@ -25,12 +25,16 @@ function buildRoomContainer(color: number): {
   alertDot: PIXI.Graphics;
   pulseRing: PIXI.Graphics;
   activeDot: PIXI.Graphics;
+  terminalWindows: PIXI.Graphics;
+  sideAccents: PIXI.Graphics;
+  scanlines: PIXI.Graphics;
+  headerBar: PIXI.Graphics;
 } {
   const container = makeInteractive(new PIXI.Container());
   container.label = 'room';
   container.hitArea = new PIXI.Rectangle(-RW / 2, -RH / 2, RW, RH);
 
-  // Outer ambient glow
+  // Outer ambient glow — enhanced for sci-fi terminal feel
   const glowOuter = new PIXI.Graphics()
     .roundRect(-RW / 2 - 12, -RH / 2 - 12, RW + 24, RH + 24, 8)
     .stroke({ width: 12, color, alpha: 0.07 });
@@ -40,37 +44,84 @@ function buildRoomContainer(color: number): {
     .roundRect(-RW / 2 + 2, -RH / 2 + 8, RW - 4, RH - 10, 3)
     .fill({ color, alpha: 0.06 });
 
-  // Interior horizontal grid lines
+  // Interior horizontal grid lines — subtle scanline texture for terminal feel
   const gridLines = new PIXI.Graphics();
   for (let y = -RH / 2 + 22; y < RH / 2 - 12; y += 14) {
     gridLines.moveTo(-RW / 2 + 6, y).lineTo(RW / 2 - 6, y)
       .stroke({ width: 0.5, color, alpha: 0.14 });
   }
 
-  // Main body
+  // Terminal scanlines — subtle horizontal lines across the building
+  const scanlines = new PIXI.Graphics();
+  for (let y = -RH / 2 + 6; y < RH / 2 - 6; y += 8) {
+    scanlines.moveTo(-RW / 2 + 4, y).lineTo(RW / 2 - 4, y)
+      .stroke({ width: 0.3, color: COLOR.ink, alpha: 0.03 });
+  }
+
+  // Main body — darker, more terminal-like
   const main = new PIXI.Graphics()
     .roundRect(-RW / 2, -RH / 2, RW, RH, 4)
-    .fill({ color: COLOR.panel, alpha: 0.96 })
+    .fill({ color: COLOR.panel, alpha: 0.98 })
     .stroke({ width: 1.5, color, alpha: 0.82 });
 
-  // Top accent bar (solid color strip)
-  const accentBar = new PIXI.Graphics()
-    .roundRect(-RW / 2 + 2, -RH / 2 + 2, RW - 4, 4, 2)
-    .fill({ color, alpha: 0.9 });
+  // Header bar — terminal title area at top
+  const headerBar = new PIXI.Graphics()
+    .roundRect(-RW / 2 + 2, -RH / 2 + 2, RW - 4, 18, 2)
+    .fill({ color: 0x000000, alpha: 0.4 })
+    .stroke({ width: 0, color, alpha: 0 });
 
-  // Corner accent marks (L-brackets)
+  // Top accent bar (solid color strip) — thinner, more refined
+  const accentBar = new PIXI.Graphics()
+    .roundRect(-RW / 2 + 2, -RH / 2 + 2, RW - 4, 3, 2)
+    .fill({ color, alpha: 0.95 });
+
+  // Side accent bars — vertical strips on left/right for terminal frame feel
+  const sideAccents = new PIXI.Graphics()
+    .roundRect(-RW / 2 + 2, -RH / 2 + 20, 2, RH - 22, 1)
+    .fill({ color, alpha: 0.6 })
+    .roundRect(RW / 2 - 4, -RH / 2 + 20, 2, RH - 22, 1)
+    .fill({ color, alpha: 0.6 });
+
+  // Terminal windows — simulated window panes (horizontal bands)
+  const terminalWindows = new PIXI.Graphics();
+  const windowYStart = -RH / 2 + 24;
+  const windowHeight = 14;
+  const windowGap = 6;
+  for (let i = 0; i < 4; i++) {
+    const y = windowYStart + i * (windowHeight + windowGap);
+    if (y + windowHeight < RH / 2 - 16) {
+      terminalWindows
+        .roundRect(-RW / 2 + 8, y, RW - 16, windowHeight, 2)
+        .fill({ color: 0x000000, alpha: 0.25 })
+        .stroke({ width: 0.5, color, alpha: 0.15 });
+    }
+  }
+
+  // Corner accent marks (L-brackets) — enhanced with double brackets for sci-fi feel
   const corners = new PIXI.Graphics();
-  const cLen = 11;
+  const cLen = 13;
   const cx2 = RW / 2 - 7, cy2 = RH / 2 - 7;
+  // Outer brackets
   corners
     .moveTo(-cx2 - cLen, -cy2).lineTo(-cx2, -cy2).lineTo(-cx2, -cy2 - cLen)
-    .stroke({ width: 1, color, alpha: 0.45 })
+    .stroke({ width: 1.5, color, alpha: 0.6 })
     .moveTo(cx2 + cLen, -cy2).lineTo(cx2, -cy2).lineTo(cx2, -cy2 - cLen)
-    .stroke({ width: 1, color, alpha: 0.45 })
+    .stroke({ width: 1.5, color, alpha: 0.6 })
     .moveTo(-cx2 - cLen, cy2).lineTo(-cx2, cy2).lineTo(-cx2, cy2 + cLen)
-    .stroke({ width: 1, color, alpha: 0.45 })
+    .stroke({ width: 1.5, color, alpha: 0.6 })
     .moveTo(cx2 + cLen, cy2).lineTo(cx2, cy2).lineTo(cx2, cy2 + cLen)
-    .stroke({ width: 1, color, alpha: 0.45 });
+    .stroke({ width: 1.5, color, alpha: 0.6 });
+  // Inner brackets (smaller, more subtle)
+  const cLenInner = 7;
+  corners
+    .moveTo(-cx2 - cLenInner + 2, -cy2 + 2).lineTo(-cx2 + 2, -cy2 + 2).lineTo(-cx2 + 2, -cy2 - cLenInner + 2)
+    .stroke({ width: 0.8, color, alpha: 0.25 })
+    .moveTo(cx2 + cLenInner - 2, -cy2 + 2).lineTo(cx2 - 2, -cy2 + 2).lineTo(cx2 - 2, -cy2 - cLenInner + 2)
+    .stroke({ width: 0.8, color, alpha: 0.25 })
+    .moveTo(-cx2 - cLenInner + 2, cy2 - 2).lineTo(-cx2 + 2, cy2 - 2).lineTo(-cx2 + 2, cy2 + cLenInner - 2)
+    .stroke({ width: 0.8, color, alpha: 0.25 })
+    .moveTo(cx2 + cLenInner - 2, cy2 - 2).lineTo(cx2 - 2, cy2 - 2).lineTo(cx2 - 2, cy2 + cLenInner - 2)
+    .stroke({ width: 0.8, color, alpha: 0.25 });
 
   // Bottom activity bar background
   const bottomBarBg = new PIXI.Graphics()
@@ -103,13 +154,14 @@ function buildRoomContainer(color: number): {
   activeDot.visible = false;
 
   container.addChild(
-    glowOuter, interiorFill, gridLines, main, accentBar, corners,
+    glowOuter, interiorFill, gridLines, scanlines, main, headerBar, accentBar, sideAccents, terminalWindows, corners,
     bottomBarBg, bottomBar, pulseRing, label, sublabel, alertDot, activeDot,
   );
 
   return {
     container, label, sublabel, accentBar, glowOuter, interiorFill,
     bottomBar, alertDot, pulseRing, activeDot,
+    terminalWindows, sideAccents, scanlines, headerBar,
   };
 }
 
