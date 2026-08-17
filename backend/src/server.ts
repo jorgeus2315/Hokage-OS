@@ -630,13 +630,14 @@ app.get('/api/departments', async (_req, res) => {
 
 app.post('/api/departments', requireAdmin, async (req, res) => {
   try {
-    const { key, name, desc = '', role, glyph = 'default', color = '#4fd1c5', pos_x = 1000, pos_y = 1000, is_hub = 0, sort_order = 0 } = req.body;
+    const { key, name, desc = '', role, glyph = 'default', color = '#4fd1c5', pos_x = 1000, pos_y = 1000, is_hub = 0, sort_order = 0, type = 'business' } = req.body;
     if (!key || !name || !role) return res.status(400).json({ ok: false, error: 'Faltan campos obligatorios: key, name, role' });
+    if (type !== 'business' && type !== 'system') return res.status(400).json({ ok: false, error: "type debe ser 'business' o 'system'" });
     const existing = await get<Department>('SELECT id FROM departments WHERE key = ?', [key]);
     if (existing) return res.status(409).json({ ok: false, error: `Ya existe un departamento con key "${key}"` });
     const result = await run(
-      `INSERT INTO departments (key,name,desc,role,glyph,color,pos_x,pos_y,is_hub,sort_order) VALUES (?,?,?,?,?,?,?,?,?,?)`,
-      [key, name, desc, role, glyph, color, pos_x, pos_y, is_hub, sort_order]
+      `INSERT INTO departments (key,name,desc,role,glyph,color,pos_x,pos_y,is_hub,sort_order,type) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+      [key, name, desc, role, glyph, color, pos_x, pos_y, is_hub, sort_order, type]
     );
     const dept = await get<Department>('SELECT * FROM departments WHERE id = ?', [result.lastID]);
     res.status(201).json({ ok: true, data: dept });
@@ -647,7 +648,10 @@ app.put('/api/departments/:id', requireAdmin, async (req, res) => {
   try {
     const id = Number(req.params.id);
     const payload = req.body as DepartmentUpdatePayload;
-    const allowed: (keyof DepartmentUpdatePayload)[] = ['name', 'desc', 'color', 'pos_x', 'pos_y', 'active'];
+    if (payload.type !== undefined && payload.type !== 'business' && payload.type !== 'system') {
+      return res.status(400).json({ ok: false, error: "type debe ser 'business' o 'system'" });
+    }
+    const allowed: (keyof DepartmentUpdatePayload)[] = ['name', 'desc', 'color', 'pos_x', 'pos_y', 'active', 'type'];
     const sets = allowed.filter((k) => payload[k] !== undefined).map((k) => `${k} = ?`);
     const vals = allowed.filter((k) => payload[k] !== undefined).map((k) => payload[k]);
     if (sets.length === 0) return res.status(400).json({ ok: false, error: 'Sin campos a actualizar' });

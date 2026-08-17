@@ -369,6 +369,11 @@ export interface MarketCreatePayload {
   payload?: string;
 }
 
+// Fase 7 — distinción tipada Negocio/Sistema. Permite identificar la Sala de Máquinas
+// (Hermes) por tipo, no por `role === 'hermes'` hardcodeado. El Registry completo de
+// N tipos es Fase 16; aquí solo el slice binario.
+export type DepartmentType = 'business' | 'system';
+
 export interface Department {
   id: number;
   key: string;
@@ -382,6 +387,7 @@ export interface Department {
   is_hub: number;
   active: number;
   sort_order: number;
+  type: DepartmentType;
   created_at: string;
 }
 
@@ -392,6 +398,7 @@ export interface DepartmentUpdatePayload {
   pos_x?: number;
   pos_y?: number;
   active?: number;
+  type?: DepartmentType;
 }
 
 export interface AuditLog {

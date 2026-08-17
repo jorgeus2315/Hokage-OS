@@ -231,6 +231,16 @@ async function runMigrations(): Promise<void> {
     console.log('[DB] Migración: departments.position_locked añadida; departamentos no-hub normalizados a active=0 (niebla de La Fundación)');
   }
 
+  // Fase 7 — distinción tipada Negocio/Sistema. Aditiva: todas las salas nacen 'business'
+  // por el DEFAULT; la Sala de Máquinas (Hermes) se reclasifica a 'system' una sola vez.
+  // Sobre BD existente el UPDATE alcanza la fila ya sembrada; sobre BD nueva el dept de
+  // Hermes se siembra después de esta migración, así que su INSERT fija type='system' directamente.
+  if (!(await columnExists('departments', 'type'))) {
+    await run(`ALTER TABLE departments ADD COLUMN type TEXT NOT NULL DEFAULT 'business'`);
+    await run(`UPDATE departments SET type = 'system' WHERE key = 'hermes'`);
+    console.log("[DB] Migración: departments.type añadida (business por defecto; hermes → system)");
+  }
+
   // Fuente de verdad del modelo por rol = role_definitions (Fase 1b). Aquí ya NO se sobrescribe
   // un modelo elegido por Jorge (bug anterior: se reseteaba en cada arranque) — solo se rellena
   // el de un agente que no tenga ninguno. Se lee role_definitions directamente (no vía roleService)
@@ -787,6 +797,7 @@ export async function initSchema(): Promise<void> {
     is_hub INTEGER NOT NULL DEFAULT 0,
     active INTEGER NOT NULL DEFAULT 1,
     sort_order INTEGER NOT NULL DEFAULT 0,
+    type TEXT NOT NULL DEFAULT 'business',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
 
@@ -1093,9 +1104,9 @@ REGLAS ABSOLUTAS:
     // active=0: no es hub, nace en niebla como el resto — la reactivación de Hermes
     // (§9.1) es quien la pone a 1, igual que ya hace con agents.status.
     await run(
-      `INSERT INTO departments (key,name,desc,role,glyph,color,pos_x,pos_y,is_hub,sort_order,active)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-      ['hermes', 'Sala de Máquinas', 'Ejecución de sistema', 'hermes', 'terminal', '#8b5cf6', 1000, 1400, 0, 6, 0]
+      `INSERT INTO departments (key,name,desc,role,glyph,color,pos_x,pos_y,is_hub,sort_order,active,type)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+      ['hermes', 'Sala de Máquinas', 'Ejecución de sistema', 'hermes', 'terminal', '#8b5cf6', 1000, 1400, 0, 6, 0, 'system']
     );
   }
 

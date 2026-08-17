@@ -63,6 +63,10 @@ export interface CommMsg {
   created_at: string;
 }
 
+// Fase 7 — distinción tipada Negocio/Sistema (refleja departments.type del backend).
+// Habilita identificar la Sala de Máquinas por tipo en vez de `role === 'hermes'`.
+export type DepartmentType = 'business' | 'system';
+
 export interface Building {
   id: string;
   name: string;
@@ -75,6 +79,9 @@ export interface Building {
   pos_x?: number;
   pos_y?: number;
   is_hub?: boolean;
+  // Fase 7: 'business' | 'system'. Opcional porque las BUILDINGS estáticas de fallback
+  // (constants.ts) no lo declaran; el backend siempre lo envía.
+  type?: DepartmentType;
   // Fase 8 del Plan de Migración ECS: el backend ya enviaba este campo
   // (columna `position_locked` en `departments`) — el frontend lo
   // ignoraba en silencio hasta conectarlo a WorldLayoutEngine.
