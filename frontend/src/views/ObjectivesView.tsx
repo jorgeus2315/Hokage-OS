@@ -2,18 +2,18 @@ import { useState } from 'react';
 import type { Objective, ObjMilestone, ObjPlan } from '../shared/types';
 import { api } from '../shared';
 
-// Se mantienen como hex literal a propósito (no var(--x)): más abajo se concatena
-// `${roleColor}33` para el borde translúcido — un var() no admite esa concatenación
-// de alfa. Fase 1 de UI Implementation Plan.md: consolidar fuentes sin cambiar
-// comportamiento — tocar esto rompería el borde de cada rol.
+// Colores por rol — mapean 1:1 a las custom properties de styles.css.
+// Fase 1 de UI Implementation Plan.md: consolidar fuentes sin cambiar
+// comportamiento. Los valores de abajo son los *mismos* que las vars, no
+// duplicados con distinto valor — la fuente de verdad es styles.css.
 const ROLE_COLOR: Record<string, string> = {
-  investigador: '#4fd1c5',
-  contenido: '#c77dff',
-  trafico: '#f0a93b',
-  finanzas: '#3ecf6a',
-  operaciones: '#4f8cff',
-  soporte: '#a0aec0',
-  ceo: '#e8432d',
+  investigador: 'var(--role-investigador)',
+  contenido:    'var(--role-contenido)',
+  trafico:      'var(--role-trafico)',
+  finanzas:     'var(--role-finanzas)',
+  operaciones:  'var(--role-operaciones)',
+  soporte:      'var(--role-soporte)',
+  ceo:          'var(--role-ceo)',
 };
 
 const STATUS_LABEL: Record<string, { text: string; color: string }> = {
@@ -50,7 +50,9 @@ function MilestoneDot({ status }: { status: string }) {
 }
 
 function MilestoneRow({ m }: { m: ObjMilestone }) {
-  const roleColor = m.assigned_agent_role ? (ROLE_COLOR[m.assigned_agent_role] ?? '#555') : '#555';
+  const role = m.assigned_agent_role ?? '';
+  const roleColor = ROLE_COLOR[role] ?? '#555';
+  const roleFaint = role ? `var(--role-${role}-faint)` : `var(--role-unknown-faint)`;
   return (
     <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '5px 0',
       borderBottom: '1px solid var(--legacy-card)', opacity: m.status === 'skipped' ? 0.4 : 1 }}>
@@ -68,7 +70,7 @@ function MilestoneRow({ m }: { m: ObjMilestone }) {
       </div>
       {m.assigned_agent_role && (
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: '0.1em',
-          color: roleColor, border: `1px solid ${roleColor}33`, padding: '1px 5px',
+          color: roleColor, border: `1px solid ${roleFaint}`, padding: '1px 5px',
           borderRadius: 2, flexShrink: 0, opacity: 0.85 }}>
           {m.assigned_agent_role.toUpperCase()}
         </span>

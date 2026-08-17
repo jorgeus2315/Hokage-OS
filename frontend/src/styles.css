@@ -27,13 +27,29 @@
   --ink-dim: #8a8d93;
   --ink-faint: #4a4d53;
 
-  /* Colores por rol de agente que no coinciden con ningún tono de arriba —
-     ceo/investigador/trafico/finanzas ya usan --ember/--signal/--amber/--good.
-     Antes duplicados en design/tokens.ts (retirado, Fase 1 de UI Implementation
-     Plan.md) y en ObjectivesView.tsx; consolidados aquí. */
+  /* Colores por rol de agente — única fuente de verdad (Fase 1 de UI
+     Implementation Plan.md: consolidar fuentes sin cambiar comportamiento).
+     ceo/investigador/trafico/finanzas reusan --ember/--signal/--amber/--good;
+     los otros tres se declaran aquí. Las variantes *-faint llevan el alfa
+     ya cocinado (#rrggbb + αa) porque un var() no admite concatenar α
+     dinámicamente (las usan los bordes translúcidos de ObjectivesView.tsx). */
+  --role-ceo: #e8432d;
+  --role-ceo-faint: #e8432d33;
+  --role-investigador: #4fd1c5;
+  --role-investigador-faint: #4fd1c533;
   --role-contenido: #c77dff;
+  --role-contenido-faint: #c77dff33;
+  --role-trafico: #f0a93b;
+  --role-trafico-faint: #f0a93b33;
+  --role-finanzas: #3ecf6a;
+  --role-finanzas-faint: #3ecf6a33;
   --role-operaciones: #4f8cff;
+  --role-operaciones-faint: #4f8cff33;
   --role-soporte: #a0aec0;
+  --role-soporte-faint: #a0aec033;
+
+  /* Fallback para roles desconocidos — gris suave con 20% α */
+  --role-unknown-faint: #555333;
 
   /* Paleta "legacy" — en uso hoy en ObjectivesView.tsx (tarjetas/bordes/glows) y
      como fallback ya escrito en StatsPanel.tsx (var(--signal-faint, #00ccff11), etc.).
