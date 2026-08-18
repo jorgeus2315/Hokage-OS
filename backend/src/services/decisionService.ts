@@ -26,20 +26,23 @@ export async function getDecision(id: number): Promise<Decision | undefined> {
 export async function createDecision(payload: DecisionCreatePayload): Promise<Decision> {
   // Deduplicación: si ya existe una decisión idéntica propuesta y sin revisar,
   // no crear otra — evita que una tarea recurrente sature Alertas.
+  // Incluye venture_id en la clave de dedupe para soportar multi-venture (Fase 2).
   if (payload.agent_id != null) {
     const duplicate = await get<Decision>(
-      `${SELECT} WHERE agent_id = ? AND status = 'proposed' AND lower(trim(title)) = lower(trim(?)) LIMIT 1`,
-      [payload.agent_id, payload.title]
+      `${SELECT} WHERE agent_id = ? AND status = 'proposed' AND lower(trim(title)) = lower(trim(?)) AND venture_id = ? LIMIT 1`,
+      [payload.agent_id, payload.title, payload.venture_id ?? null]
     );
     if (duplicate) return duplicate;
   } else if (payload.entity_type && payload.entity_id != null) {
     // Decisiones generadas por el sistema (sin agente) se dedupean por la entidad que referencian
     const duplicate = await get<Decision>(
-      `${SELECT} WHERE entity_type = ? AND entity_id = ? AND status = 'proposed' LIMIT 1`,
-      [payload.entity_type, payload.entity_id]
+      `${SELECT} WHERE entity_type = ? AND entity_id = ? AND status = 'proposed' AND venture_id = ? LIMIT 1`,
+      [payload.entity_type, payload.entity_id, payload.venture_id ?? null]
     );
     if (duplicate) return duplicate;
   }
+
+  console.log('[DEBUG createDecision] INSERT venture_id:', payload.venture_id, 'title:', payload.title);
 
   const category = inferCategory(payload.title, payload.amount);
   const result = await run(

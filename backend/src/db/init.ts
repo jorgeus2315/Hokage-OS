@@ -292,6 +292,11 @@ async function runMigrations(): Promise<void> {
   if (!(await columnExists('agent_costs', 'venture_id'))) {
     await run(`ALTER TABLE agent_costs ADD COLUMN venture_id INTEGER REFERENCES ventures(id)`);
   }
+
+  // Fase 2: agent_budgets.venture_id para granularidad por venture (presupuestos por negocio)
+  if (!(await columnExists('agent_budgets', 'venture_id'))) {
+    await run(`ALTER TABLE agent_budgets ADD COLUMN venture_id INTEGER REFERENCES ventures(id)`);
+  }
   await run(`CREATE INDEX IF NOT EXISTS idx_agent_costs_venture ON agent_costs(venture_id)`);
   // K.5: modelo realmente usado en la llamada (control de gasto por modelo). Lo puebla askAgent/callAIJson.
   if (!(await columnExists('agent_costs', 'model'))) {
@@ -707,6 +712,7 @@ export async function initSchema(): Promise<void> {
 
   await run(`CREATE TABLE IF NOT EXISTS agent_budgets (
     agent_id          INTEGER PRIMARY KEY REFERENCES agents(id),
+    venture_id        INTEGER REFERENCES ventures(id),
     monthly_limit_usd REAL NOT NULL DEFAULT 5.0,
     current_month_usd REAL NOT NULL DEFAULT 0,
     reset_date        TEXT NOT NULL DEFAULT (strftime('%Y-%m-01', 'now', '+1 month')),

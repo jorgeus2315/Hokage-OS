@@ -1,4 +1,5 @@
-import { run, get } from '../db/init.js';
+import { run, get, all } from '../db/init.js';
+import { createDecision } from './decisionService.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ventureBudget — techo económico DURO por venture (Fase 7).
@@ -14,6 +15,11 @@ import { run, get } from '../db/init.js';
 // serializa las escrituras, así que dos reservas simultáneas de la misma venture no pueden
 // ambas superar el tope — cada una ve el efecto de la anterior. No hay locks globales.
 // No modifica agent_budgets (el límite por-rol de 20 USD/mes sigue vigente aparte).
+//
+// Fase 2: budgets son por venture/business (agent_budgets.venture_id). Umbrales:
+//   <80% → normal
+//   >=80% → warning
+//   >=100% → bloqueo + Decision `budget_request`
 
 export interface VentureBudget {
   ventureId: number;
@@ -22,6 +28,7 @@ export interface VentureBudget {
   real: number;        // 2b · coste real registrado
   available: number;   // 3 · saldo disponible (Infinity si no hay tope)
   capped: boolean;     // allocated > 0
+  pctUsed: number;     // porcentaje usado (real + reserved) / allocated
 }
 
 async function realSpent(ventureId: number): Promise<number> {
@@ -40,13 +47,16 @@ export async function getVentureBudget(ventureId: number): Promise<VentureBudget
   if (!v) return null;
   const real = await realSpent(ventureId);
   const capped = v.budget_allocated_usd > 0;
+  const used = real + v.budget_spent_usd;
+  const pctUsed = capped && v.budget_allocated_usd > 0 ? used / v.budget_allocated_usd : 0;
   return {
     ventureId,
     allocated: v.budget_allocated_usd,
     reserved: v.budget_spent_usd,
     real,
-    available: capped ? v.budget_allocated_usd - real - v.budget_spent_usd : Infinity,
+    available: capped ? v.budget_allocated_usd - used : Infinity,
     capped,
+    pctUsed,
   };
 }
 
@@ -57,6 +67,63 @@ export async function ventureOverRealBudget(ventureId: number | null | undefined
   const b = await getVentureBudget(ventureId);
   if (!b || !b.capped) return false;
   return b.real >= b.allocated;
+}
+
+// Umbrales de alerta por venture (Fase 2)
+export interface BudgetAlert {
+  ventureId: number;
+  pctUsed: number;
+  level: 'normal' | 'warning' | 'critical';
+  blocked: boolean;
+}
+
+export async function checkVentureBudgetAlert(ventureId: number | null | undefined): Promise<BudgetAlert | null> {
+  if (ventureId == null) return null;
+  const b = await getVentureBudget(ventureId);
+  if (!b || !b.capped) return { ventureId, pctUsed: 0, level: 'normal', blocked: false };
+
+  if (b.pctUsed >= 1.0) return { ventureId, pctUsed: b.pctUsed, level: 'critical', blocked: true };
+  if (b.pctUsed >= 0.8) return { ventureId, pctUsed: b.pctUsed, level: 'warning', blocked: false };
+  return { ventureId, pctUsed: b.pctUsed, level: 'normal', blocked: false };
+}
+
+// Crea Decision `budget_request` cuando venture alcanza >=100% (bloqueo)
+export async function createBudgetRequestDecision(ventureId: number, agentId: number | null): Promise<void> {
+  const b = await getVentureBudget(ventureId);
+  console.log('[DEBUG createBudgetRequestDecision] ventureId:', ventureId, 'agentId:', agentId, 'budget:', b);
+  if (!b || !b.capped) return;
+
+  // Debug: check ALL decisions for this venture
+  const allDecisions = await all<{ id: number; title: string; category: string; status: string }>(
+    `SELECT id, title, category, status FROM decisions WHERE venture_id = ?`,
+    [ventureId]
+  );
+  console.log('[DEBUG createBudgetRequestDecision] ALL decisions for venture:', allDecisions);
+
+  // Evitar duplicados recientes (misma venture, misma categoría, proposed)
+  const existing = await get<{ id: number }>(
+    `SELECT id FROM decisions
+     WHERE venture_id = ? AND category = 'FINANCIAL' AND status = 'proposed'
+     AND title LIKE '%Presupuesto venture%' LIMIT 1`,
+    [ventureId]
+  );
+  console.log('[DEBUG createBudgetRequestDecision] existing:', existing);
+  if (existing) return;
+
+  const allocated = b.allocated;
+  const used = b.real + b.reserved;
+  const pct = (b.pctUsed * 100).toFixed(0);
+
+  await createDecision({
+    agent_id: agentId,
+    venture_id: ventureId,
+    title: `Presupuesto venture agotado (${pct}% usado)`,
+    description: `La venture ha consumido ${used.toFixed(4)} USD de ${allocated} USD asignados. Se requiere ampliar el presupuesto para continuar operaciones.`,
+    reasoning: 'Bloqueo automático por alcanzar el 100% del presupuesto asignado a la venture.',
+    risk_level: 'high',
+    amount: allocated * 0.5, // sugerencia: +50%
+  });
+  console.log('[DEBUG createBudgetRequestDecision] decision created');
 }
 
 // Reserva atómica. Devuelve el importe reservado (>0 comprometido; 0 = venture sin tope, se

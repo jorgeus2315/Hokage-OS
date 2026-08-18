@@ -168,10 +168,33 @@ function stripTrendsPrefix(text: string): string {
   return text.replace(/^\)\]\}',?\n/, '');
 }
 
+const TRENDS_TIMEOUT_MS = 15_000;
+
+async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function computeTrend(interest: Array<{ date: string; value: number }>): 'up' | 'stable' | 'down' {
+  if (interest.length < 2) return 'stable';
+  const recent = interest.slice(-4);
+  const older = interest.slice(0, 4);
+  const recentAvg = recent.reduce((s, d) => s + d.value, 0) / recent.length;
+  const olderAvg = older.reduce((s, d) => s + d.value, 0) / (older.length || 1);
+  if (recentAvg > olderAvg * 1.15) return 'up';
+  if (recentAvg < olderAvg * 0.85) return 'down';
+  return 'stable';
+}
+
 export const GoogleTrendsTool: Tool<GoogleTrendsInput, GoogleTrendsOutput> = {
   id: 'google.trends',
   name: 'Google Trends',
-  description: 'Consulta el interés de búsqueda de una keyword y queries relacionadas en alza.',
+  description: 'Consulta el interés de búsqueda de una keyword y queries relacionadas en alza. Devuelve: keyword, volume (0-100), trend (up/stable/down), relatedQueries[].',
   category: 'research',
   status: 'ready',
   permissions: permission('global'),
@@ -185,89 +208,120 @@ export const GoogleTrendsTool: Tool<GoogleTrendsInput, GoogleTrendsOutput> = {
     ['query']
   ),
   outputSchema: stubOutputSchema({
-    query:     { type: 'string' },
-    region:    { type: 'string' },
-    timeframe: { type: 'string' },
-    interest:  { type: 'array', items: { type: 'object', properties: { date: { type: 'string' }, value: { type: 'integer' } } } },
-    rising:    { type: 'array', items: { type: 'object', properties: { query: { type: 'string' }, value: { type: 'integer' } } } },
+    keyword:       { type: 'string' },
+    volume:        { type: 'integer', minimum: 0, maximum: 100 },
+    trend:         { type: 'string', enum: ['up', 'stable', 'down'] },
+    relatedQueries: { type: 'array', items: { type: 'string' } },
   }),
   async estimateCost(_input) { return 0; },
   async execute(input, _ctx) {
-    const geo       = input.region    || 'US';
-    const timeMap   = { '7d': 'now 7-d', '30d': 'today 1-m', '90d': 'today 3-m' } as const;
-    const time      = timeMap[input.timeframe || '30d'] ?? 'today 1-m';
-    const hl        = 'en-US';
-    const headers   = { 'User-Agent': TRENDS_UA, Accept: 'application/json, text/plain, */*' };
+    const geo     = input.region    || 'US';
+    const timeMap = { '7d': 'now 7-d', '30d': 'today 1-m', '90d': 'today 3-m' } as const;
+    const time    = timeMap[input.timeframe || '30d'] ?? 'today 1-m';
+    const hl      = 'en-US';
+    const headers = { 'User-Agent': TRENDS_UA, Accept: 'application/json, text/plain, */*' };
 
+    // Paso 1: obtener tokens de widgets desde /explore
+    const exploreReq = JSON.stringify({
+      comparisonItem: [{ keyword: input.query, geo, time }],
+      category: 0,
+      property: '',
+    });
+    const exploreUrl = `https://trends.google.com/trends/api/explore?hl=${hl}&tz=0&req=${encodeURIComponent(exploreReq)}`;
+
+    let exploreRes: Response;
     try {
-      // Paso 1: obtener tokens de widgets desde /explore
-      const exploreReq = JSON.stringify({
-        comparisonItem: [{ keyword: input.query, geo, time }],
-        category: 0,
-        property: '',
+      exploreRes = await fetchWithTimeout(exploreUrl, { headers }, TRENDS_TIMEOUT_MS);
+    } catch (err: any) {
+      return result<GoogleTrendsOutput>(false, { error: `GoogleTrends timeout/red: ${err.message}` });
+    }
+    if (!exploreRes.ok) {
+      return result<GoogleTrendsOutput>(false, { error: `Google Trends explore ${exploreRes.status}` });
+    }
+
+    let widgets: any[];
+    try {
+      widgets = JSON.parse(stripTrendsPrefix(await exploreRes.text())).widgets || [];
+    } catch {
+      return result<GoogleTrendsOutput>(false, { error: 'GoogleTrends: respuesta explore inválida' });
+    }
+
+    const timeseriesWidget = widgets.find((w: any) => w.id === 'TIMESERIES');
+    const relatedWidget    = widgets.find((w: any) => w.id === 'RELATED_QUERIES');
+
+    // Paso 2: interés a lo largo del tiempo
+    let interest: Array<{ date: string; value: number }> = [];
+    if (timeseriesWidget?.token) {
+      const tsReq = JSON.stringify({
+        time,
+        resolution: 'WEEK',
+        locale: hl,
+        comparisonItem: [{ geo, complexKeywordsRestriction: { keyword: [{ type: 'BROAD', value: input.query }] } }],
+        requestOptions: { property: '', backend: 'IZG', category: 0 },
       });
-      const exploreUrl = `https://trends.google.com/trends/api/explore?hl=${hl}&tz=0&req=${encodeURIComponent(exploreReq)}`;
-      const exploreRes = await fetch(exploreUrl, { headers });
-      if (!exploreRes.ok) {
-        return result<GoogleTrendsOutput>(false, { error: `Google Trends explore ${exploreRes.status}` });
+      const tsUrl = `https://trends.google.com/trends/api/widgetdata/multiline?hl=${hl}&tz=0&req=${encodeURIComponent(tsReq)}&token=${encodeURIComponent(timeseriesWidget.token)}&geo=${geo}`;
+
+      let tsRes: Response;
+      try {
+        tsRes = await fetchWithTimeout(tsUrl, { headers }, TRENDS_TIMEOUT_MS);
+      } catch (err: any) {
+        return result<GoogleTrendsOutput>(false, { error: `GoogleTrends timeout series: ${err.message}` });
       }
-      const widgets: any[] = JSON.parse(stripTrendsPrefix(await exploreRes.text())).widgets || [];
-
-      const timeseriesWidget = widgets.find((w: any) => w.id === 'TIMESERIES');
-      const relatedWidget    = widgets.find((w: any) => w.id === 'RELATED_QUERIES');
-
-      let interest: GoogleTrendsOutput['interest'] = [];
-      let rising:   GoogleTrendsOutput['rising']   = [];
-
-      // Paso 2: interés a lo largo del tiempo
-      if (timeseriesWidget?.token) {
-        const tsReq = JSON.stringify({
-          time,
-          resolution: 'WEEK',
-          locale: hl,
-          comparisonItem: [{ geo, complexKeywordsRestriction: { keyword: [{ type: 'BROAD', value: input.query }] } }],
-          requestOptions: { property: '', backend: 'IZG', category: 0 },
-        });
-        const tsUrl = `https://trends.google.com/trends/api/widgetdata/multiline?hl=${hl}&tz=0&req=${encodeURIComponent(tsReq)}&token=${encodeURIComponent(timeseriesWidget.token)}&geo=${geo}`;
-        const tsRes = await fetch(tsUrl, { headers });
-        if (tsRes.ok) {
+      if (tsRes.ok) {
+        try {
           const tsJson = JSON.parse(stripTrendsPrefix(await tsRes.text()));
           interest = (tsJson.default?.timelineData || []).map((d: any) => ({
             date:  d.formattedAxisTime || d.formattedTime || '',
             value: d.value?.[0] ?? 0,
           }));
+        } catch {
+          // parse falla → interest vacío, no inventar
         }
       }
+    }
 
-      // Paso 3: queries relacionadas en alza
-      if (relatedWidget?.token) {
-        const rqReq = JSON.stringify({
-          restriction: { geo, time, originalTimeRangeForExploreUrl: time },
-          keywordType: 'QUERY',
-          metric: ['TOP', 'RISING'],
-          trendinessSettings: {},
-          requestOptions: { property: '', backend: 'IZG', category: 0 },
-          language: hl,
-        });
-        const rqUrl = `https://trends.google.com/trends/api/widgetdata/relatedsearches?hl=${hl}&tz=0&req=${encodeURIComponent(rqReq)}&token=${encodeURIComponent(relatedWidget.token)}&geo=${geo}`;
-        const rqRes = await fetch(rqUrl, { headers });
-        if (rqRes.ok) {
+    // Paso 3: queries relacionadas en alza
+    let relatedQueries: string[] = [];
+    if (relatedWidget?.token) {
+      const rqReq = JSON.stringify({
+        restriction: { geo, time, originalTimeRangeForExploreUrl: time },
+        keywordType: 'QUERY',
+        metric: ['TOP', 'RISING'],
+        trendinessSettings: {},
+        requestOptions: { property: '', backend: 'IZG', category: 0 },
+        language: hl,
+      });
+      const rqUrl = `https://trends.google.com/trends/api/widgetdata/relatedsearches?hl=${hl}&tz=0&req=${encodeURIComponent(rqReq)}&token=${encodeURIComponent(relatedWidget.token)}&geo=${geo}`;
+
+      let rqRes: Response;
+      try {
+        rqRes = await fetchWithTimeout(rqUrl, { headers }, TRENDS_TIMEOUT_MS);
+      } catch (err: any) {
+        return result<GoogleTrendsOutput>(false, { error: `GoogleTrends timeout related: ${err.message}` });
+      }
+      if (rqRes.ok) {
+        try {
           const rqJson = JSON.parse(stripTrendsPrefix(await rqRes.text()));
           const risingItems: any[] = rqJson.default?.rankedList?.[1]?.rankedKeyword || [];
-          rising = risingItems.slice(0, 10).map((item: any) => ({
-            query: item.query  || '',
-            value: item.value  ?? 0,
-          }));
+          relatedQueries = risingItems.slice(0, 10).map((item: any) => item.query || '').filter(Boolean);
+        } catch {
+          // parse falla → relatedQueries vacío, no inventar
         }
       }
-
-      return result<GoogleTrendsOutput>(true, {
-        data: { query: input.query, region: geo, timeframe: input.timeframe || '30d', interest, rising },
-        cost: 0,
-      });
-    } catch (err: any) {
-      return result<GoogleTrendsOutput>(false, { error: `GoogleTrends: ${err.message}` });
     }
+
+    // Si no hay datos de interés, no inventar → error real para que el loop lo gestione
+    if (interest.length === 0) {
+      return result<GoogleTrendsOutput>(false, { error: 'GoogleTrends: sin datos de interés para la keyword' });
+    }
+
+    const volume = Math.max(...interest.map(d => d.value), 0);
+    const trend  = computeTrend(interest);
+
+    return result<GoogleTrendsOutput>(true, {
+      data: { keyword: input.query, volume, trend, relatedQueries },
+      cost: 0,
+    });
   },
 };
 

@@ -53,17 +53,11 @@ export interface GoogleTrendsInput {
 }
 
 export interface GoogleTrendsOutput {
-  query: string;
-  region: string;
-  timeframe: string;
-  interest: Array<{
-    date: string;
-    value: number;
-  }>;
-  rising: Array<{
-    query: string;
-    value: number;
-  }>;
+  // Formato esperado (Fase 2): { keyword, volume, trend, relatedQueries[] }
+  keyword: string;
+  volume: number;
+  trend: 'up' | 'stable' | 'down';
+  relatedQueries: string[];
 }
 
 export interface WebBrowserInput {

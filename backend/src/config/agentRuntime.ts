@@ -12,6 +12,7 @@ import { closeMilestoneOnResult } from '../services/objectiveService.js';
 import { onHokageTaskCompleted, onHokageWorkItemCancelled } from '../services/hokageOrchestrator.js';
 import { claimAgent, releaseAgent, cleanupExpiredClaims } from '../services/agentSelector.js';
 import { get, run, all } from '../db/init.js';
+import { checkVentureBudgetAlert, createBudgetRequestDecision } from '../services/ventureBudget.js';
 import type { AgentErrorClass } from '../types/index.js';
 
 // ═══════════════════════════════════════════════════════
@@ -417,8 +418,27 @@ ${formatLines.join('\n')}`;
     );
 
     for (const item of pending) {
-      // Verificar presupuesto antes de asignar (aún sin claim → nada que liberar en autónomo;
-      // en hokage_task el claim lo hace stage2 más abajo, así que tampoco hay claim aquí todavía).
+      // Verificar presupuesto VENTURE antes de asignar (Fase 2). La ventura llega del work_item.
+      // Si el work_item no tiene venture, no hay tope → comportamiento previo intacto.
+      const ventureId = await get<{ venture_id: number | null }>(
+        'SELECT venture_id FROM work_items WHERE id = ?', [item.id]
+      ).then(r => r?.venture_id ?? null);
+
+      if (ventureId != null) {
+        const alert = await checkVentureBudgetAlert(ventureId);
+        if (alert?.blocked) {
+          console.warn(`[STAGE2] Venture ${ventureId} bloqueada por presupuesto (${(alert.pctUsed * 100).toFixed(0)}%)`);
+          await run(`UPDATE work_items SET status = 'cancelled', resolved_at = datetime('now') WHERE id = ?`, [item.id]);
+          await createBudgetRequestDecision(ventureId, item.agent_id);
+          await onHokageWorkItemCancelled(item.id).catch((err) => console.error('[HOKAGE] Error liberando reserva:', err.message));
+          continue;
+        }
+        if (alert?.level === 'warning') {
+          console.warn(`[STAGE2] Venture ${ventureId} al ${(alert.pctUsed * 100).toFixed(0)}% del presupuesto`);
+        }
+      }
+
+      // Verificar presupuesto por-rol (Fase 7) por compatibilidad hacia atrás.
       const budget = await get<{ monthly_limit_usd: number; current_month_usd: number; status: string }>(
         'SELECT monthly_limit_usd, current_month_usd, status FROM agent_budgets WHERE agent_id = ?',
         [item.agent_id]
