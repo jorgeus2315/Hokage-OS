@@ -48,8 +48,8 @@ export function Led({ state = 'idle' }: { state?: LedState }) {
 
 type BadgeTone = 'ember' | 'signal' | 'amber' | 'good' | 'dim';
 
-export function Badge({ children, tone = 'dim' }: { children: ReactNode; tone?: BadgeTone }) {
-  return <span className={`hk-badge hk-badge--${tone}`}>{children}</span>;
+export function Badge({ children, tone = 'dim', style }: { children: ReactNode; tone?: BadgeTone; style?: React.CSSProperties }) {
+  return <span className={`hk-badge hk-badge--${tone}`} style={style}>{children}</span>;
 }
 
 export function Bar({ pct, signal }: { pct: number; signal?: boolean }) {

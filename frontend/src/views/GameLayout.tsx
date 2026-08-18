@@ -18,6 +18,7 @@ import { ObjectivesView } from './ObjectivesView';
 import { ConfigView } from './ConfigView';
 import { HokageConsoleView } from './HokageConsoleView';
 import { MenuView } from './MenuView';
+import { AgentPanel } from './AgentPanel';
 
 const RECENT_MS = 5 * 60 * 1000;
 
@@ -71,6 +72,18 @@ export function GameLayout() {
     agentStates,
     onEnterBuilding: enterBuilding,
   });
+
+  // Estado para AgentPanel overlay
+  const [agentPanel, setAgentPanel] = useState<{ agent: import('../shared/types').Agent; building: import('../shared/types').Building } | null>(null);
+
+  function openAgentPanel(agent: import('../shared/types').Agent) {
+    const building = allDepts.find((b) => b.role === agent.role);
+    if (building) setAgentPanel({ agent, building });
+  }
+
+  function closeAgentPanel() {
+    setAgentPanel(null);
+  }
 
   // Fase 5 — restaurar layout persistido
   const [pendingLayout, setPendingLayout] = useState<{ screen: Screen; buildingKey: string | null } | null>(null);
@@ -206,6 +219,8 @@ export function GameLayout() {
                 const mins = Math.round((Date.now() - new Date(last.started_at).getTime()) / 60000);
                 timeAgo = mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h`;
               }
+              const isBusinessAgent = building && building.type !== 'system' && a.role !== 'ceo';
+
               return (
                 <div
                   key={a.id}
@@ -257,6 +272,24 @@ export function GameLayout() {
                   ) : timeAgo ? (
                     <span className="hk-game-badge hk-game-badge--idle">{timeAgo}</span>
                   ) : null}
+                  {isBusinessAgent && (
+                    <button
+                      className="hk-game-agent-panel-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openAgentPanel(a);
+                      }}
+                      title="Ver panel del agente"
+                      style={{
+                        marginLeft: 8, padding: '4px 8px', fontSize: 10,
+                        background: 'transparent', border: '1px solid var(--border)',
+                        borderRadius: 3, color: 'var(--ink-dim)', cursor: 'pointer',
+                        fontFamily: 'IBM Plex Mono, monospace',
+                      }}
+                    >
+                      👁
+                    </button>
+                  )}
                 </div>
               );
             })}
@@ -491,6 +524,19 @@ export function GameLayout() {
             <div className="hk-game-screen-body">
               {activeOverlay?.render(panelContext)}
             </div>
+          </div>
+        )}
+
+        {/* AgentPanel overlay (Fase 10) — solo para agentes de negocio, no Hermes/CEO */}
+        {agentPanel && (
+          <div className="hk-game-screen-overlay hk-agent-panel-overlay">
+            <AgentPanel
+              agent={agentPanel.agent}
+              building={agentPanel.building}
+              agentStates={agentStates}
+              onClose={closeAgentPanel}
+              onAgentUpdated={reload.loadAgents}
+            />
           </div>
         )}
 

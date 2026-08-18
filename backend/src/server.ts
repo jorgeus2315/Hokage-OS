@@ -57,6 +57,8 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { run, get, all, initSchema } from './db/init.js';
 import type { Department, DepartmentUpdatePayload } from './types/index.js';
 import { listAgents, createAgent } from './services/agentService.js';
+import { readAgentMemory } from './services/agentMemoryService.js';
+import { toolsForRole } from './config/agentModels.js';
 import { claimAgent, releaseAgent } from './services/agentSelector.js';
 import {
   listRoleDefinitions, getRoleDefinition, createRoleDefinition, updateRoleDefinition, setRoleStatus,
@@ -741,6 +743,28 @@ app.get('/api/agents/:id/outputs', async (req, res) => {
     ]);
     res.json({ ok: true, data: { content, market } });
   } catch (e: any) { sendError(res, 500, e, 'Error listando outputs del agente'); }
+});
+
+// Fase 10: Memoria privada del agente (solo lectura, sin requireAdmin — como /stats, /outputs, /work-items)
+app.get('/api/agents/:id/memory', async (req, res) => {
+  try {
+    const agentId = Number(req.params.id);
+    const limit = req.query.limit ? Math.min(Number(req.query.limit), 100) : 20;
+    const entries = await readAgentMemory(agentId, limit);
+    res.json({ ok: true, data: entries });
+  } catch (e: any) { sendError(res, 500, e, 'Error leyendo memoria del agente'); }
+});
+
+// Fase 10: Tools disponibles para el rol del agente (solo nombres, sin descripciones inventadas)
+app.get('/api/agents/:id/tools', async (req, res) => {
+  try {
+    const agentId = Number(req.params.id);
+    const agents = await listAgents();
+    const agent = agents.find(a => a.id === agentId);
+    if (!agent) return res.status(404).json({ ok: false, error: 'Agente no encontrado' });
+    const tools = toolsForRole(agent.role);
+    res.json({ ok: true, data: tools });
+  } catch (e: any) { sendError(res, 500, e, 'Error obteniendo tools del agente'); }
 });
 
 app.get('/api/events', requireAdmin, (_req, res) => {

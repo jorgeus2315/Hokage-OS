@@ -327,6 +327,20 @@ export interface VentureBudget {
   capped: boolean;
 }
 
+// ═══════════ FASE 10 — AgentPanel types ═══════════
+export interface AgentMemoryEntry {
+  id: number;
+  agent_id: number;
+  venture_id: number;
+  key: string;
+  value: string;
+  category: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export type AgentTool = string;
+
 // ═══════════ K.4 — AgentRuntimeState ═══════════
 // Espejo del contrato del backend (ADR-007). El backend es la ÚNICA fuente de verdad; el
 // frontend solo lo consume. Llega por WS: snapshot inicial (agent_states) + deltas

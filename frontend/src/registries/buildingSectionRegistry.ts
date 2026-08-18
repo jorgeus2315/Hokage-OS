@@ -14,9 +14,9 @@ export interface SectionTab {
   label: string;
 }
 
-// Sala de negocio genérica (fallback). Chat permanece como modo Debug (decisión P4).
+// Sala de negocio genérica (fallback). Chat pasa a Debug (C6 Fase 10): rename + no default.
 const BASE: SectionTab[] = [
-  { id: 'chat', label: 'Chat' },
+  { id: 'chat', label: 'Debug' },
   { id: 'outputs', label: 'Outputs' },
   { id: 'feed', label: 'Live Feed' },
   { id: 'stats', label: 'Stats' },
@@ -34,14 +34,14 @@ const SYSTEM: SectionTab[] = [
 ];
 
 // Sets curados por rol (Fase 9). Panel especializado primero (tab por defecto); Chat al
-// final como Debug (P4). Congelados en [[Edificios - Definición Consolidada 2026-08-18]].
+// final como Debug (P4 → C6 Fase 10: rename). Congelados en [[Edificios - Definición Consolidada 2026-08-18]].
 const BY_ROLE: Record<string, SectionTab[]> = {
   finanzas: [
     { id: 'finance', label: 'Finanzas' },
     { id: 'stats', label: 'Stats' },
     { id: 'alerts', label: 'Alertas' },
     { id: 'config', label: 'Configurar' },
-    { id: 'chat', label: 'Chat' },
+    { id: 'chat', label: 'Debug' },
   ],
   investigador: [
     { id: 'trends', label: 'Tendencias' },
@@ -50,7 +50,7 @@ const BY_ROLE: Record<string, SectionTab[]> = {
     { id: 'pipeline', label: 'Pipeline' },
     { id: 'alerts', label: 'Alertas' },
     { id: 'config', label: 'Configurar' },
-    { id: 'chat', label: 'Chat' },
+    { id: 'chat', label: 'Debug' },
   ],
   contenido: [
     { id: 'gallery', label: 'Contenido' },
@@ -59,7 +59,7 @@ const BY_ROLE: Record<string, SectionTab[]> = {
     { id: 'pipeline', label: 'Pipeline' },
     { id: 'alerts', label: 'Alertas' },
     { id: 'config', label: 'Configurar' },
-    { id: 'chat', label: 'Chat' },
+    { id: 'chat', label: 'Debug' },
   ],
 };
 

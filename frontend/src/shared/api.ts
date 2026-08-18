@@ -78,6 +78,13 @@ export const api = {
   agentOutputs: (agentId: number) =>
     req<{ content: import('./types').ContentItem[]; market: import('./types').MarketItem[] }>(`/agents/${agentId}/outputs`),
 
+  // Fase 10: memoria privada del agente (solo lectura, datos reales de agent_memory)
+  agentMemory: (agentId: number, limit = 20) =>
+    req<import('./types').AgentMemoryEntry[]>(`/agents/${agentId}/memory?limit=${limit}`),
+  // Fase 10: tools reales del rol (toolsForRole)
+  agentTools: (agentId: number) =>
+    req<import('./types').AgentTool[]>(`/agents/${agentId}/tools`),
+
   hermesRuns: () => req<import('./types').ExecRun[]>('/hermes/runs'),
 
   metricsSummary: () => req<import('./types').MetricsSummary>('/metrics/summary'),
