@@ -288,6 +288,9 @@ const SECTION_ICONS: Record<string, (p: IconProps) => JSX.Element> = {
   alerts: IconAlert,
   config: IconConfig,
   system: IconWorkshop,
+  finance: IconBank,
+  trends: IconOutput,
+  gallery: IconStudio,
 };
 
 export function SectionIcon({ section, className }: { section: string; className?: string }) {

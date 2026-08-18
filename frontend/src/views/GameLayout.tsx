@@ -8,6 +8,7 @@ import { useAppData } from '../hooks/useAppData';
 import { useWorldState } from '../hooks/useWorldState';
 import { WorldCanvas } from '../world/WorldCanvas';
 import { PanelRegistry, PanelContext } from '../registries/PanelRegistry';
+import { defaultSectionFor } from '../registries/buildingSectionRegistry';
 import { BuildingView } from './BuildingView';
 import { CommsView } from './CommsView';
 import { CrewView } from './CrewView';
@@ -55,9 +56,9 @@ export function GameLayout() {
 
   function enterBuilding(b: Building) {
     setActiveBuilding(b);
-    // Fase 8: sección inicial tipada. La Sala de Máquinas (type='system') abre en Sistema;
-    // el resto en Chat. Sin ramas hardcodeadas por role/nombre.
-    setSection(b.type === 'system' ? 'system' : 'chat');
+    // Fase 9 (A1): la sección inicial es el primer tab que declara la sala en el registro
+    // data-driven. Sin condicionales por tipo/rol/nombre en el llamador.
+    setSection(defaultSectionFor(b));
     setScreen('building');
   }
 

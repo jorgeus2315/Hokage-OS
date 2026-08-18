@@ -11,28 +11,8 @@ import { TerminalPanel } from '../panels/TerminalPanel';
 import { AlertsPanel } from '../panels/AlertsPanel';
 import { AgentConfigPanel } from '../panels/AgentConfigPanel';
 import { SystemStatusPanel } from '../panels/SystemStatusPanel';
-
-// Salas de negocio (type='business'): interfaz genérica de agente. El Chat permanece
-// como modo Debug (decisión P4) hasta que exista el orquestador C.5.
-const BASE_SECTIONS: Array<{ id: BuildingSection; label: string }> = [
-  { id: 'chat', label: 'Chat' },
-  { id: 'outputs', label: 'Outputs' },
-  { id: 'feed', label: 'Live Feed' },
-  { id: 'stats', label: 'Stats' },
-  { id: 'pipeline', label: 'Pipeline' },
-  { id: 'alerts', label: 'Alertas' },
-  { id: 'config', label: 'Configurar' },
-];
-
-// Sala de Máquinas (type='system', Hermes = runtime/kernel): set curado. Sin Chat
-// (decisión C2), sin Outputs/Feed/Pipeline/Config (interfaz de agente que no aplica
-// a un kernel). Ver [[Edificios - Definición Consolidada 2026-08-18]].
-const SYSTEM_SECTIONS: Array<{ id: BuildingSection; label: string }> = [
-  { id: 'system', label: 'Sistema' },
-  { id: 'terminal', label: 'Terminal' },
-  { id: 'stats', label: 'Stats' },
-  { id: 'alerts', label: 'Alertas' },
-];
+import { BankPanel } from '../panels/BankPanel';
+import { sectionsForBuilding } from '../registries/buildingSectionRegistry';
 
 export function BuildingView({
   building,
@@ -68,9 +48,9 @@ export function BuildingView({
   onAgentUpdated?: () => void;
 }) {
   const agentEvents = liveEvents.filter((e) => e.from === agent?.name);
-  // Detección tipada (Fase 7→8): la sala de sistema se identifica por type, no por role.
-  const isSystem = building.type === 'system';
-  const SECTIONS = isSystem ? SYSTEM_SECTIONS : BASE_SECTIONS;
+  // Fase 9 (A1): las secciones de la sala se resuelven por dato (rol/tipo) vía registro,
+  // sin ramas por edificio. system > rol curado > base.
+  const SECTIONS = sectionsForBuilding(building);
 
   return (
     <div className="hk-interior">
@@ -155,6 +135,9 @@ export function BuildingView({
             />
           )}
           {section === 'outputs' && <OutputsPanel agentId={agent?.id} />}
+          {section === 'trends' && <OutputsPanel agentId={agent?.id} variant="market" />}
+          {section === 'gallery' && <OutputsPanel agentId={agent?.id} variant="content" />}
+          {section === 'finance' && <BankPanel />}
           {section === 'system' && <SystemStatusPanel />}
           {section === 'terminal' && <TerminalPanel />}
           {section === 'feed' && <LiveFeedPanel events={agentEvents} />}

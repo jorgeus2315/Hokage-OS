@@ -56,10 +56,14 @@ function MarketCard({ item }: { item: MarketItem }) {
   );
 }
 
-export function OutputsPanel({ agentId }: { agentId: number | undefined }) {
+// Fase 9: 'all' = tendencias + contenido (tab genérico Outputs). 'market' = solo tendencias
+// (Laboratorio, solo lectura). 'content' = solo galería de contenido (Marketing).
+export function OutputsPanel({ agentId, variant = 'all' }: { agentId: number | undefined; variant?: 'all' | 'market' | 'content' }) {
   const [content, setContent] = useState<ContentItem[]>([]);
   const [market, setMarket] = useState<MarketItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const showMarket = variant !== 'content';
+  const showContent = variant !== 'market';
 
   const load = useCallback(async () => {
     if (!agentId) return;
@@ -78,34 +82,38 @@ export function OutputsPanel({ agentId }: { agentId: number | undefined }) {
     return () => clearInterval(t);
   }, [load]);
 
+  const marketVisible = showMarket ? market : [];
+  const contentVisible = showContent ? content : [];
+  const emptyMsg = variant === 'market'
+    ? 'Sin tendencias todavía. Aparecerán aquí en cuanto el agente detecte una.'
+    : variant === 'content'
+    ? 'Sin contenido todavía. Aparecerá aquí en cuanto el agente cree una pieza.'
+    : 'Sin outputs todavía. Aparecerán aquí en cuanto el agente detecte una tendencia o cree contenido.';
+
   if (!agentId) return <div className="hk-feed-empty">Sin agente asignado.</div>;
-  if (loading && content.length === 0 && market.length === 0) {
-    return <div className="hk-feed-empty">Cargando outputs…</div>;
+  if (loading && marketVisible.length === 0 && contentVisible.length === 0) {
+    return <div className="hk-feed-empty">Cargando…</div>;
   }
-  if (content.length === 0 && market.length === 0) {
-    return (
-      <div className="hk-feed-empty">
-        Sin outputs todavía. Aparecerán aquí en cuanto el agente detecte una tendencia o cree contenido.
-      </div>
-    );
+  if (marketVisible.length === 0 && contentVisible.length === 0) {
+    return <div className="hk-feed-empty">{emptyMsg}</div>;
   }
 
   return (
     <div>
-      {market.length > 0 && (
-        <div style={{ marginBottom: content.length > 0 ? 20 : 0 }}>
+      {marketVisible.length > 0 && (
+        <div style={{ marginBottom: contentVisible.length > 0 ? 20 : 0 }}>
           <div className="hk-eyebrow" style={{ marginBottom: 8, color: 'var(--amber)' }}>
-            TENDENCIAS DETECTADAS · {market.length}
+            TENDENCIAS DETECTADAS · {marketVisible.length}
           </div>
-          {market.map((m) => <MarketCard key={m.id} item={m} />)}
+          {marketVisible.map((m) => <MarketCard key={m.id} item={m} />)}
         </div>
       )}
-      {content.length > 0 && (
+      {contentVisible.length > 0 && (
         <div>
           <div className="hk-eyebrow" style={{ marginBottom: 8, color: 'var(--signal)' }}>
-            CONTENIDO CREADO · {content.length}
+            CONTENIDO CREADO · {contentVisible.length}
           </div>
-          {content.map((c) => <ContentCard key={c.id} item={c} />)}
+          {contentVisible.map((c) => <ContentCard key={c.id} item={c} />)}
         </div>
       )}
     </div>
