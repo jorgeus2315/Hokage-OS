@@ -10,6 +10,7 @@ import { createMemoryEntry } from '../services/memoryService.js';
 import { get } from '../db/init.js';
 import bus from '../config/eventBus.js';
 import { safeFetch } from './ssrfGuard.js';
+import { getListings as etsyGetListings, EtsyNotConnectedError } from '../services/etsyClient.js';
 
 const MEMORY_KEY_PATTERN = /^[a-z_][a-z0-9_]*$/;
 
@@ -35,19 +36,19 @@ function stubOutputSchema(properties: Record<string, unknown>) {
   return { type: 'object', properties };
 }
 
+// Fase 4 · Slice 1 — LECTURA de listings del shop propio (etsy.listings). La escritura
+// (createListing) queda fuera de este slice. Requiere que la venture esté conectada por OAuth
+// (ver /api/integrations/etsy/*). Sin conexión → error limpio, nunca secretos (F3).
 export const EtsyTool: Tool<EtsyListingInput, EtsyListingOutput> = {
   id: 'etsy.listings',
   name: 'Etsy Listings',
-  description: 'Consulta listings, tendencias y pedidos de Etsy.',
+  description: 'Lee los listings activos de la tienda Etsy conectada (solo lectura).',
   category: 'marketplace',
-  status: 'stub',
+  status: 'ready',
   permissions: permission('business', { requiresAdmin: true }),
-  requiredApproval: true,
+  requiredApproval: false,   // lectura: sin efecto externo, no requiere aprobación
   inputSchema: stubInputSchema(
-    {
-      query: { type: 'string', description: 'Término de búsqueda' },
-      limit: { type: 'integer', description: 'Límite de resultados', minimum: 1, maximum: 100 },
-    },
+    { limit: { type: 'integer', description: 'Límite de resultados (1-100)', minimum: 1, maximum: 100 } },
     []
   ),
   outputSchema: stubOutputSchema({
@@ -67,13 +68,19 @@ export const EtsyTool: Tool<EtsyListingInput, EtsyListingOutput> = {
     },
   }),
   async estimateCost(_input) {
-    return 0.01;
+    return 0;   // lectura de API externa: sin coste de IA
   },
-  async execute(_input, _ctx) {
-    return result<EtsyListingOutput>(false, {
-      data: { total: 0, items: [] },
-      error: 'EtsyTool no implementado: requiere MCP o API key.',
-    });
+  async execute(input, ctx) {
+    if (ctx.ventureId == null) {
+      return result<EtsyListingOutput>(false, { data: { total: 0, items: [] }, error: 'Falta ventureId para consultar Etsy' });
+    }
+    try {
+      const { total, items } = await etsyGetListings(ctx.ventureId, { limit: input?.limit });
+      return result<EtsyListingOutput>(true, { data: { total, items } });
+    } catch (err: any) {
+      const msg = err instanceof EtsyNotConnectedError ? err.message : (err?.message || 'Error consultando Etsy');
+      return result<EtsyListingOutput>(false, { data: { total: 0, items: [] }, error: msg });
+    }
   },
 };
 

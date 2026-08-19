@@ -80,6 +80,10 @@ import {
   beginResearch, progressOpportunity, researchPromptFor,
 } from './services/opportunityPipeline.js';
 import { activateVenture } from './services/ventureActivation.js';
+import {
+  buildAuthorizeUrl, exchangeCode, getConnectionStatus,
+  generateCodeVerifier, deriveCodeChallenge, generateState,
+} from './services/etsyClient.js';
 import { runtime } from './config/agentRuntime.js';
 import bus from './config/eventBus.js';
 
@@ -628,6 +632,58 @@ app.post('/api/runtime/start', requireAdmin, (_req, res) => {
 app.post('/api/runtime/stop', requireAdmin, (_req, res) => {
   runtime.stop();
   res.json({ ok: true, data: { running: false } });
+});
+
+// ═══════════ INTEGRACIONES · ETSY (Fase 4 · slice lectura) ═══════════
+// Estado transitorio del flujo OAuth (state → PKCE verifier + venture), en memoria.
+// ponytail: por-proceso, suficiente para el connect one-time de admin en single-instance;
+// mover a tabla si se despliega multi-instancia.
+const etsyOAuthFlows = new Map<string, { codeVerifier: string; ventureId: number; expiresAt: number }>();
+const ETSY_FLOW_TTL_MS = 10 * 60_000;
+function pruneEtsyFlows(): void {
+  const now = Date.now();
+  for (const [k, v] of etsyOAuthFlows) if (v.expiresAt < now) etsyOAuthFlows.delete(k);
+}
+
+// Inicia OAuth: genera state + PKCE, guarda el verifier y redirige a Etsy. Admin (guard global).
+app.get('/api/integrations/etsy/connect', requireAdmin, (req, res) => {
+  try {
+    const ventureId = Number(req.query.venture_id);
+    if (!Number.isInteger(ventureId) || ventureId <= 0) return res.status(400).json({ ok: false, error: 'venture_id requerido' });
+    pruneEtsyFlows();
+    const state = generateState();
+    const codeVerifier = generateCodeVerifier();
+    etsyOAuthFlows.set(state, { codeVerifier, ventureId, expiresAt: Date.now() + ETSY_FLOW_TTL_MS });
+    res.redirect(buildAuthorizeUrl({ state, codeChallenge: deriveCodeChallenge(codeVerifier) }));
+  } catch (e: any) { sendError(res, 500, e, 'Error iniciando OAuth de Etsy'); }
+});
+
+// Callback OAuth: valida state (single-use, TTL) y canja el code → guarda tokens. GET del
+// navegador tras el redirect de Etsy (cookie SameSite=Lax viaja; GET no dispara CSRF).
+app.get('/api/integrations/etsy/callback', async (req, res) => {
+  const state = String(req.query.state ?? '');
+  const code = String(req.query.code ?? '');
+  const flow = etsyOAuthFlows.get(state);
+  etsyOAuthFlows.delete(state);   // single-use pase lo que pase
+  if (!flow || flow.expiresAt < Date.now() || !code) {
+    return res.status(400).send('<p>Conexión con Etsy fallida: estado inválido o expirado. Vuelve a intentarlo.</p>');
+  }
+  try {
+    await exchangeCode({ code, codeVerifier: flow.codeVerifier, ventureId: flow.ventureId });
+    res.send('<p>Etsy conectado correctamente. Puedes cerrar esta pestaña.</p>');
+  } catch {
+    // Nunca exponer detalles/secretos en el mensaje al navegador (F3).
+    res.status(502).send('<p>No se pudo completar la conexión con Etsy. Revisa la configuración e inténtalo de nuevo.</p>');
+  }
+});
+
+// Estado de conexión de una venture — SIN tokens (F3). Admin.
+app.get('/api/integrations/etsy/status', requireAdmin, async (req, res) => {
+  try {
+    const ventureId = Number(req.query.venture_id);
+    if (!Number.isInteger(ventureId) || ventureId <= 0) return res.status(400).json({ ok: false, error: 'venture_id requerido' });
+    res.json({ ok: true, data: await getConnectionStatus(ventureId) });
+  } catch (e: any) { sendError(res, 500, e, 'Error leyendo estado de Etsy'); }
 });
 
 // ═══════════ DEPARTAMENTOS ═══════════

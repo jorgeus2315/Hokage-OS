@@ -807,6 +807,22 @@ export async function initSchema(): Promise<void> {
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
 
+  // Fase 4 (Etsy, slice lectura) — tokens OAuth por (proveedor, venture). Almacén mínimo,
+  // sustituible por C.6 Secret Management sin cambiar el contrato TokenStore que usa EtsyClient.
+  // Los tokens NUNCA se exponen por API ni por auditoría (F3). UNIQUE = un token vivo por par.
+  await run(`CREATE TABLE IF NOT EXISTS integration_tokens (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider      TEXT NOT NULL,
+    venture_id    INTEGER NOT NULL,
+    access_token  TEXT NOT NULL,
+    refresh_token TEXT NOT NULL,
+    expires_at    TEXT NOT NULL,
+    scope         TEXT NOT NULL DEFAULT '',
+    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(provider, venture_id)
+  )`);
+
   // ═══════════ GOAL SYSTEM ═══════════════════════════════════════════════════
   await run(`CREATE TABLE IF NOT EXISTS objectives (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,

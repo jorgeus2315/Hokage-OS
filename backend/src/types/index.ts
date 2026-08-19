@@ -401,6 +401,30 @@ export interface DepartmentUpdatePayload {
   type?: DepartmentType;
 }
 
+// ═══════════ INTEGRACIONES EXTERNAS (Fase 4 — Etsy, slice lectura) ═══════════
+// Proveedor de integración externa. Vocabulario cerrado y extensible sin ramas por-nombre.
+export type IntegrationProvider = 'etsy';
+
+// Tokens OAuth por (proveedor, venture). NUNCA se exponen por ninguna ruta API (F3):
+// el almacenamiento es interno; hacia fuera solo viaja IntegrationStatus.
+export interface IntegrationTokens {
+  provider: IntegrationProvider;
+  ventureId: number;
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: string;   // ISO — vencimiento del access token
+  scope: string;
+}
+
+// Vista pública segura del estado de conexión — sin tokens.
+export interface IntegrationStatus {
+  provider: IntegrationProvider;
+  ventureId: number;
+  connected: boolean;
+  scope: string | null;
+  expiresAt: string | null;   // vencimiento del access token (informativo)
+}
+
 export interface AuditLog {
   id: number;
   action: string;
