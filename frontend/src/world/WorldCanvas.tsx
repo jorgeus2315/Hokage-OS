@@ -161,24 +161,27 @@ export function WorldCanvas({
         engine.setSelectable('hub', hub.onClick);
         engine.animate('hub', {}, t);
 
-        // Spokes + data pulses
+        // Spokes + data pulses — densidad PROPORCIONAL a la actividad REAL del agente de
+        // cada sala (activityLevel, derivado de work_items in_progress vía K.4). Roadmap
+        // Fase 3 (D3): sin actividad → sin paquetes (no se inventa flujo).
         spokes.clear();
         for (const r of rooms) {
-          const lineAlpha = r.active ? 0.3 : 0.14;
+          const a = r.activityLevel;
           spokes.moveTo(hub.x, hub.y).lineTo(r.x, r.y)
-            .stroke({ width: r.active ? 1.5 : 0.8, color: r.color, alpha: lineAlpha });
+            .stroke({ width: 0.8 + 1.0 * a, color: r.color, alpha: 0.12 + 0.22 * a });
         }
         for (const r of rooms) {
-          const numPackets = r.active ? 4 : 2;
-          const speed = r.active ? 0.28 : 0.16;
+          const a = r.activityLevel;
+          const numPackets = Math.round(4 * a);   // 0 (idle) … 4 (working): proporcional al estado real
+          const speed = 0.16 + 0.14 * a;
           for (let p = 0; p < numPackets; p++) {
             const progress = (t * speed + hashOffset(r.id) + p / numPackets) % 1;
             const px = hub.x + (r.x - hub.x) * progress;
             const py = hub.y + (r.y - hub.y) * progress;
             const fade = Math.sin(progress * Math.PI);
-            const sz = r.active ? 3.5 : 2.2;
+            const sz = 2.2 + 1.4 * a;
             spokes.circle(px, py, sz)
-              .fill({ color: r.color, alpha: (r.active ? 0.2 : 0.1) + 0.6 * fade });
+              .fill({ color: r.color, alpha: (0.1 + 0.12 * a) + 0.6 * fade });
           }
         }
 

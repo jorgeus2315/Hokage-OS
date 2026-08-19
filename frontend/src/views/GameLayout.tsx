@@ -220,6 +220,8 @@ export function GameLayout() {
                 timeAgo = mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h`;
               }
               const isBusinessAgent = building && building.type !== 'system' && a.role !== 'ceo';
+              // Roadmap Fase 3 (D4): decisiones pendientes reales de este agente.
+              const pendingCount = pending.filter((d) => d.agent_id === a.id).length;
 
               return (
                 <div
@@ -267,6 +269,21 @@ export function GameLayout() {
                       />
                     </div>
                   </div>
+                  {pendingCount > 0 && (
+                    <span
+                      className="hk-game-agent-alert"
+                      title={`${pendingCount} decisión${pendingCount > 1 ? 'es' : ''} pendiente${pendingCount > 1 ? 's' : ''}`}
+                      style={{
+                        marginLeft: 8, minWidth: 16, height: 16, padding: '0 5px',
+                        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: 10, fontWeight: 700, fontFamily: 'IBM Plex Mono, monospace',
+                        color: '#fff', background: 'var(--ember)', borderRadius: 8,
+                        boxShadow: '0 0 6px var(--ember-glow)',
+                      }}
+                    >
+                      {pendingCount}
+                    </span>
+                  )}
                   {working ? (
                     <span className="hk-game-badge hk-game-badge--live">LIVE</span>
                   ) : timeAgo ? (

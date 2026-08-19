@@ -94,9 +94,15 @@ export function useAppData(): AppData {
         departments?: Building[];
         recent_events?: WsEvent[];
         agent_states?: AgentRuntimeState[];
+        ventures?: Venture[];
+        runs?: AgentRun[];
       };
       if (snap.agents)       setAgents(snap.agents);
       if (snap.decisions)    setDecisions(snap.decisions);
+      // Roadmap Fase 3 (D1): globales del primer paint desde el snapshot. REST (loadVentures/
+      // loadRuns en el mount) sigue como fallback y reconciliación; no se elimina.
+      if (snap.ventures)     setVentures(snap.ventures);
+      if (snap.runs)         setRuns(snap.runs);
       if (snap.agent_states) setAgentStates(Object.fromEntries(snap.agent_states.map((s) => [s.agentId, s])));
       if (snap.recent_events) setLiveEvents(snap.recent_events.slice(0, 50));
       if (snap.departments)  setDepartments(

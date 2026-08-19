@@ -63,16 +63,12 @@ export function useWorldState({
     const last = lastRunFor(agentId);
     return !!last && Date.now() - new Date(last.started_at).getTime() < JUST_ACTED_MS;
   };
-  const calcActivityLevel = (agentId: number): number => {
-    const last = lastRunFor(agentId);
-    if (!last) return 0;
-    const ms = Date.now() - new Date(last.started_at).getTime();
-    if (ms < 5 * 60_000) return 1.0;
-    if (ms < 15 * 60_000) return 0.72;
-    if (ms < 60 * 60_000) return 0.42;
-    if (ms < 3 * 60 * 60_000) return 0.2;
-    return 0.06;
-  };
+  // Roadmap Fase 3 (D3): actividad REAL derivada del runtime (AgentRuntimeState.activity, que
+  // sale de work_items in_progress vía K.4), NO de una heurística de recencia. Por el claim
+  // atómico (ADR-011) un agente tiene ≤1 work_item activo, así que este escalar de estado
+  // (WORKING=1 · COMPLETED=0.5 · ERROR=0.2 · IDLE=0) es la señal proporcional fiel. Ausencia
+  // de estado → 0 (invariante: el frontend no inventa actividad).
+  const calcActivityLevel = (agentId: number): number => agentStates[agentId]?.activity ?? 0;
   // K.4: error real desde el backend (modifier.hasError), no inferido del status de la última run.
   const hasRecentError = (agentId: number): boolean => agentStates[agentId]?.modifiers.hasError ?? false;
 

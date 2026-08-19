@@ -28,7 +28,7 @@ export interface RoomDescriptor {
   sublabel: string;
   pending: boolean;
   active: boolean;        // agente trabajando activamente ahora mismo
-  activityLevel: number;  // 0–1: intensidad de glow según recencia del último run
+  activityLevel: number;  // 0–1: actividad real del runtime (work_items in_progress, K.4) — glow y densidad de spokes
   hasError: boolean;      // último run terminó en error → borde/glow ámbar
   color: number;
   onClick: () => void;

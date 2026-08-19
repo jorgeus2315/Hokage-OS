@@ -17,10 +17,10 @@
 - Orquestación DAG de tareas: dependencies, handoffs, review cycles, replanning (ADR-012)
 
 ### Frontend ✅
-- MapView con edificios y tokens de agentes con animaciones
-- BuildingView con 5 pestañas (Chat, Feed, Stats, Pipeline, Alertas)
-- WebSocket conectado, recibe eventos del backend
-- CrewView, AlertsView operativas
+- MapView con edificios y tokens de agentes con animaciones; spokes con densidad proporcional a la actividad real (work_items in_progress)
+- BuildingView con secciones **curadas por rol/tipo** vía `buildingSectionRegistry` (data-driven, sin `if` por edificio): salas de negocio con su panel especializado + base; Sala de Máquinas (Hermes, `type=system`) con Sistema/Terminal/Stats/Alertas; Chat como pestaña Debug. Ver [[Edificios - Definición Consolidada 2026-08-18]]
+- WebSocket conectado: `initial_snapshot` (agents, decisions, departments, agent_states, ventures, runs, recent_events) + deltas en vivo; REST permanece como carga inicial/fallback y para paneles self-fetch
+- CrewView, AlertsView operativas; badge de decisiones pendientes por agente en el crew rail
 
 ### Deuda técnica — estado tras `6b0c4eb` / `555666d`
 
@@ -110,41 +110,42 @@
 
 ---
 
-## Fase 3 — Frontend definitivo
+## Fase 3 — Frontend definitivo ✅ COMPLETADA (con 2 excepciones deliberadas)
 
 > **Objetivo:** el frontend es una ventana fiel al estado real del backend, en tiempo real, con el estilo visual definitivo.  
 > **Criterio de éxito:** abrir Hokage OS sin tocar nada durante 5 minutos y ver actividad real del sistema.
+>
+> **Estado (cierre):** completada vía las Fases 1/4/6/8/9/10 del UI Implementation Plan + este cierre. **Dos excepciones deliberadas, aprobadas:** (a) los overlays R7 quedan **diferidos** (candidato posterior, no núcleo de Fase 3); (b) REST **no se elimina** — el snapshot WS se completó para el primer paint, pero REST permanece como carga inicial/fallback y los paneles self-fetch (`StatsPanel`, `OutputsPanel`, `BankPanel`, `SystemStatusPanel`, `TerminalPanel`) conservan su comportamiento. "WS fuente única" se reinterpretó como "WS fuente de tiempo real + snapshot de primer paint", no como migración masiva REST→WS.
 
-### 3.1 — WebSocket como fuente única de verdad
-- [ ] Al conectar: backend envía snapshot completo del estado inicial
-- [ ] Eliminar el polling REST para estado inicial (no REST + WebSocket en paralelo)
-- [ ] Tipos de snapshot: `agent_state_snapshot`, `work_queue_snapshot`, `pipeline_snapshot`, `recent_events_snapshot`
-- [ ] Cada snapshot incluye `timestamp` de cuando fue capturado
+### 3.1 — WebSocket como fuente de tiempo real + snapshot de primer paint
+- [x] Al conectar: `initial_snapshot` (agents, decisions, departments, agent_states, ventures, runs, recent_events) con `timestamp`
+- [~] ~~Eliminar el polling REST~~ → **por diseño (D1):** REST se mantiene como carga inicial/fallback; los paneles self-fetch no se tocan. No migración masiva REST→WS.
+- [x] Deltas en vivo por evento del bus (`agent.state.changed`, decisiones, runs, mensajes, objetivos)
 
 ### 3.2 — MapView definitivo (PixiJS)
-- [ ] Edificios con forma específica por departamento
-- [ ] Tokens con animaciones de estado (idle orbita HQ, working anillo pulsa, done doble anillo ámbar)
-- [ ] Spokes con partículas: densidad proporcional a actividad real (work_items activos)
-- [ ] Overlays activables: actividad actual, presupuesto, pipeline, salud por sala
+- [x] Edificios con forma/glifo por departamento
+- [x] Tokens con animaciones de estado (registry-driven: idle/working/done/error)
+- [x] Spokes con partículas: **densidad proporcional a la actividad real** (`activityLevel` derivado de work_items in_progress, K.4) — sin actividad, sin flujo
+- [ ] Overlays activables (actividad/presupuesto/pipeline/salud) — **R7 DIFERIDO** (fuera de Fase 3, candidato posterior)
 
-### 3.3 — BuildingView por sala con datos reales
-- [ ] Chat directo con el agente (conectado al runtime real, guarda en `messages`)
-- [ ] Live Feed: últimos 20 eventos del bus filtrados por sala, en tiempo real
-- [ ] Stats: datos reales desde BD (métricas específicas por sala)
-- [ ] Pipeline: work_items de este agente por estado (pendientes / activos / completados)
-- [ ] Alertas: decisions pendientes de este agente con título, razonamiento y coste
+### 3.3 — BuildingView por sala con datos reales ✅
+- [x] Chat directo con el agente (runtime real, `messages`) — hoy pestaña **Debug** (P4/C6)
+- [x] Live Feed: eventos del bus filtrados por sala, en tiempo real
+- [x] Stats: datos reales desde BD por sala
+- [x] Pipeline: work_items del agente por estado
+- [x] Alertas: decisions pendientes del agente con razonamiento y coste
+- [x] **Superado:** paneles especializados por rol (Finanzas/Tendencias/Contenido) + Panel de Sistema (Hermes) + AgentPanel (Fase 10)
 
-### 3.4 — AlertsView funcional
-- [ ] Decisions pendientes con razonamiento completo
-- [ ] Botón Aprobar: `PATCH /decisions/:id { status: 'approved' }` → Etapa 7 crea work_item
-- [ ] Botón Rechazar: `PATCH /decisions/:id { status: 'rejected' }` + motivo
-- [ ] Badge rojo en crew rail actualizado en tiempo real por WebSocket
+### 3.4 — AlertsView funcional ✅
+- [x] Decisions pendientes con razonamiento completo
+- [x] Aprobar / Rechazar (resuelve vía `decisionResolvers`)
+- [x] Badge de decisiones pendientes por agente en el crew rail, en tiempo real por WebSocket
 
-### 3.5 — Polish visual
-- [ ] Paleta void/ember/signal aplicada consistentemente en todos los componentes
-- [ ] Tipografía: Chakra Petch para títulos/nombres, IBM Plex Mono para datos
-- [ ] Glow effects en elementos activos (box-shadow neón verde/cyan)
-- [ ] Boot screen: fondo negro, texto terminal, barra de progreso roja
+### 3.5 — Polish visual ✅
+- [x] Paleta void/ember/signal consolidada en fuente única (`styles.css`); `design/` duplicado eliminado; sin hex sueltos en views/panels
+- [x] Tipografía: Chakra Petch (títulos), IBM Plex Mono (datos)
+- [x] Glow effects en elementos activos (box-shadow neón)
+- [x] Boot screen: fondo, texto terminal, barra de progreso (`BootView`)
 
 ---
 

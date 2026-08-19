@@ -170,13 +170,19 @@ wss.on('connection', async (ws, _req) => {
 
   // Snapshot inicial — el cliente no necesita REST para el arranque
   try {
-    const [agents, decisions, departments, agentStates] = await Promise.all([
+    const [agents, decisions, departments, agentStates, ventures, runs] = await Promise.all([
       listAgents(),
       listDecisions(),
       all<{ id: number; key: string; name: string; desc: string; role: string; glyph: string; color: string; pos_x: number; pos_y: number; is_hub: number }>(
         'SELECT * FROM departments WHERE active = 1 ORDER BY sort_order ASC'
       ),
       runtime.getRuntimeStates(),  // K.4: estado real de runtime por agente (derivado, no inventado)
+      // Roadmap Fase 3 (D1): globales simples que el mapa/overlays necesitan en el primer
+      // paint. Mismas queries que sus rutas REST (reutilizadas, no endpoints nuevos). Los
+      // datos computados (metrics) o pesados/secundarios (messages, objectives enriquecidos)
+      // conservan su ruta REST. REST sigue siendo carga inicial + fallback.
+      all('SELECT * FROM ventures ORDER BY created_at DESC'),
+      all('SELECT * FROM agent_runs ORDER BY started_at DESC LIMIT 100'),
     ]);
     ws.send(JSON.stringify({
       type: 'initial_snapshot',
@@ -185,6 +191,8 @@ wss.on('connection', async (ws, _req) => {
         decisions,
         departments,
         agent_states: agentStates,  // K.4: snapshot de AgentRuntimeState (aditivo)
+        ventures,
+        runs,
         recent_events: bus.getHistory(30),
         timestamp: new Date().toISOString(),
       },
