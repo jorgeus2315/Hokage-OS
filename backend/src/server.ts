@@ -241,6 +241,10 @@ const PUBLIC_API_PATHS = new Set(['/api/health', '/api/auth/login', '/api/auth/l
 app.use((req, res, next) => {
   if (!req.path.startsWith('/api/')) return next();
   if (PUBLIC_API_PATHS.has(req.path)) return next();
+  // Fase 4: el callback OAuth de Etsy es público SOLO en GET. Lo asegura el `state`
+  // single-use + TTL (+ PKCE), no la sesión: el navegador vuelve desde etsy.com y la cookie
+  // de sesión no es fiable cross-site. /connect y /status siguen exigiendo sesión.
+  if (req.method === 'GET' && req.path === '/api/integrations/etsy/callback') return next();
   return requireAdmin(req, res, next);
 });
 
@@ -658,8 +662,9 @@ app.get('/api/integrations/etsy/connect', requireAdmin, (req, res) => {
   } catch (e: any) { sendError(res, 500, e, 'Error iniciando OAuth de Etsy'); }
 });
 
-// Callback OAuth: valida state (single-use, TTL) y canja el code → guarda tokens. GET del
-// navegador tras el redirect de Etsy (cookie SameSite=Lax viaja; GET no dispara CSRF).
+// Callback OAuth: ruta PÚBLICA (ver guard arriba) asegurada por `state` single-use + TTL,
+// no por sesión — el navegador vuelve desde etsy.com sin cookie fiable cross-site. Valida
+// state y canja el code → guarda tokens. Sin state válido → rechaza.
 app.get('/api/integrations/etsy/callback', async (req, res) => {
   const state = String(req.query.state ?? '');
   const code = String(req.query.code ?? '');
