@@ -44,6 +44,7 @@ Clúster acoplado del mapa/frontend vivo: 4 notas que se citan constantemente en
 - [[Plan de Migración ECS]] — **completo, Fases 0-9 implementadas (2026-08-06).** Fase 1 y 2 con validación visual confirmada por Jorge; Fases 3-9 con implementación ✅ pero validación visual manual todavía ⏳ pendiente (corrección honesta: una nota anterior de este índice decía "Fase 3 validada" sin base real — nunca se confirmó, corregido aquí). `WorldEngine.ts` legacy eliminado, patrón `Object.assign(container,{__x})` retirado también de `visuals/`, `EventAdapter`/`WorldLayoutEngine` conectados. Sesión de humo completa en navegador (Fase 9) sigue pendiente — sin herramienta de navegador disponible en esta sesión 🟢
 - [[Baseline de Comportamiento - World Engine]] (referencia numérica para validar cada fase, 2026-08-05) ✅
 - [[Ciclo Día-Noche - World Engine]] (décimo sistema de diseño, 2026-08-05) ✅
+- [[Edificios - Definición Consolidada 2026-08-18]] — 🔒 **CONGELADO v1 (2026-08-18) · 🟢 v2 tras Fases 7/8/9:** fuente de verdad de los 6 edificios + Hermes + Sala de Reuniones. Decisiones P1–P4, mecanismo de dos registros (layout + `buildingSectionRegistry`), y bloque de estado real (Hermes `type=system`, Banco/Lab/Marketing implementados, Lab solo lectura). Supera en autoridad a [[UI MASTER]] donde conflicten. 🆕
 
 ## 03_Agentes
 

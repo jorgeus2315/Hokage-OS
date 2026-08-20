@@ -1,3 +1,9 @@
+> **v4 (2026-08-18) — Decisiones P1–P4 aprobadas por Jorge. Ver fuente de verdad completa en [[Edificios - Definición Consolidada 2026-08-18]].**
+> - **P1:** "Marketing" = nombre visible canónico del edificio `id: estudio`. `id` interno no cambia.
+> - **P2:** Sala de Reuniones = overlay/vista de navegación, no edificio del mapa por ahora.
+> - **P3:** Taller sin panel especializado hasta que existan outputs únicos que lo justifiquen.
+> - **P4:** Chat en agentes de negocio = modo Debug temporal. Retirada definitiva coordinada con C.5 (orquestador).
+
 > Fuente: `HOKAGE_CORE_SPECIFICATION_v1.md` §13. Congelado — v3 (actualización de edificios, 2026-08-05, sobre la base v2). Capa de decisiones más reciente sobre [[Frontend World Engine]] (spec v1.0) — no la sustituye, la actualiza.
 
 ## 13. Frontend: Mapa, HUD, Terminal, las 7 vistas, paneles por sala
