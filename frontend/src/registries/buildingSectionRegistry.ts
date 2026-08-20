@@ -33,9 +33,20 @@ const SYSTEM: SectionTab[] = [
   { id: 'alerts', label: 'Alertas' },
 ];
 
-// Sets curados por rol (Fase 9). Panel especializado primero (tab por defecto); Chat al
-// final como Debug (P4 → C6 Fase 10: rename). Congelados en [[Edificios - Definición Consolidada 2026-08-18]].
+// Sets curados por rol (Fase 9). Panel especializado primero (tab por defecto); en salas de
+// negocio el Chat va al final como Debug (P4 → C6 Fase 10). Torre Hokage (ceo) es la
+// EXCEPCIÓN: su Chat es el flujo conversacional principal (C1), primero y por defecto, no
+// Debug. Congelados en [[Edificios - Definición Consolidada 2026-08-18]] §1.1.
 const BY_ROLE: Record<string, SectionTab[]> = {
+  // Torre Hokage: centro de mando. Sistema reutiliza SystemStatusPanel (Fase 8), datos reales
+  // de /api/runtime/status + /api/metrics/summary. "Preguntas rápidas" diferido a C.5.
+  ceo: [
+    { id: 'chat', label: 'Chat' },
+    { id: 'system', label: 'Sistema' },
+    { id: 'feed', label: 'Live Feed' },
+    { id: 'alerts', label: 'Alertas' },
+    { id: 'config', label: 'Configurar' },
+  ],
   finanzas: [
     { id: 'finance', label: 'Finanzas' },
     { id: 'stats', label: 'Stats' },
