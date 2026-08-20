@@ -72,7 +72,7 @@ import { listContent } from './services/contentService.js';
 import { listMarket } from './services/marketService.js';
 import { listExecRuns } from './services/hermesService.js';
 import { resolveDecisionApproval, resolveDecisionRejection } from './services/decisionResolvers.js';
-import { createCommand, cancelCommand } from './services/hokageOrchestrator.js';
+import { createCommand, cancelCommand, approveCommand } from './services/hokageOrchestrator.js';
 import { getVentureBudget } from './services/ventureBudget.js';
 import { listAuditEvents, getCommandTrace } from './services/auditService.js';
 import {
@@ -512,10 +512,22 @@ app.post('/api/hokage/command', requireAdmin, askLimiter, async (req, res) => {
   try {
     const { text, venture_id = null, idempotency_key = null } = req.body as { text?: string; venture_id?: number | null; idempotency_key?: string | null };
     if (!text?.trim()) return res.status(400).json({ ok: false, error: 'Falta el texto de la orden' });
-    const result = await createCommand({ text: String(text), ventureId: venture_id, idempotencyKey: idempotency_key });
+    // C5-C.1: la superficie de Hokage planifica pero NO despacha hasta aprobación explícita (Jorge).
+    const result = await createCommand({ text: String(text), ventureId: venture_id, idempotencyKey: idempotency_key, requireApproval: true });
     broadcast('hokage.command', result.command);
     res.status(201).json({ ok: true, data: result });
   } catch (e: any) { sendError(res, 500, e, 'Error procesando la orden de Hokage'); }
+});
+
+// C5-C.1 — Autoriza un plan en 'awaiting_approval' → reanuda el dispatch. requireAdmin (guard
+// global) + idempotente (approveCommand solo despacha desde awaiting_approval).
+app.post('/api/hokage/commands/:id/approve', requireAdmin, async (req, res) => {
+  try {
+    const result = await approveCommand(Number(req.params.id));
+    if (!result) return res.status(404).json({ ok: false, error: 'Orden no encontrada' });
+    broadcast('hokage.command', result.command);
+    res.json({ ok: true, data: result });
+  } catch (e: any) { sendError(res, 500, e, 'Error aprobando la orden de Hokage'); }
 });
 
 // Detalle de una orden reconstruido (Fase 9): command + tasks + work_items + traza de eventos

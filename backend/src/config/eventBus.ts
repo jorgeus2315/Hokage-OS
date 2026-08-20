@@ -23,6 +23,7 @@ export type AgentEventType =
   | 'objective.approved'  // Jorge aprueba el plan de un objetivo
   | 'objective.achieved'  // Todos los milestones de un objetivo completados
   | 'hokage.command.created'   // Orden recibida y descompuesta en un plan
+  | 'hokage.command.awaiting_approval' // C5-C.1: plan generado, en espera de aprobación (sin dispatch)
   | 'hokage.task.dispatched'   // Tarea de Hokage convertida en work_item
   | 'hokage.phase.completed'   // Todas las tareas de una fase terminaron OK
   | 'hokage.command.replanned' // Supervisor generó un plan alternativo tras un fallo

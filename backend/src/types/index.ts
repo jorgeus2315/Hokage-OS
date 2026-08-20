@@ -193,7 +193,7 @@ export interface DecisionCreatePayload {
 // coordinación que no existía. Una orden (command) se descompone en tareas (task) con
 // fases; cada tarea se despacha como un work_item que ejecuta el agentRuntime existente.
 // La salida del LLM NUNCA entra aquí sin pasar por validatePlan() (validación determinista).
-export type HokageCommandStatus = 'planning' | 'active' | 'completed' | 'partial' | 'failed' | 'cancelled';
+export type HokageCommandStatus = 'planning' | 'awaiting_approval' | 'active' | 'completed' | 'partial' | 'failed' | 'cancelled';
 export type HokageTaskStatus = 'pending' | 'dispatched' | 'completed' | 'failed' | 'blocked' | 'cancelled';
 
 export interface HokageCommand {

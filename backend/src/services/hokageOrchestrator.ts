@@ -1086,6 +1086,10 @@ export interface CommandInput {
   text: string;
   ventureId?: number | null;
   idempotencyKey?: string | null;
+  // C5-C.1: si true, se planifica pero NO se despacha (queda 'awaiting_approval' hasta
+  // approveCommand). Opt-in: los callers internos (opportunityPipeline) y los tests que no
+  // lo pasan mantienen el auto-dispatch actual.
+  requireApproval?: boolean;
 }
 export interface CommandResult {
   command: HokageCommand;
@@ -1116,8 +1120,8 @@ export async function createCommand(
     if (byKey) return { command: byKey, tasks: await tasksOf(byKey.id) };
   }
   const openDup = ventureId != null
-    ? await get<HokageCommand>(`${CMD_SELECT} WHERE venture_id = ? AND text = ? AND status IN ('planning','active') LIMIT 1`, [ventureId, text])
-    : await get<HokageCommand>(`${CMD_SELECT} WHERE venture_id IS NULL AND text = ? AND status IN ('planning','active') LIMIT 1`, [text]);
+    ? await get<HokageCommand>(`${CMD_SELECT} WHERE venture_id = ? AND text = ? AND status IN ('planning','awaiting_approval','active') LIMIT 1`, [ventureId, text])
+    : await get<HokageCommand>(`${CMD_SELECT} WHERE venture_id IS NULL AND text = ? AND status IN ('planning','awaiting_approval','active') LIMIT 1`, [text]);
   if (openDup) return { command: openDup, tasks: await tasksOf(openDup.id) };
 
   const insert = await run(
@@ -1174,15 +1178,43 @@ export async function createCommand(
 
   bus.publish({ type: 'hokage.command.created', from: 'Hokage', payload: { commandId, ventureId, tasks: validTasks.length } });
 
-  // ADR-012: despachar tareas READY (depends_on_count === 0) en lugar de fase 0
-  const n = await dispatchReadyTasks(cmd);
-  if (n === 0) {
-    await advanceCommand(commandId, 0);
-  } else {
-    await run(`UPDATE hokage_commands SET status = 'active', updated_at = datetime('now') WHERE id = ?`, [commandId]);
+  // C5-C.1 — Gate de aprobación: con requireApproval se persiste el plan pero NO se despacha
+  // (sin work_items, sin reserva de presupuesto → invisible para el runtime). approveCommand
+  // reanuda el dispatch. Sin el flag, el auto-dispatch actual queda intacto.
+  if (input.requireApproval) {
+    await run(`UPDATE hokage_commands SET status = 'awaiting_approval', updated_at = datetime('now') WHERE id = ?`, [commandId]);
+    bus.publish({ type: 'hokage.command.awaiting_approval', from: 'Hokage', payload: { commandId, ventureId, tasks: validTasks.length } });
+    return { command: (await getCommandRow(commandId))!, tasks: await tasksOf(commandId) };
   }
 
-  return { command: (await getCommandRow(commandId))!, tasks: await tasksOf(commandId) };
+  return dispatchCommand(cmd);
+}
+
+// Dispatch inicial del command (ADR-012: tareas READY con depends_on_count === 0). Helper
+// COMPARTIDO por la ruta auto de createCommand y por approveCommand — no duplica lógica ni
+// toca la progresión posterior del DAG (que sigue en dispatchReadyTasks vía onHokageTaskCompleted).
+async function dispatchCommand(cmd: HokageCommand): Promise<CommandResult> {
+  const n = await dispatchReadyTasks(cmd);
+  if (n === 0) {
+    await advanceCommand(cmd.id, 0);
+  } else {
+    await run(`UPDATE hokage_commands SET status = 'active', updated_at = datetime('now') WHERE id = ?`, [cmd.id]);
+  }
+  return { command: (await getCommandRow(cmd.id))!, tasks: await tasksOf(cmd.id) };
+}
+
+// C5-C.1 — Autorización del plan. Transición atómica awaiting_approval → active como CLAIM:
+// solo una llamada concurrente gana el UPDATE (anti doble-dispatch). Cualquier otro estado
+// (ya active, cancelado, o segunda aprobación) → no-op idempotente devolviendo el estado actual.
+export async function approveCommand(commandId: number): Promise<CommandResult | null> {
+  const cmd = await getCommandRow(commandId);
+  if (!cmd) return null;
+  const claim = await run(
+    `UPDATE hokage_commands SET status = 'active', updated_at = datetime('now') WHERE id = ? AND status = 'awaiting_approval'`,
+    [commandId]
+  );
+  if (claim.changes === 0) return { command: (await getCommandRow(commandId))!, tasks: await tasksOf(commandId) };
+  return dispatchCommand((await getCommandRow(commandId))!);
 }
 
 export async function getCommand(commandId: number): Promise<CommandResult | null> {
