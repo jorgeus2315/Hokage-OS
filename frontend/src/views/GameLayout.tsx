@@ -441,6 +441,7 @@ export function GameLayout() {
               onChangeChatInput={setChatInput}
               onSendChat={sendChat}
               liveEvents={liveEvents}
+              ventures={ventures}
               pendingForAgent={pendingForAgent}
               onApprove={approve}
               onReject={reject}

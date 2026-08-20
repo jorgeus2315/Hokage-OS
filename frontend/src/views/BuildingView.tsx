@@ -1,4 +1,4 @@
-import type { Agent, WsEvent, ChatMsg, Building, BuildingSection, Decision } from '../shared/types';
+import type { Agent, WsEvent, ChatMsg, Building, BuildingSection, Decision, Venture } from '../shared/types';
 import { ROLES } from '../shared/types';
 import { Panel, Led, Badge } from '../shared/ui';
 import { BuildingGlyph, SectionIcon, IconPlay } from '../shared/icons';
@@ -12,6 +12,7 @@ import { AlertsPanel } from '../panels/AlertsPanel';
 import { AgentConfigPanel } from '../panels/AgentConfigPanel';
 import { SystemStatusPanel } from '../panels/SystemStatusPanel';
 import { BankPanel } from '../panels/BankPanel';
+import { HokageConsoleView } from './HokageConsoleView';
 import { sectionsForBuilding } from '../registries/buildingSectionRegistry';
 
 export function BuildingView({
@@ -25,6 +26,7 @@ export function BuildingView({
   onChangeChatInput,
   onSendChat,
   liveEvents,
+  ventures,
   pendingForAgent,
   onApprove,
   onReject,
@@ -41,6 +43,7 @@ export function BuildingView({
   onChangeChatInput: (v: string) => void;
   onSendChat: () => void;
   liveEvents: WsEvent[];
+  ventures: Venture[];
   pendingForAgent: Decision[];
   onApprove: (id: number) => void;
   onReject: (id: number) => void;
@@ -134,6 +137,7 @@ export function BuildingView({
               onSend={onSendChat}
             />
           )}
+          {section === 'command' && <HokageConsoleView ventures={ventures} liveEvents={liveEvents} />}
           {section === 'outputs' && <OutputsPanel agentId={agent?.id} />}
           {section === 'trends' && <OutputsPanel agentId={agent?.id} variant="market" />}
           {section === 'gallery' && <OutputsPanel agentId={agent?.id} variant="content" />}

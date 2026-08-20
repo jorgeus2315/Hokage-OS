@@ -154,7 +154,7 @@ export interface Objective {
   plan?: ObjPlan;
 }
 
-export type BuildingSection = 'chat' | 'feed' | 'stats' | 'pipeline' | 'outputs' | 'terminal' | 'alerts' | 'config' | 'system' | 'finance' | 'trends' | 'gallery';
+export type BuildingSection = 'chat' | 'feed' | 'stats' | 'pipeline' | 'outputs' | 'terminal' | 'alerts' | 'config' | 'system' | 'finance' | 'trends' | 'gallery' | 'command';
 
 export interface MetricsSummary {
   ai_cost_today_usd: number;

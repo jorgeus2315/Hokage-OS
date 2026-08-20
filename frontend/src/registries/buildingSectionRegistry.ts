@@ -38,10 +38,11 @@ const SYSTEM: SectionTab[] = [
 // EXCEPCIÓN: su Chat es el flujo conversacional principal (C1), primero y por defecto, no
 // Debug. Congelados en [[Edificios - Definición Consolidada 2026-08-18]] §1.1.
 const BY_ROLE: Record<string, SectionTab[]> = {
-  // Torre Hokage: centro de mando. Sistema reutiliza SystemStatusPanel (Fase 8), datos reales
-  // de /api/runtime/status + /api/metrics/summary. "Preguntas rápidas" diferido a C.5.
+  // Torre Hokage: centro de mando. La pestaña "Chat" (sección 'command', C5-A) es la superficie
+  // conversacional principal: habla con Hokage y despacha órdenes al orquestador existente
+  // (HokageConsoleView → POST /api/hokage/command). Sistema reutiliza SystemStatusPanel (Fase 8).
   ceo: [
-    { id: 'chat', label: 'Chat' },
+    { id: 'command', label: 'Chat' },
     { id: 'system', label: 'Sistema' },
     { id: 'feed', label: 'Live Feed' },
     { id: 'alerts', label: 'Alertas' },
