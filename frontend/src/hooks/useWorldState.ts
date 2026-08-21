@@ -4,6 +4,15 @@ import { BUILDINGS } from '../shared/constants';
 import type { HubDescriptor, RoomDescriptor, TokenDescriptor, RippleEvent } from '../world/types';
 import { adaptEvents, commandsToRippleEvents } from '../world/events';
 import { computeLayout } from '../world/layoutEngine';
+import { COLOR } from '../world/visuals/palette';
+
+// Slice 1 — color de identidad por rol = color del departamento del agente
+// (fuente única: departments/BUILDINGS). Los roles sin departamento (soporte,
+// hermes) caen a inkDim, un gris neutro que no compite con los colores de rol.
+function roleColor(role: string, depts: Building[]): number {
+  const dept = depts.find((b) => b.role === role);
+  return dept ? Number(dept.color.replace('#', '0x')) : COLOR.inkDim;
+}
 
 const WORLD_CENTER = { x: 1000, y: 1000 };
 const TOKEN_ORBIT = 220;
@@ -174,14 +183,24 @@ export function useWorldState({
       const w = roomWander[a.id] ?? { dx: 0, dy: 0 };
       target = { x: rp.x + w.dx, y: rp.y + w.dy };
     }
+    // Slice 1 — datos reales de estado para cuerpo (color) y tooltip. El
+    // color de rol usa allDepts (incluye el hub) para que ceo/Hokage resuelva.
+    const st = agentStates[a.id];
     return {
       id: String(a.id),
       x: target.x,
       y: target.y,
       label: a.name,
+      role: a.role,
+      color: roleColor(a.role, allDepts),
       working,
       justActed: isJustActed(a.id),
       action: lastRunFor(a.id)?.action,
+      model: a.model,
+      primary: st?.primary,
+      kind: st?.currentTask?.kind,
+      hasError: st?.modifiers.hasError ?? false,
+      awaitingApproval: st?.modifiers.awaitingApproval ?? false,
       onClick: room ? () => onEnterBuilding(room) : undefined,
     };
   });

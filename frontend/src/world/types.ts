@@ -1,3 +1,5 @@
+import type { AgentPrimaryState } from '../shared/types';
+
 export interface Vec2 {
   x: number;
   y: number;
@@ -38,10 +40,19 @@ export interface TokenDescriptor {
   id: string;
   x: number;
   y: number;
-  label: string;
+  label: string;        // nombre del agente (badge sobre el token)
+  role: string;         // Slice 1 — rol canónico: color de cuerpo + monograma + leyenda
+  color: number;        // Slice 1 — color de identidad (departamento/rol); fallback inkDim
   working: boolean;
   justActed?: boolean;  // actuó en los últimos 30s — animación intensa
   action?: string;      // texto de la acción actual
+  // Slice 1 — datos REALES para el tooltip (opcionales; el backend no siempre los emite).
+  // No se inventan `tool` ni estados finos: primary hoy solo toma WORKING/IDLE/COMPLETED/ERROR.
+  model?: string | null;         // Agent.model — modelo LLM del agente
+  primary?: AgentPrimaryState;   // AgentRuntimeState.primary
+  kind?: string;                 // AgentRuntimeState.currentTask.kind (tipo de work_item)
+  hasError?: boolean;            // AgentRuntimeState.modifiers.hasError
+  awaitingApproval?: boolean;    // AgentRuntimeState.modifiers.awaitingApproval
   onClick?: () => void;
 }
 

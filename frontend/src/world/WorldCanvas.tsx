@@ -2,12 +2,54 @@ import { useEffect, useRef } from 'react';
 import * as PIXI from 'pixi.js';
 import { WorldEngine } from './WorldEngineBridge';
 import { CameraSystem } from './systems/CameraSystem';
-import { COLOR, hashOffset } from './visuals';
+import { COLOR, hashOffset, makeText } from './visuals';
+import { ROLES } from '../shared/types';
 import type { HubDescriptor, RoomDescriptor, TokenDescriptor, RippleEvent } from './types';
 
 const MINIMAP_W = 150;
 const MINIMAP_H = 110;
 const MINIMAP_PAD = 12;
+
+// Slice 1 — Identidad visual de agentes. Monograma por rol: una letra fija y
+// ÚNICA por rol (no la inicial del nombre, que colisiona: Explorador/Escritor
+// → "E"). Es la iconografía sencilla legible al tamaño del token (~13px);
+// pictogramas SVG no sobreviven a esa escala (ver resumen del slice). Canal
+// secundario y colorblind-safe: distingue ceo (rojo) de finanzas (verde)
+// aunque el color falle. Junto al color de departamento y la leyenda, el
+// agente es identificable por rol sin clicar.
+const ROLE_LETTER: Record<string, string> = {
+  ceo: 'H',          // Hokage — evita colisión con contenido ("C")
+  investigador: 'I',
+  contenido: 'C',
+  trafico: 'T',
+  finanzas: 'F',
+  operaciones: 'O',
+  soporte: 'S',
+  hermes: 'M',       // Sala de Máquinas — evita colisión con ceo ("H")
+};
+
+// Localización de datos reales del tooltip. primary declara 10 estados pero el
+// backend hoy solo emite WORKING/IDLE/COMPLETED/ERROR — el resto se mapea por
+// completitud, nunca se inventa.
+const PRIMARY_ES: Record<string, string> = {
+  IDLE: 'Inactivo', THINKING: 'Pensando', RESEARCHING: 'Investigando',
+  WORKING: 'Trabajando', WAITING: 'Esperando', REVIEWING: 'Revisando',
+  COMMUNICATING: 'Comunicando', MOVING: 'Moviéndose', COMPLETED: 'Completado', ERROR: 'Error',
+};
+const KIND_ES: Record<string, string> = {
+  autonomous_run: 'Run autónomo', event_triggered: 'Por evento', decision_execution: 'Ejecutar decisión',
+};
+
+// Texto multilínea del tooltip — solo datos presentes (no se rellenan huecos).
+function tooltipText(m: TokenDescriptor): string {
+  const lines = [m.label.toUpperCase(), ROLES[m.role] ?? m.role];
+  if (m.primary) lines.push(`Estado: ${PRIMARY_ES[m.primary] ?? m.primary}`);
+  if (m.kind) lines.push(`Tarea: ${KIND_ES[m.kind] ?? m.kind}`);
+  if (m.model) lines.push(`Modelo: ${m.model}`);
+  if (m.awaitingApproval) lines.push('Aprobación pendiente');
+  if (m.hasError) lines.push('Error reciente');
+  return lines.join('\n');
+}
 
 function buildGrid(cx: number, cy: number): PIXI.Graphics {
   const g = new PIXI.Graphics();
@@ -137,6 +179,35 @@ export function WorldCanvas({
       const minimapViewport = new PIXI.Graphics();
       minimapContainer.addChild(minimapBg, minimapDots, minimapViewport);
 
+      // Slice 1 — Leyenda fija y discreta (esquina inferior izquierda, espejo
+      // del minimapa). Se reconstruye solo cuando cambia el set de roles
+      // presentes, no cada frame — evita churn de PIXI.Text. Su posición sí se
+      // fija cada frame (depende de la altura de pantalla).
+      const legendContainer = new PIXI.Container();
+      legendContainer.label = 'legend';
+      legendContainer.eventMode = 'none';   // panel decorativo, no intercepta hover
+      app.stage.addChild(legendContainer);
+      let legendKey = '';
+      let legendH = 0;
+
+      // Slice 1 — Tooltip de hover. Se crea una vez; el ticker solo actualiza
+      // texto, tamaño del fondo, posición y visibilidad. Vive en app.stage
+      // (espacio de pantalla), posicionado vía world.toGlobal().
+      const tooltipContainer = new PIXI.Container();
+      tooltipContainer.label = 'tooltip';
+      tooltipContainer.visible = false;
+      tooltipContainer.eventMode = 'none';   // no intercepta el hover del token
+      const tooltipBg = new PIXI.Graphics();
+      const tooltipTxt = makeText('', { fontSize: 8.5, fill: COLOR.ink, lineHeight: 12 });
+      tooltipTxt.position.set(8, 6);
+      tooltipContainer.addChild(tooltipBg, tooltipTxt);
+      app.stage.addChild(tooltipContainer);
+
+      // Estado de hover — el id del token bajo el cursor (o null). Lo fijan los
+      // listeners pointerover/pointerout enganchados en el bucle de tokens.
+      let hoveredTokenId: string | null = null;
+      const hoverBound = new WeakSet<PIXI.Container>();
+
       app.ticker.add(() => {
         const { hub, rooms, tokens } = propsRef.current;
         const sw = app.screen.width;
@@ -216,10 +287,16 @@ export function WorldCanvas({
         // movimiento. ensureTokenVisual (Fase 2) crea/actualiza SOLO el
         // container Pixi + color/label — la posición final se fija después
         // de engine.tick(), igual que antes.
+        // Slice 1 — el cuerpo del token toma el color de IDENTIDAD (rol/
+        // departamento). El estado (working/justActed) ya lo comunican el
+        // anillo pulsante y la burbuja de acción (tokenAnimation), y el
+        // minimapa sigue coloreando por estado — separación cuerpo=identidad,
+        // anillo=estado.
         const seenTokens = new Set<string>();
+        const tokenMeta = new Map(tokens.map((t) => [t.id, t]));
         for (const tk of tokens) {
           seenTokens.add(tk.id);
-          const color = tk.working ? COLOR.ember : COLOR.signal;
+          const color = tk.color;
           const node = engine.get(tk.id);
           if (!node) {
             engine.upsert(tk.id, { x: tk.x, y: tk.y }, color, tk.label);
@@ -258,10 +335,22 @@ export function WorldCanvas({
           const handle = engine.getVisualHandle(node.id);
           if (!handle) continue;
           const refs = handle.refs as unknown as TokenRefs;
+          const meta = tokenMeta.get(node.id);
+
+          // Hover para tooltip — se engancha UNA vez por container (mismo
+          // criterio que SelectionSystem con pointertap), guardado en un
+          // WeakSet para no re-enganchar ni fugar al recrearse el token.
+          if (!hoverBound.has(handle.container)) {
+            hoverBound.add(handle.container);
+            const id = node.id;
+            handle.container.on('pointerover', () => { hoveredTokenId = id; });
+            handle.container.on('pointerout', () => { if (hoveredTokenId === id) hoveredTokenId = null; });
+          }
 
           handle.container.position.set(node.pos.x, node.pos.y);
           refs.diamond.tint = node.color;
-          refs.label.text = node.label[0]?.toUpperCase() || '';
+          // Slice 1 — monograma por rol (único), no la inicial del nombre.
+          refs.label.text = (meta && ROLE_LETTER[meta.role]) || node.label[0]?.toUpperCase() || '';
 
           // Name badge
           refs.nameText.text = node.label;
@@ -358,6 +447,63 @@ export function WorldCanvas({
         minimapViewport.clear()
           .roundRect(toMmX(vpLeft), toMmY(vpTop), (vpW / sceneW) * MINIMAP_W, (vpH / sceneH) * MINIMAP_H, 2)
           .stroke({ width: 1, color: COLOR.minimapViewport, alpha: 0.75 });
+
+        // ── Leyenda de roles (Slice 1) — reconstruida solo al cambiar el set
+        // de roles; posición fija cada frame (esquina inferior izquierda) ──
+        const roleColorMap = new Map<string, number>();
+        for (const tk of tokens) if (!roleColorMap.has(tk.role)) roleColorMap.set(tk.role, tk.color);
+        const legendRoles = [...roleColorMap.keys()];
+        const key = legendRoles.join(',');
+        if (key !== legendKey) {
+          legendKey = key;
+          for (const c of legendContainer.removeChildren()) c.destroy({ children: true });
+          const padX = 8, padY = 6, rowH = 14, swSz = 10;
+          const bg = new PIXI.Graphics();
+          legendContainer.addChild(bg);
+          let maxW = 0;
+          legendRoles.forEach((role, i) => {
+            const y = padY + i * rowH;
+            const swatch = new PIXI.Graphics()
+              .roundRect(padX, y + 1, swSz, swSz, 2)
+              .fill({ color: roleColorMap.get(role)!, alpha: 0.9 });
+            const letter = makeText(ROLE_LETTER[role] ?? role[0]?.toUpperCase() ?? '', { fontSize: 7, fontWeight: '700', fill: COLOR.void });
+            letter.anchor.set(0.5);
+            letter.position.set(padX + swSz / 2, y + 1 + swSz / 2);
+            const name = makeText(ROLES[role] ?? role, { fontSize: 8, fill: COLOR.ink });
+            name.position.set(padX + swSz + 6, y + 1);
+            legendContainer.addChild(swatch, letter, name);
+            maxW = Math.max(maxW, padX + swSz + 6 + name.width);
+          });
+          legendH = padY * 2 + legendRoles.length * rowH;
+          bg.roundRect(0, 0, maxW + padX, legendH, 3)
+            .fill({ color: COLOR.panel, alpha: 0.82 })
+            .stroke({ width: 1, color: COLOR.line, alpha: 0.8 });
+        }
+        legendContainer.position.set(MINIMAP_PAD, sh - legendH - MINIMAP_PAD);
+        legendContainer.visible = legendRoles.length > 0;
+
+        // ── Tooltip de hover (Slice 1) — solo datos reales, borde con el
+        // color de identidad del agente ──
+        const hoverMeta = hoveredTokenId ? tokenMeta.get(hoveredTokenId) : undefined;
+        const hoverNode = hoveredTokenId ? engine.get(hoveredTokenId) : undefined;
+        if (hoverMeta && hoverNode) {
+          tooltipTxt.text = tooltipText(hoverMeta);
+          const w = tooltipTxt.width + 16;
+          const h = tooltipTxt.height + 12;
+          tooltipBg.clear()
+            .roundRect(0, 0, w, h, 3)
+            .fill({ color: COLOR.panel, alpha: 0.94 })
+            .stroke({ width: 1, color: hoverMeta.color, alpha: 0.7 });
+          const gp = world.toGlobal(new PIXI.Point(hoverNode.pos.x, hoverNode.pos.y));
+          let tx = gp.x + 16;
+          let ty = gp.y - h - 8;
+          if (tx + w > sw) tx = gp.x - w - 16;
+          if (ty < 0) ty = gp.y + 16;
+          tooltipContainer.position.set(tx, ty);
+          tooltipContainer.visible = true;
+        } else {
+          tooltipContainer.visible = false;
+        }
       });
     })();
 
