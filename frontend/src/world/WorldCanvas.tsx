@@ -9,6 +9,10 @@ import type { HubDescriptor, RoomDescriptor, TokenDescriptor, RippleEvent } from
 const MINIMAP_W = 150;
 const MINIMAP_H = 110;
 const MINIMAP_PAD = 12;
+// Borde derecho del rail izquierdo (.hk-game-overlay--left en styles.css: left:10 +
+// width:200, sin media query que lo altere). La leyenda arranca a su derecha para no
+// quedar oculta bajo el panel DOM "Ship Crew", que se superpone al canvas a pantalla completa.
+const LEFT_RAIL_RIGHT = 210;
 
 // Slice 1 — Identidad visual de agentes. Monograma por rol: una letra fija y
 // ÚNICA por rol (no la inicial del nombre, que colisiona: Explorador/Escritor
@@ -449,7 +453,8 @@ export function WorldCanvas({
           .stroke({ width: 1, color: COLOR.minimapViewport, alpha: 0.75 });
 
         // ── Leyenda de roles (Slice 1) — reconstruida solo al cambiar el set
-        // de roles; posición fija cada frame (esquina inferior izquierda) ──
+        // de roles; posición fija cada frame (inferior, a la derecha del rail
+        // izquierdo para no quedar oculta bajo el panel Ship Crew) ──
         const roleColorMap = new Map<string, number>();
         for (const tk of tokens) if (!roleColorMap.has(tk.role)) roleColorMap.set(tk.role, tk.color);
         const legendRoles = [...roleColorMap.keys()];
@@ -479,7 +484,7 @@ export function WorldCanvas({
             .fill({ color: COLOR.panel, alpha: 0.82 })
             .stroke({ width: 1, color: COLOR.line, alpha: 0.8 });
         }
-        legendContainer.position.set(MINIMAP_PAD, sh - legendH - MINIMAP_PAD);
+        legendContainer.position.set(LEFT_RAIL_RIGHT + MINIMAP_PAD, sh - legendH - MINIMAP_PAD);
         legendContainer.visible = legendRoles.length > 0;
 
         // ── Tooltip de hover (Slice 1) — solo datos reales, borde con el
