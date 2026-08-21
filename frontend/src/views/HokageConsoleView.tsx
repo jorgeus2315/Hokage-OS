@@ -12,7 +12,7 @@ type Tone = 'good' | 'signal' | 'dim' | 'amber' | 'ember';
 function statusTone(s: string): Tone {
   if (s === 'completed') return 'good';
   if (s === 'active' || s === 'dispatched' || s === 'planning') return 'signal';
-  if (s === 'partial') return 'amber';
+  if (s === 'awaiting_approval' || s === 'partial') return 'amber';   // C5-C.2: plan pendiente de aprobación
   if (s === 'failed' || s === 'blocked') return 'ember';
   return 'dim';
 }
@@ -54,6 +54,36 @@ export function HokageConsoleView({ ventures, liveEvents }: { ventures: Venture[
     if (r) loadDetail(selected);
   };
 
+  // C5-C.2 — Autorización del plan. Aprobar reanuda el dispatch (backend); rechazar reutiliza
+  // la cancelación (limpio en awaiting_approval: nada en vuelo).
+  const approve = async () => {
+    if (selected == null || busy) return;
+    setBusy(true);
+    const r = await api.approveHokageCommand(selected);
+    setBusy(false);
+    if (r) loadDetail(selected);
+  };
+  const reject = async () => {
+    if (selected == null) return;
+    if (!window.confirm('¿Rechazar este plan? No se ejecutará ninguna tarea.')) return;
+    const r = await api.cancelHokageCommand(selected);
+    if (r) loadDetail(selected);
+  };
+
+  // C5-C.2 — Al montar, cargar los planes 'awaiting_approval' del backend para que sobrevivan a
+  // un refresh (la lista de esta sesión, por sí sola, se pierde al recargar). Autoselecciona el primero.
+  useEffect(() => {
+    api.hokageCommands('awaiting_approval').then((list) => {
+      if (!list || list.length === 0) return;
+      setCommands((prev) => {
+        const seen = new Set(prev.map((c) => c.id));
+        const add = list.filter((c) => !seen.has(c.id)).map((c) => ({ id: c.id, text: c.text }));
+        return [...add, ...prev];
+      });
+      setSelected((cur) => cur ?? list[0].id);
+    });
+  }, []);
+
   useEffect(() => { if (selected != null) loadDetail(selected); }, [selected, loadDetail, evTick]);
 
   // Fallback ligero mientras la orden no es terminal (el WS es la vía principal; esto es red de seguridad).
@@ -79,6 +109,7 @@ export function HokageConsoleView({ ventures, liveEvents }: { ventures: Venture[
 
   const cmd = detail?.command;
   const cancellable = cmd && (cmd.status === 'active' || cmd.status === 'planning');
+  const awaitingApproval = cmd?.status === 'awaiting_approval';   // C5-C.2: plan a la espera de autorización
 
   return (
     <div style={{ display: 'grid', gap: 16, padding: 4 }}>
@@ -152,9 +183,17 @@ export function HokageConsoleView({ ventures, liveEvents }: { ventures: Venture[
                 {cmd.replan_count > 0 && <Badge tone="amber">replan ×{cmd.replan_count}</Badge>}
                 <span style={{ flex: 1 }} />
                 <button className="hk-btn hk-btn--sm" onClick={() => loadDetail(cmd.id)}>Refrescar</button>
+                {awaitingApproval && <button className="hk-btn hk-btn--sm" onClick={approve} disabled={busy}>Aprobar plan</button>}
+                {awaitingApproval && <button className="hk-btn hk-btn--sm hk-btn--ghost-danger" onClick={reject}>Rechazar</button>}
                 {cancellable && <button className="hk-btn hk-btn--sm hk-btn--ghost-danger" onClick={cancel}>Cancelar</button>}
               </div>
               <div style={{ color: 'var(--ink-dim)', fontSize: 13 }}>{cmd.text}</div>
+
+              {awaitingApproval && (
+                <div style={{ fontSize: 12, color: 'var(--amber)', border: '1px solid var(--amber)', background: 'var(--amber-faint)', borderRadius: 6, padding: '6px 10px' }}>
+                  Plan generado, <b>en espera de tu aprobación</b>. No se ejecuta ninguna tarea hasta que apruebes.
+                </div>
+              )}
 
               <div>
                 <div style={{ fontSize: 12, color: 'var(--ink-dim)', marginBottom: 4 }}>TAREAS</div>

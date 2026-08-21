@@ -55,7 +55,7 @@ import { createServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 
 import { run, get, all, initSchema } from './db/init.js';
-import type { Department, DepartmentUpdatePayload } from './types/index.js';
+import type { Department, DepartmentUpdatePayload, HokageCommand } from './types/index.js';
 import { listAgents, createAgent } from './services/agentService.js';
 import { readAgentMemory } from './services/agentMemoryService.js';
 import { toolsForRole } from './config/agentModels.js';
@@ -528,6 +528,18 @@ app.post('/api/hokage/commands/:id/approve', requireAdmin, async (req, res) => {
     broadcast('hokage.command', result.command);
     res.json({ ok: true, data: result });
   } catch (e: any) { sendError(res, 500, e, 'Error aprobando la orden de Hokage'); }
+});
+
+// C5-C.2 — Listado de órdenes (opcional filtro por status). Lo usa la consola para cargar los
+// planes 'awaiting_approval' al montar (sobreviven a un refresh). requireAdmin (guard global).
+app.get('/api/hokage/commands', requireAdmin, async (req, res) => {
+  try {
+    const status = req.query.status ? String(req.query.status) : undefined;
+    const rows = status
+      ? await all<HokageCommand>('SELECT * FROM hokage_commands WHERE status = ? ORDER BY created_at DESC LIMIT 100', [status])
+      : await all<HokageCommand>('SELECT * FROM hokage_commands ORDER BY created_at DESC LIMIT 100');
+    res.json({ ok: true, data: rows });
+  } catch (e: any) { sendError(res, 500, e, 'Error listando órdenes'); }
 });
 
 // Detalle de una orden reconstruido (Fase 9): command + tasks + work_items + traza de eventos

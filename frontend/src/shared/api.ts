@@ -140,6 +140,9 @@ export const api = {
     req<import('./types').HokageCommandResult>('/hokage/command', jsonInit('POST', { text, venture_id: ventureId ?? null })),
   hokageCommandDetail: (id: number) => req<import('./types').HokageCommandTrace>(`/hokage/commands/${id}`),
   cancelHokageCommand: (id: number) => req<import('./types').HokageCommandResult>(`/hokage/commands/${id}/cancel`, { method: 'POST' }),
+  // C5-C.2 — aprobar un plan en 'awaiting_approval' (reanuda el dispatch) + listar pendientes.
+  approveHokageCommand: (id: number) => req<import('./types').HokageCommandResult>(`/hokage/commands/${id}/approve`, { method: 'POST' }),
+  hokageCommands: (status?: string) => req<import('./types').HokageCommand[]>(`/hokage/commands${status ? `?status=${encodeURIComponent(status)}` : ''}`),
   ventureBudget: (id: number) => req<import('./types').VentureBudget>(`/ventures/${id}/budget`),
   auditEvents: (params: Record<string, string | number | undefined>) => {
     const qs = new URLSearchParams();
