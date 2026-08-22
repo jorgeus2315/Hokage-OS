@@ -69,6 +69,9 @@ function makeTask(overrides: Partial<HokageTask> = {}): HokageTask {
     output_schema: null,
     acceptance_criteria: null,
     quality_floor: null,
+    retry_count: 0,
+    remediation_count: 0,
+    remediation_policy: null,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     ...overrides
@@ -214,4 +217,55 @@ test('work_items evaluation columns exist', async () => {
   assert.ok(names.includes('evaluation_verdict'));
   assert.ok(names.includes('evaluation_confidence'));
   assert.ok(names.includes('evaluation_evidence'));
+});
+
+// B1: hokage_tasks remediation columns exist and have correct defaults
+test('hokage_tasks has retry_count column with default 0', async () => {
+  const cols = await all<{ name: string; dflt_value: any }>(`PRAGMA table_info(hokage_tasks)`);
+  const retryCol = cols.find(c => c.name === 'retry_count');
+  assert.ok(retryCol, 'retry_count column should exist');
+  // SQLite PRAGMA returns default as string, so coerce
+  assert.equal(Number(retryCol!.dflt_value), 0, 'retry_count default should be 0');
+});
+
+test('hokage_tasks has remediation_count column with default 0', async () => {
+  const cols = await all<{ name: string; dflt_value: any }>(`PRAGMA table_info(hokage_tasks)`);
+  const remCol = cols.find(c => c.name === 'remediation_count');
+  assert.ok(remCol, 'remediation_count column should exist');
+  assert.equal(Number(remCol!.dflt_value), 0, 'remediation_count default should be 0');
+});
+
+test('hokage_tasks has remediation_policy column (nullable)', async () => {
+  const cols = await all<{ name: string }>(`PRAGMA table_info(hokage_tasks)`);
+  const policyCol = cols.find(c => c.name === 'remediation_policy');
+  assert.ok(policyCol, 'remediation_policy column should exist');
+  // nullable TEXT, no default
+});
+
+// B1: Idempotency - re-running initSchema does not duplicate columns or break
+test('initSchema is idempotent for B1 columns (re-running does not error)', async () => {
+  // initSchema ya se ejecuta en before(); llamarlo de nuevo no debe fallar
+  await initSchema();
+
+  // Verificar que las columnas siguen existiendo con los mismos defaults
+  const cols = await all<{ name: string; dflt_value: any }>(`PRAGMA table_info(hokage_tasks)`);
+  const retryCol = cols.find(c => c.name === 'retry_count');
+  const remCol = cols.find(c => c.name === 'remediation_count');
+  const policyCol = cols.find(c => c.name === 'remediation_policy');
+
+  assert.ok(retryCol && Number(retryCol.dflt_value) === 0);
+  assert.ok(remCol && Number(remCol.dflt_value) === 0);
+  assert.ok(policyCol);
+});
+
+// B1: Tasks created after migration have new columns with defaults
+test('New tasks have retry_count=0 and remediation_count=0 by default', async () => {
+  const workItemId = await createTestWorkItem({ result: '{"ok":true}' });
+  const taskId = await createTestTask(workItemId);
+
+  const task = await get<HokageTask>(`SELECT * FROM hokage_tasks WHERE id = ?`, [taskId]);
+  assert.ok(task !== undefined);
+  assert.equal(task!.retry_count, 0);
+  assert.equal(task!.remediation_count, 0);
+  assert.equal(task!.remediation_policy, null);
 });

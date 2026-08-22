@@ -12,6 +12,7 @@ function task(id: number, commandId: number, role: string): HokageTask {
     status: 'pending', work_item_id: null, result: null, error: null, reserved_usd: 0, model: null,
     depends_on_count: 0, handoff_input: null, handoff_from_role: null, review_cycles: 0, review_verdict: null, review_feedback: null,
     output_schema: null, acceptance_criteria: null, quality_floor: null,
+    retry_count: 0, remediation_count: 0, remediation_policy: null,
     created_at: '', updated_at: '',
   };
 }

@@ -40,11 +40,11 @@ export function generateState(): string {
   return crypto.randomBytes(16).toString('base64url');
 }
 
-// ⚠️ x-api-key = keystring (client_id). Formato exacto a confirmar contra la API viva la
-// primera vez que haya credenciales (un resumen de docs sugería `keystring:shared_secret`).
-// Aislado aquí a propósito: si falla con 401/403, se cambia SOLO esta función.
-function apiHeaders(clientId: string, accessToken: string): Record<string, string> {
-  return { 'x-api-key': clientId, Authorization: `Bearer ${accessToken}` };
+// x-api-key = `keystring:shared_secret` — OBLIGATORIO en todo endpoint v3 desde el
+// 2026-02-09 (antes bastaba el keystring). Verificado en developers.etsy.com. El token
+// endpoint es la excepción: NO lleva x-api-key (ver exchangeCode/refresh).
+function apiHeaders(clientId: string, sharedSecret: string, accessToken: string): Record<string, string> {
+  return { 'x-api-key': `${clientId}:${sharedSecret}`, Authorization: `Bearer ${accessToken}` };
 }
 
 export function buildAuthorizeUrl(params: { state: string; codeChallenge: string }): string {
@@ -119,10 +119,11 @@ async function getFreshAccess(ventureId: number): Promise<{ accessToken: string;
   return { accessToken: saved.accessToken, userId: userIdFromToken(saved.accessToken) };
 }
 
-// ⚠️ Resolución de shop: user_id (prefijo del token) → GET /users/{user_id}/shops. Forma de
-// respuesta a confirmar en vivo (aislada aquí). Toma el primer shop del usuario.
-async function resolveShopId(ventureId: number, clientId: string, accessToken: string, userId: string): Promise<number> {
-  const res = await fetch(`${API_BASE}/users/${userId}/shops`, { headers: apiHeaders(clientId, accessToken) });
+// Resolución de shop: user_id (prefijo del token) → GET /users/{user_id}/shops
+// (getShopByOwnerUserId, verificado en developers.etsy.com). La respuesta puede venir como
+// objeto directo o envuelta en results[]; se manejan ambas. Toma el primer shop del usuario.
+async function resolveShopId(clientId: string, sharedSecret: string, accessToken: string, userId: string): Promise<number> {
+  const res = await fetch(`${API_BASE}/users/${userId}/shops`, { headers: apiHeaders(clientId, sharedSecret, accessToken) });
   const json = await parseJsonOrThrow(res, 'resolución de shop');
   const shop = Array.isArray(json?.results) ? json.results[0] : json;
   const shopId = shop?.shop_id;
@@ -135,11 +136,11 @@ export interface EtsyReceipt { id: string; total: number; currency: string; stat
 
 // LECTURA: listings activos del shop propio → forma estable {total, items}.
 export async function getListings(ventureId: number, opts: { limit?: number } = {}): Promise<{ total: number; items: EtsyListing[] }> {
-  const { clientId } = credentialProvider.getAppCredentials(PROVIDER);
+  const { clientId, sharedSecret } = credentialProvider.getAppCredentials(PROVIDER);
   const { accessToken, userId } = await getFreshAccess(ventureId);
-  const shopId = await resolveShopId(ventureId, clientId, accessToken, userId);
+  const shopId = await resolveShopId(clientId, sharedSecret, accessToken, userId);
   const limit = Math.min(Math.max(opts.limit ?? 25, 1), 100);
-  const res = await fetch(`${API_BASE}/shops/${shopId}/listings?limit=${limit}`, { headers: apiHeaders(clientId, accessToken) });
+  const res = await fetch(`${API_BASE}/shops/${shopId}/listings?limit=${limit}`, { headers: apiHeaders(clientId, sharedSecret, accessToken) });
   const json = await parseJsonOrThrow(res, 'getListings');
   const rows: any[] = Array.isArray(json?.results) ? json.results : [];
   const items: EtsyListing[] = rows.map((r) => ({
@@ -155,11 +156,11 @@ export async function getListings(ventureId: number, opts: { limit?: number } = 
 // LECTURA: pedidos (receipts) del shop propio. Forma mínima; el modelo sales/orders definitivo
 // se diseñará a partir de respuestas reales (F5, diferido).
 export async function getReceipts(ventureId: number, opts: { limit?: number } = {}): Promise<{ total: number; items: EtsyReceipt[] }> {
-  const { clientId } = credentialProvider.getAppCredentials(PROVIDER);
+  const { clientId, sharedSecret } = credentialProvider.getAppCredentials(PROVIDER);
   const { accessToken, userId } = await getFreshAccess(ventureId);
-  const shopId = await resolveShopId(ventureId, clientId, accessToken, userId);
+  const shopId = await resolveShopId(clientId, sharedSecret, accessToken, userId);
   const limit = Math.min(Math.max(opts.limit ?? 25, 1), 100);
-  const res = await fetch(`${API_BASE}/shops/${shopId}/receipts?limit=${limit}`, { headers: apiHeaders(clientId, accessToken) });
+  const res = await fetch(`${API_BASE}/shops/${shopId}/receipts?limit=${limit}`, { headers: apiHeaders(clientId, sharedSecret, accessToken) });
   const json = await parseJsonOrThrow(res, 'getReceipts');
   const rows: any[] = Array.isArray(json?.results) ? json.results : [];
   const items: EtsyReceipt[] = rows.map((r) => ({

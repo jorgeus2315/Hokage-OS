@@ -49,6 +49,9 @@ function makeTask(overrides: Partial<HokageTask> = {}): HokageTask {
     output_schema: null,
     acceptance_criteria: null,
     quality_floor: null,
+    retry_count: 0,
+    remediation_count: 0,
+    remediation_policy: null,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     ...overrides

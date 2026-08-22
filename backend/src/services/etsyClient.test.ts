@@ -118,6 +118,36 @@ test('refresh defensivo: si la respuesta no trae refresh_token, se conserva el a
   assert.equal(stored?.refreshToken, '42.keepref');   // conservado
 });
 
+test('cabeceras: reads v3 llevan x-api-key keystring:shared_secret + Bearer; el token endpoint NO lleva x-api-key', async () => {
+  const ventureId = nextVenture();
+  // Token vencido → fuerza también la llamada al token endpoint en la misma secuencia.
+  await tokenStore.saveTokens({
+    provider: 'etsy', ventureId, accessToken: '42.old', refreshToken: '42.ref',
+    expiresAt: new Date(Date.now() - 60_000).toISOString(), scope: 'listings_r',
+  });
+  const seen: Array<{ url: string; xApiKey: string | null; auth: string | null }> = [];
+  globalThis.fetch = (async (u: any, opts: any) => {
+    const url = String(u);
+    const h = new Headers(opts?.headers ?? {});
+    seen.push({ url, xApiKey: h.get('x-api-key'), auth: h.get('authorization') });
+    if (url.includes('/public/oauth/token')) return jsonResponse({ access_token: '42.fresh', refresh_token: '42.ref', expires_in: 3600 });
+    if (url.includes('/users/42/shops')) return jsonResponse({ shop_id: 999 });   // shape: objeto directo
+    if (url.includes('/shops/999/listings')) return jsonResponse({ count: 0, results: [] });
+    return jsonResponse({}, 404);
+  }) as typeof fetch;
+
+  await getListings(ventureId);
+
+  const tokenCall = seen.find((s) => s.url.includes('/oauth/token'));
+  const readCalls = seen.filter((s) => !s.url.includes('/oauth/token'));
+  assert.equal(tokenCall?.xApiKey, null);                    // token endpoint: SIN x-api-key
+  assert.ok(readCalls.length >= 2, 'esperaba /users/../shops + /shops/../listings');
+  for (const r of readCalls) {
+    assert.equal(r.xApiKey, 'test-keystring:test-secret');   // formato obligatorio desde 2026-02-09
+    assert.equal(r.auth, 'Bearer 42.fresh');                 // access token refrescado
+  }
+});
+
 test('error HTTP de Etsy se propaga saneado (sin secretos)', async () => {
   const ventureId = nextVenture();
   await tokenStore.saveTokens({
