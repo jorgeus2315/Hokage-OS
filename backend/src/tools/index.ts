@@ -1,5 +1,5 @@
 import type { Tool, ToolContext, ToolResult, ToolStatus, ToolPermission } from './base.js';
-import type { EtsyListingInput, EtsyListingOutput, ShopifyListingInput, ShopifyListingOutput, PrintifyProductInput, PrintifyProductOutput, GoogleTrendsInput, GoogleTrendsOutput, WebBrowserInput, WebBrowserOutput, SystemExecInput, SystemExecOutput, TrendReportInput, TrendReportOutput, ContentCreateInput, ContentCreateOutput, MemoryWriteInput, MemoryWriteOutput, DecisionCreateInput, DecisionCreateOutput, MemoryRememberInput, MemoryRememberOutput } from './types.js';
+import type { EtsyListingInput, EtsyListingOutput, EtsyReceiptInput, EtsyReceiptOutput, ShopifyListingInput, ShopifyListingOutput, PrintifyProductInput, PrintifyProductOutput, GoogleTrendsInput, GoogleTrendsOutput, WebBrowserInput, WebBrowserOutput, SystemExecInput, SystemExecOutput, TrendReportInput, TrendReportOutput, ContentCreateInput, ContentCreateOutput, MemoryWriteInput, MemoryWriteOutput, DecisionCreateInput, DecisionCreateOutput, MemoryRememberInput, MemoryRememberOutput } from './types.js';
 import { requestExec } from '../services/hermesService.js';
 import { createMarket } from '../services/marketService.js';
 import { createContent } from '../services/contentService.js';
@@ -10,7 +10,7 @@ import { createMemoryEntry } from '../services/memoryService.js';
 import { get } from '../db/init.js';
 import bus from '../config/eventBus.js';
 import { safeFetch } from './ssrfGuard.js';
-import { getListings as etsyGetListings, EtsyNotConnectedError } from '../services/etsyClient.js';
+import { getListings as etsyGetListings, getReceipts as etsyGetReceipts, EtsyNotConnectedError } from '../services/etsyClient.js';
 
 const MEMORY_KEY_PATTERN = /^[a-z_][a-z0-9_]*$/;
 
@@ -80,6 +80,54 @@ export const EtsyTool: Tool<EtsyListingInput, EtsyListingOutput> = {
     } catch (err: any) {
       const msg = err instanceof EtsyNotConnectedError ? err.message : (err?.message || 'Error consultando Etsy');
       return result<EtsyListingOutput>(false, { data: { total: 0, items: [] }, error: msg });
+    }
+  },
+};
+
+// Fase 4 · Slice 2 — LECTURA de pedidos (receipts) del shop propio (etsy.receipts). Mismo
+// patrón/contrato read-only que etsy.listings: envuelve getReceipts() de etsyClient, sin
+// escritura. Requiere venture conectada por OAuth; sin conexión → error limpio (F3).
+export const EtsyReceiptsTool: Tool<EtsyReceiptInput, EtsyReceiptOutput> = {
+  id: 'etsy.receipts',
+  name: 'Etsy Receipts',
+  description: 'Lee los pedidos (receipts) de la tienda Etsy conectada (solo lectura).',
+  category: 'marketplace',
+  status: 'ready',
+  permissions: permission('business', { requiresAdmin: true }),
+  requiredApproval: false,   // lectura: sin efecto externo, no requiere aprobación
+  inputSchema: stubInputSchema(
+    { limit: { type: 'integer', description: 'Límite de resultados (1-100)', minimum: 1, maximum: 100 } },
+    []
+  ),
+  outputSchema: stubOutputSchema({
+    total: { type: 'integer' },
+    items: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          total: { type: 'number' },
+          currency: { type: 'string' },
+          status: { type: 'string' },
+          createdAt: { type: 'string' },
+        },
+      },
+    },
+  }),
+  async estimateCost(_input) {
+    return 0;   // lectura de API externa: sin coste de IA
+  },
+  async execute(input, ctx) {
+    if (ctx.ventureId == null) {
+      return result<EtsyReceiptOutput>(false, { data: { total: 0, items: [] }, error: 'Falta ventureId para consultar Etsy' });
+    }
+    try {
+      const { total, items } = await etsyGetReceipts(ctx.ventureId, { limit: input?.limit });
+      return result<EtsyReceiptOutput>(true, { data: { total, items } });
+    } catch (err: any) {
+      const msg = err instanceof EtsyNotConnectedError ? err.message : (err?.message || 'Error consultando Etsy');
+      return result<EtsyReceiptOutput>(false, { data: { total: 0, items: [] }, error: msg });
     }
   },
 };

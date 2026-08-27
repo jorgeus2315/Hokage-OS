@@ -14,6 +14,22 @@ export interface EtsyListingOutput {
   }>;
 }
 
+// Fase 4 · Slice 2 — LECTURA de pedidos (receipts). Mismo patrón que EtsyListing.
+export interface EtsyReceiptInput {
+  limit?: number;
+}
+
+export interface EtsyReceiptOutput {
+  total: number;
+  items: Array<{
+    id: string;
+    total: number;
+    currency: string;
+    status: string;
+    createdAt: string | null;
+  }>;
+}
+
 export interface ShopifyListingInput {
   query?: string;
   limit?: number;

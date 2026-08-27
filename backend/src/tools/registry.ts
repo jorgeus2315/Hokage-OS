@@ -1,9 +1,10 @@
 import type { Tool, ToolContext, ToolResult, ToolStatus, ToolPermission } from './base.js';
-import { EtsyTool, ShopifyTool, PrintifyTool, GoogleTrendsTool, WebBrowserTool, SystemExecTool, TrendReportTool, ContentCreateTool, MemoryWriteTool, DecisionCreateTool, MemoryRememberTool } from './index.js';
+import { EtsyTool, EtsyReceiptsTool, ShopifyTool, PrintifyTool, GoogleTrendsTool, WebBrowserTool, SystemExecTool, TrendReportTool, ContentCreateTool, MemoryWriteTool, DecisionCreateTool, MemoryRememberTool } from './index.js';
 import { recordAudit } from '../services/auditService.js';
 
 const registry = new Map<string, Tool>([
   [EtsyTool.id, EtsyTool],
+  [EtsyReceiptsTool.id, EtsyReceiptsTool],
   [ShopifyTool.id, ShopifyTool],
   [PrintifyTool.id, PrintifyTool],
   [GoogleTrendsTool.id, GoogleTrendsTool],

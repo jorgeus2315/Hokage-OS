@@ -29,7 +29,7 @@ export const AGENT_TOOLS: Record<string, string[]> = {
   ceo:          ['web.browser', 'memory.write', 'memory.remember', 'decision.create'],
   investigador: ['google.trends', 'web.browser', 'trend.report', 'memory.write', 'memory.remember', 'decision.create'],
   contenido:    ['web.browser', 'content.create', 'memory.write', 'memory.remember', 'decision.create'],
-  trafico:      ['google.trends', 'web.browser', 'memory.write', 'memory.remember', 'decision.create'],
+  trafico:      ['google.trends', 'web.browser', 'etsy.listings', 'etsy.receipts', 'memory.write', 'memory.remember', 'decision.create'],
   finanzas:     ['memory.write', 'memory.remember', 'decision.create'],
   operaciones:  [],
   soporte:      [],
