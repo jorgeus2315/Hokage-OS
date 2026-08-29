@@ -461,6 +461,26 @@ async function runMigrations(): Promise<void> {
   if (!(await columnExists('ventures', 'activated_at'))) {
     await run(`ALTER TABLE ventures ADD COLUMN activated_at TEXT`);
   }
+
+  // Fase 4.3 — Revenue en tiempo real: tabla `sales`. Registro deduplicado de cada receipt
+  // detectado por el agente Finanzas (etsy.mock_receipts). UNIQUE(venture_id, receipt_id) es
+  // la clave de idempotencia a nivel BD: un mismo receipt jamás genera dos ventas (race-safe).
+  // Migración aditiva e idempotente (CREATE TABLE IF NOT EXISTS + el índice UNIQUE como llave
+  // de idempotencia real de la fila, no una tabla auxiliar).
+  await run(`
+    CREATE TABLE IF NOT EXISTS sales (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      venture_id  INTEGER REFERENCES ventures(id),
+      receipt_id  TEXT NOT NULL,
+      total_usd   REAL NOT NULL,
+      currency    TEXT NOT NULL,
+      status      TEXT NOT NULL,
+      created_at  TEXT NOT NULL,
+      detected_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(venture_id, receipt_id)
+    )
+  `);
+  await run(`CREATE INDEX IF NOT EXISTS idx_sales_venture ON sales(venture_id, detected_at DESC)`);
 }
 
 // Siembra las definiciones de rol desde ROLE_SEEDS (código = semilla). INSERT OR IGNORE
@@ -506,7 +526,7 @@ async function seedAutomations(): Promise<void> {
       action_agent_role: 'contenido',
       action_priority: 7,
       action_context_template:
-        'Tendencia detectada por el Explorador — keyword: "{{keyword}}". {{description}}. Crea contenido SEO optimizado (titulo, descripcion, 5 tags). Cuando termines añade: [CONTENIDO: {{keyword}} | resumen breve] y [DECISION: Publicar contenido SEO — {{keyword}}]',
+        'Tendencia detectada por el Explorador — keyword: "{{keyword}}". {{description}}.\n\nTu tarea:\n1. Crea contenido SEO optimizado para Etsy: título atractivo, descripción persuasiva, 5 tags, precio sugerido (USD), cantidad, materiales, who_made, when_made.\n2. GUARDA todos estos detalles en tu memoria privada con la tool memory.write usando clave: "etsy_listing_{{keyword_snake_case}}" (ej: "etsy_listing_minimal_wall_art") y valor JSON con: title, description, price, currency, quantity, tags, materials, whoMade, whenMade.\n3. Cuando termines, llama a la tool content.create con el keyword y un resumen de 1 línea.\n4. Luego llama a la tool decision.create con title="Publicar en Etsy — {{keyword}}" y description explicando qué contenido se publicará, risk_level="low", amount=0.\n\nNO uses marcadores de texto libre ([CONTENIDO:...], [DECISION:...]). Usa SIEMPRE las tools.',
     },
     {
       name: 'Contenido → Tráfico',
@@ -514,7 +534,15 @@ async function seedAutomations(): Promise<void> {
       action_agent_role: 'trafico',
       action_priority: 6,
       action_context_template:
-        'El Escritor ha creado contenido para la keyword "{{keyword}}". Resumen: {{summary}}. Analiza oportunidades SEO adicionales, hashtags y canales de distribucion para maximizar visibilidad. Propón 2-3 acciones concretas.',
+        'El Escritor ha creado contenido para la keyword "{{keyword}}". Resumen: {{summary}}.\n\nAnaliza oportunidades SEO adicionales, hashtags y canales de distribución para maximizar visibilidad.\nPropón 2-3 acciones concretas y, si procede, registra aprendizajes con la tool memory.remember.',
+    },
+    {
+      name: 'Decisión aprobada → Publicar en Etsy',
+      trigger_event: 'decision.approved',
+      action_agent_role: 'contenido',
+      action_priority: 9,
+      action_context_template:
+        'Jorge ha aprobado la decisión "{{decisionTitle}}".\n\nEjecuta la publicación en Etsy:\n1. La keyword está en el título de la decisión (formato: "Publicar en Etsy — keyword"). Extrae la keyword.\n2. Recupera los detalles del listing de tu memoria privada con la tool memory.read usando clave: "etsy_listing_{{keyword_snake_case}}" (ej: "etsy_listing_minimal_wall_art"). El valor es JSON con: title, description, price, currency, quantity, tags, materials, whoMade, whenMade.\n3. Llama a la tool etsy.create_listing con esos datos. Para taxonomyId, shippingProfileId, returnPolicyId usa null (Etsy usará defaults).\n4. Reporta el listing_id y URL resultante.\n\nSi no encuentras la memoria o falta algún dato, usa valores razonables por defecto y anótalo en la respuesta.',
     },
   ];
 
@@ -525,7 +553,7 @@ async function seedAutomations(): Promise<void> {
       [a.name, a.trigger_event, a.action_agent_role, a.action_priority, a.action_context_template]
     );
   }
-  console.log('[DB] Automations sembradas: Tendencia→Escritor, Contenido→Tráfico');
+  console.log('[DB] Automations sembradas: Tendencia→Escritor, Contenido→Tráfico, Decisión→Etsy');
 }
 
 export async function resetDb(): Promise<void> {
@@ -537,7 +565,8 @@ export async function resetDb(): Promise<void> {
     'business_proposals', 'opportunities', 'evidence',
     'hokage_tasks', 'hokage_commands', 'task_edges',
     'objectives', 'obj_milestones', 'projects', 'assets',
-    'ventures', 'automations', 'departments', 'role_definitions', 'memory_entries'
+    'ventures', 'automations', 'departments', 'role_definitions', 'memory_entries',
+    'sales'
   ];
   for (const t of tables) {
     await run(`DELETE FROM ${t}`);

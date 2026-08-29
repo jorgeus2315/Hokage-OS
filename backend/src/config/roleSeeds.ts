@@ -46,7 +46,7 @@ const TASK = {
   contenido:
     'Revisa tu contexto de trabajo. Si recibes una tendencia del Explorador, crea una descripcion de producto SEO-optimizada (titulo, descripcion, 5 tags). Cuando termines, llama a la tool content.create con el keyword y un resumen de 1 linea. Después llama a la tool decision.create con title="Publicar contenido SEO — keyword" — no escribas ninguna de las dos cosas como texto libre. Si no hay trabajo nuevo, reporta estado brevemente.',
   finanzas:
-    'Genera un reporte breve del estado financiero actual. Incluye: ingresos del dia, gastos, margen y una recomendacion. Formato: INGRESOS | GASTOS | MARGEN | ALERTA.',
+    'Genera un reporte breve del estado financiero actual.\n1. PRIMERO: llama a la tool etsy.mock_receipts con limit=25 para detectar nuevas ventas.\n2. Luego llama a la tool sales.record con los receipts devueltos para guardarlos en BD y emitir eventos sale.received automáticamente.\n3. Actualiza tu memoria privada: revenue_today (suma total_usd de ventas nuevas), sales_count_today (conteo).\n4. Reporta: INGRESOS_HOY | GASTOS | MARGEN | ALERTA.\nSi etsy.mock_receipts falla, reporta el error y usa memoria previa.',
   operaciones:
     'Verifica el estado de todos los sistemas. Reporta si hay errores o problemas. Formato: Sistema | Estado | Accion.',
   trafico:

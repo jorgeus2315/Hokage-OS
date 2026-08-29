@@ -1,16 +1,16 @@
 import type { Tool, ToolContext, ToolResult, ToolStatus, ToolPermission } from './base.js';
-import type { EtsyListingInput, EtsyListingOutput, EtsyReceiptInput, EtsyReceiptOutput, ShopifyListingInput, ShopifyListingOutput, PrintifyProductInput, PrintifyProductOutput, GoogleTrendsInput, GoogleTrendsOutput, WebBrowserInput, WebBrowserOutput, SystemExecInput, SystemExecOutput, TrendReportInput, TrendReportOutput, ContentCreateInput, ContentCreateOutput, MemoryWriteInput, MemoryWriteOutput, DecisionCreateInput, DecisionCreateOutput, MemoryRememberInput, MemoryRememberOutput } from './types.js';
+import type { EtsyListingInput, EtsyListingOutput, EtsyReceiptInput, EtsyReceiptOutput, EtsyMockReceiptInput, EtsyMockReceiptOutput, SalesRecordInput, SalesRecordOutput, ShopifyListingInput, ShopifyListingOutput, PrintifyProductInput, PrintifyProductOutput, GoogleTrendsInput, GoogleTrendsOutput, WebBrowserInput, WebBrowserOutput, SystemExecInput, SystemExecOutput, TrendReportInput, TrendReportOutput, ContentCreateInput, ContentCreateOutput, MemoryWriteInput, MemoryWriteOutput, MemoryReadInput, MemoryReadOutput, DecisionCreateInput, DecisionCreateOutput, MemoryRememberInput, MemoryRememberOutput, EtsyCreateListingInput, EtsyCreateListingOutput, EtsyUpdateListingInput, EtsyUpdateListingOutput, EtsyCreateReplyInput, EtsyCreateReplyOutput, EtsyReviewsInput, EtsyReviewsOutput, EtsyListingAnalyticsInput, EtsyListingAnalyticsOutput } from './types.js';
 import { requestExec } from '../services/hermesService.js';
 import { createMarket } from '../services/marketService.js';
 import { createContent } from '../services/contentService.js';
-import { writeAgentMemory } from '../services/agentMemoryService.js';
+import { writeAgentMemory, readAgentMemory } from '../services/agentMemoryService.js';
 import { createDecision } from '../services/decisionService.js';
 import { maybeAutoApprove } from '../services/agentAutonomy.js';
 import { createMemoryEntry } from '../services/memoryService.js';
-import { get } from '../db/init.js';
+import { get, run } from '../db/init.js';
 import bus from '../config/eventBus.js';
 import { safeFetch } from './ssrfGuard.js';
-import { getListings as etsyGetListings, getReceipts as etsyGetReceipts, EtsyNotConnectedError } from '../services/etsyClient.js';
+import { getListings as etsyGetListings, getReceipts as etsyGetReceipts, getReviews as etsyGetReviews, getListingAnalytics as etsyGetListingAnalytics, createListing as etsyCreateListing, updateListing as etsyUpdateListing, createReply as etsyCreateReply, EtsyNotConnectedError } from '../services/etsyClient.js';
 
 const MEMORY_KEY_PATTERN = /^[a-z_][a-z0-9_]*$/;
 
@@ -128,6 +128,370 @@ export const EtsyReceiptsTool: Tool<EtsyReceiptInput, EtsyReceiptOutput> = {
     } catch (err: any) {
       const msg = err instanceof EtsyNotConnectedError ? err.message : (err?.message || 'Error consultando Etsy');
       return result<EtsyReceiptOutput>(false, { data: { total: 0, items: [] }, error: msg });
+    }
+  },
+};
+
+// Fase 4.3 — Mock Receipts para desarrollo/testing. Genera datos deterministas
+// SIN llamar a la API real de Etsy. Solo para rol 'finanzas' (lectura de ventas).
+// Usa seed determinista basado en ventureId para reproducibilidad entre ticks.
+export const EtsyMockReceiptsTool: Tool<EtsyMockReceiptInput, EtsyMockReceiptOutput> = {
+  id: 'etsy.mock_receipts',
+  name: 'Etsy Mock Receipts',
+  description: 'Genera receipts de prueba deterministas para desarrollo (NO llama a Etsy real). Solo para rol finanzas.',
+  category: 'marketplace',
+  status: 'ready',
+  permissions: permission('agent'),
+  requiredApproval: false,
+  inputSchema: stubInputSchema(
+    { limit: { type: 'integer', description: 'Límite de resultados (1-25)', minimum: 1, maximum: 25 } },
+    []
+  ),
+  outputSchema: stubOutputSchema({
+    total: { type: 'integer' },
+    items: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          total: { type: 'number' },
+          currency: { type: 'string' },
+          status: { type: 'string' },
+          createdAt: { type: 'string' },
+        },
+      },
+    },
+  }),
+  async estimateCost(_input) { return 0; },
+  async execute(input, ctx) {
+    if (ctx.ventureId == null) {
+      return result<EtsyMockReceiptOutput>(false, { data: { total: 0, items: [] }, error: 'Falta ventureId para mock receipts' });
+    }
+    // Seed determinista por ventureId — misma secuencia en cada llamada
+    const seed = ctx.ventureId * 1000 + 42;
+    const limit = Math.min(Math.max(input?.limit ?? 10, 1), 25);
+    const items = [];
+    for (let i = 0; i < limit; i++) {
+      // Deterministic pseudo-random basado en seed + índice
+      const r = (seed + i * 17) % 100;
+      const total = 10 + (r % 40); // 10-50 USD/EUR
+      const currency = (r % 2 === 0) ? 'USD' : 'EUR';
+      const status = r % 5 === 0 ? 'pending' : 'paid';
+      const daysAgo = r % 30;
+      const createdAt = new Date(Date.now() - daysAgo * 86400000).toISOString();
+      items.push({
+        id: `mock_${ctx.ventureId}_${i + 1}_${seed}`,
+        total,
+        currency,
+        status,
+        createdAt,
+      });
+    }
+    return result<EtsyMockReceiptOutput>(true, { data: { total: items.length, items } });
+  },
+};
+
+// Fase 4.3 — Sales Record: INSERT OR IGNORE en tabla sales + emit sale.received si nueva.
+export const SalesRecordTool: Tool<SalesRecordInput, SalesRecordOutput> = {
+  id: 'sales.record',
+  name: 'Sales Record',
+  description: 'Registra receipts de ventas en BD (INSERT OR IGNORE). Emite sale.received solo para ventas nuevas. Solo para rol finanzas.',
+  category: 'pipeline',
+  status: 'ready',
+  permissions: permission('agent'),
+  requiredApproval: false,
+  inputSchema: stubInputSchema({
+    receipts: {
+      type: 'array',
+      description: 'Array de receipts a procesar',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          total: { type: 'number' },
+          currency: { type: 'string' },
+          status: { type: 'string' },
+          createdAt: { type: 'string' },
+        },
+        required: ['id', 'total', 'currency', 'status', 'createdAt'],
+      },
+    },
+  }, ['receipts']),
+  outputSchema: stubOutputSchema({
+    recorded: { type: 'integer' },
+    skipped: { type: 'integer' },
+    total: { type: 'integer' },
+  }),
+  async estimateCost(_input) { return 0; },
+  async execute(input, ctx) {
+    if (ctx.ventureId == null) {
+      return result<SalesRecordOutput>(false, { error: 'Falta ventureId para registrar ventas' });
+    }
+    if (!input.receipts || !Array.isArray(input.receipts) || input.receipts.length === 0) {
+      return result<SalesRecordOutput>(true, { data: { recorded: 0, skipped: 0, total: 0 } });
+    }
+
+    let recorded = 0;
+    let skipped = 0;
+
+    for (const r of input.receipts) {
+      const res = await run(
+        `INSERT OR IGNORE INTO sales (venture_id, receipt_id, total_usd, currency, status, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [ctx.ventureId, r.id, r.total, r.currency, r.status, r.createdAt]
+      );
+      if (res.changes === 1) {
+        recorded++;
+        bus.publish({
+          type: 'sale.received',
+          from: 'finanzas',
+          payload: {
+            ventureId: ctx.ventureId,
+            receiptId: r.id,
+            total: r.total,
+            currency: r.currency,
+            status: r.status,
+            createdAt: r.createdAt,
+            detectedAt: new Date().toISOString(),
+          },
+        });
+      } else {
+        skipped++;
+      }
+    }
+
+    return result<SalesRecordOutput>(true, { data: { recorded, skipped, total: input.receipts.length } });
+  },
+};
+
+// Fase 4 · Slice 3 — Etsy: reviews (lectura)
+export const EtsyReviewsTool: Tool<EtsyReviewsInput, EtsyReviewsOutput> = {
+  id: 'etsy.reviews',
+  name: 'Etsy Reviews',
+  description: 'Obtiene reviews de la tienda Etsy conectada. Opcionalmente filtrar por listingId.',
+  category: 'marketplace',
+  status: 'ready',
+  permissions: permission('business', { requiresAdmin: true }),
+  requiredApproval: false,
+  inputSchema: stubInputSchema(
+    { limit: { type: 'integer', description: 'Límite de resultados (1-100)', minimum: 1, maximum: 100 }, listingId: { type: 'string', description: 'Filtrar por listing ID' } },
+    []
+  ),
+  outputSchema: stubOutputSchema({
+    total: { type: 'integer' },
+    items: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          listingId: { type: 'string' },
+          rating: { type: 'number' },
+          review: { type: 'string' },
+          reviewer: { type: 'string' },
+          createdAt: { type: 'string' },
+        },
+      },
+    },
+  }),
+  async estimateCost(_input) {
+    return 0.001;
+  },
+  async execute(input, ctx) {
+    if (ctx.ventureId == null) {
+      return result<EtsyReviewsOutput>(false, { data: { total: 0, items: [] }, error: 'Falta ventureId para consultar Etsy' });
+    }
+    try {
+      const { total, items } = await etsyGetReviews(ctx.ventureId, {
+        limit: input.limit,
+        listingId: input.listingId,
+      });
+      return result<EtsyReviewsOutput>(true, { data: { total, items } });
+    } catch (err: any) {
+      const msg = err instanceof EtsyNotConnectedError ? err.message : (err?.message || 'Error consultando Etsy');
+      return result<EtsyReviewsOutput>(false, { data: { total: 0, items: [] }, error: msg });
+    }
+  },
+};
+
+// Fase 4 · Slice 3 — Etsy: analytics de listing (lectura)
+export const EtsyListingAnalyticsTool: Tool<EtsyListingAnalyticsInput, EtsyListingAnalyticsOutput> = {
+  id: 'etsy.listing_analytics',
+  name: 'Etsy Listing Analytics',
+  description: 'Obtiene métricas de un listing específico (views, visits, favorites, orders, revenue, conversion rate).',
+  category: 'marketplace',
+  status: 'ready',
+  permissions: permission('business', { requiresAdmin: true }),
+  requiredApproval: false,
+  inputSchema: stubInputSchema(
+    { listingId: { type: 'string', description: 'ID del listing a analizar' } },
+    ['listingId']
+  ),
+  outputSchema: stubOutputSchema({
+    total: { type: 'integer' },
+    items: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          listingId: { type: 'string' },
+          views: { type: 'number' },
+          visits: { type: 'number' },
+          favorites: { type: 'number' },
+          orders: { type: 'number' },
+          revenue: { type: 'number' },
+          currency: { type: 'string' },
+          conversionRate: { type: 'number' },
+        },
+      },
+    },
+  }),
+  async estimateCost(_input) {
+    return 0.001;
+  },
+  async execute(input, ctx) {
+    if (ctx.ventureId == null) {
+      return result<EtsyListingAnalyticsOutput>(false, { data: { total: 0, items: [] }, error: 'Falta ventureId para consultar Etsy' });
+    }
+    try {
+      const analytics = await etsyGetListingAnalytics(ctx.ventureId, input.listingId);
+      if (!analytics) {
+        return result<EtsyListingAnalyticsOutput>(false, { data: { total: 0, items: [] }, error: 'Listing no encontrado o sin analytics' });
+      }
+      return result<EtsyListingAnalyticsOutput>(true, { data: { total: 1, items: [analytics] } });
+    } catch (err: any) {
+      const msg = err instanceof EtsyNotConnectedError ? err.message : (err?.message || 'Error consultando Etsy');
+      return result<EtsyListingAnalyticsOutput>(false, { data: { total: 0, items: [] }, error: msg });
+    }
+  },
+};
+
+// Fase 4 · Slice 3 — Etsy: crear listing (escritura, requiere Decision aprobada)
+export const EtsyCreateListingTool: Tool<EtsyCreateListingInput, EtsyCreateListingOutput> = {
+  id: 'etsy.create_listing',
+  name: 'Etsy Create Listing',
+  description: 'Crea un nuevo listing en Etsy. Requiere Decision aprobada con categoría FINANCIAL y scope listings_w.',
+  category: 'marketplace',
+  status: 'ready',
+  permissions: permission('business', { requiresAdmin: true }),
+  requiredApproval: true,
+  inputSchema: stubInputSchema(
+    {
+      title: { type: 'string', description: 'Título del listing' },
+      description: { type: 'string', description: 'Descripción del listing' },
+      price: { type: 'number', description: 'Precio' },
+      currency: { type: 'string', description: 'Moneda (USD, EUR, etc.)' },
+      quantity: { type: 'integer', description: 'Cantidad disponible', minimum: 1 },
+      tags: { type: 'array', items: { type: 'string' }, description: 'Tags (máx 13)' },
+      materials: { type: 'array', items: { type: 'string' }, description: 'Materiales' },
+      whoMade: { type: 'string', enum: ['i_did', 'someone_else', 'collective'], description: 'Quién lo hizo' },
+      whenMade: { type: 'string', description: 'Cuándo se hizo (ej: 2024, 2020_2024, made_to_order)' },
+      taxonomyId: { type: 'integer', description: 'ID de taxonomía de Etsy' },
+      shippingProfileId: { type: 'integer', description: 'ID de perfil de envío' },
+      returnPolicyId: { type: 'integer', description: 'ID de política de devoluciones' },
+    },
+    ['title', 'description', 'price', 'currency', 'quantity']
+  ),
+  outputSchema: stubOutputSchema({
+    listingId: { type: 'string' },
+    title: { type: 'string' },
+    state: { type: 'string' },
+    url: { type: 'string' },
+  }),
+  async estimateCost(_input) {
+    return 0.01;
+  },
+  async execute(input, ctx) {
+    if (ctx.ventureId == null) {
+      return result<EtsyCreateListingOutput>(false, { data: { listingId: '', title: '', state: '', url: '' }, error: 'Falta ventureId para crear listing en Etsy' });
+    }
+    try {
+      const created = await etsyCreateListing(ctx.ventureId, input);
+      return result<EtsyCreateListingOutput>(true, { data: { listingId: created.listingId, title: created.title, state: created.state, url: created.url } });
+    } catch (err: any) {
+      const msg = err instanceof EtsyNotConnectedError ? err.message : (err?.message || 'Error creando listing en Etsy');
+      return result<EtsyCreateListingOutput>(false, { data: { listingId: '', title: '', state: '', url: '' }, error: msg });
+    }
+  },
+};
+
+// Fase 4 · Slice 3 — Etsy: actualizar listing (escritura, requiere Decision aprobada)
+export const EtsyUpdateListingTool: Tool<EtsyUpdateListingInput, EtsyUpdateListingOutput> = {
+  id: 'etsy.update_listing',
+  name: 'Etsy Update Listing',
+  description: 'Actualiza un listing existente en Etsy. Requiere Decision aprobada con categoría FINANCIAL y scope listings_w.',
+  category: 'marketplace',
+  status: 'ready',
+  permissions: permission('business', { requiresAdmin: true }),
+  requiredApproval: true,
+  inputSchema: stubInputSchema(
+    {
+      listingId: { type: 'string', description: 'ID del listing a actualizar' },
+      title: { type: 'string', description: 'Título del listing' },
+      description: { type: 'string', description: 'Descripción del listing' },
+      price: { type: 'number', description: 'Precio' },
+      currency: { type: 'string', description: 'Moneda (USD, EUR, etc.)' },
+      quantity: { type: 'integer', description: 'Cantidad disponible', minimum: 1 },
+      tags: { type: 'array', items: { type: 'string' }, description: 'Tags (máx 13)' },
+      state: { type: 'string', enum: ['active', 'draft', 'expired'], description: 'Estado del listing' },
+    },
+    ['listingId']
+  ),
+  outputSchema: stubOutputSchema({
+    listingId: { type: 'string' },
+    updated: { type: 'boolean' },
+  }),
+  async estimateCost(_input) {
+    return 0.01;
+  },
+  async execute(input, ctx) {
+    if (ctx.ventureId == null) {
+      return result<EtsyUpdateListingOutput>(false, { data: { listingId: '', updated: false }, error: 'Falta ventureId para actualizar listing en Etsy' });
+    }
+    try {
+      const updated = await etsyUpdateListing(ctx.ventureId, input);
+      return result<EtsyUpdateListingOutput>(true, { data: { listingId: updated.listingId, updated: updated.updated } });
+    } catch (err: any) {
+      const msg = err instanceof EtsyNotConnectedError ? err.message : (err?.message || 'Error actualizando listing en Etsy');
+      return result<EtsyUpdateListingOutput>(false, { data: { listingId: '', updated: false }, error: msg });
+    }
+  },
+};
+
+// Fase 4 · Slice 3 — Etsy: responder review (escritura, requiere Decision aprobada)
+export const EtsyCreateReplyTool: Tool<EtsyCreateReplyInput, EtsyCreateReplyOutput> = {
+  id: 'etsy.create_reply',
+  name: 'Etsy Create Reply',
+  description: 'Responde a una review en Etsy. Requiere Decision aprobada con categoría FINANCIAL y scope transactions_w.',
+  category: 'marketplace',
+  status: 'ready',
+  permissions: permission('business', { requiresAdmin: true }),
+  requiredApproval: true,
+  inputSchema: stubInputSchema(
+    {
+      reviewId: { type: 'string', description: 'ID de la review a responder' },
+      message: { type: 'string', description: 'Mensaje de respuesta' },
+    },
+    ['reviewId', 'message']
+  ),
+  outputSchema: stubOutputSchema({
+    replyId: { type: 'string' },
+    reviewId: { type: 'string' },
+  }),
+  async estimateCost(_input) {
+    return 0.005;
+  },
+  async execute(input, ctx) {
+    if (ctx.ventureId == null) {
+      return result<EtsyCreateReplyOutput>(false, { data: { replyId: '', reviewId: '' }, error: 'Falta ventureId para responder review en Etsy' });
+    }
+    try {
+      const reply = await etsyCreateReply(ctx.ventureId, input);
+      return result<EtsyCreateReplyOutput>(true, { data: { replyId: reply.replyId, reviewId: reply.reviewId } });
+    } catch (err: any) {
+      const msg = err instanceof EtsyNotConnectedError ? err.message : (err?.message || 'Error respondiendo review en Etsy');
+      return result<EtsyCreateReplyOutput>(false, { data: { replyId: '', reviewId: '' }, error: msg });
     }
   },
 };
@@ -617,6 +981,46 @@ export const MemoryWriteTool: Tool<MemoryWriteInput, MemoryWriteOutput> = {
     } catch (err: any) {
       console.error(`[TOOL:memory.write] error:`, err.message);
       return result<MemoryWriteOutput>(false, { error: `MemoryWrite: ${err.message}` });
+    }
+  },
+};
+
+// Fase 4 · Slice 4.2 — memory.read: leer un valor de tu memoria privada por clave.
+// Solo para roles tool-capable (contenido, investigador, trafico, finanzas, ceo, hermes).
+export const MemoryReadTool: Tool<MemoryReadInput, MemoryReadOutput> = {
+  id: 'memory.read',
+  name: 'Memory Read',
+  description: 'Lee un valor de tu memoria privada (agent_memory) por clave. Útil para recuperar datos que guardaste antes con memory.write.',
+  category: 'pipeline',
+  status: 'ready',
+  permissions: permission('agent'),
+  requiredApproval: false,
+  inputSchema: stubInputSchema(
+    {
+      key: { type: 'string', description: 'Clave a leer (snake_case, ej: etsy_listing_minimal_wall_art)' },
+    },
+    ['key']
+  ),
+  outputSchema: stubOutputSchema({
+    key: { type: 'string' },
+    value: { type: 'string' },
+    found: { type: 'boolean' },
+  }),
+  async estimateCost(_input) { return 0; },
+  async execute(input, ctx) {
+    try {
+      if (!ctx.agentId) {
+        return result<MemoryReadOutput>(false, { error: 'MemoryRead: falta agentId en el contexto' });
+      }
+      const entries = await readAgentMemory(ctx.agentId, 100);
+      const entry = entries.find((e) => e.key === input.key);
+      if (!entry) {
+        return result<MemoryReadOutput>(true, { data: { key: input.key, value: null, found: false }, cost: 0 });
+      }
+      return result<MemoryReadOutput>(true, { data: { key: entry.key, value: entry.value, found: true }, cost: 0 });
+    } catch (err: any) {
+      console.error(`[TOOL:memory.read] error:`, err.message);
+      return result<MemoryReadOutput>(false, { error: `MemoryRead: ${err.message}` });
     }
   },
 };

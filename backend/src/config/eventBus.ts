@@ -13,6 +13,7 @@ export type AgentEventType =
   | 'decision.approved'   // Jorge aprueba
   | 'decision.rejected'   // Jorge rechaza
   | 'sale.made'           // Venta registrada
+  | 'sale.received'       // Fase 4.3: nuevo receipt detectado automáticamente por Finanzas
   | 'alert.triggered'     // Alerta importante
   | 'agent.task.start'    // Agente inicia tarea
   | 'agent.task.done'     // Agente termina tarea

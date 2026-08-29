@@ -134,6 +134,18 @@ export interface MemoryWriteOutput {
   saved: boolean;
 }
 
+// Fase 4 · Slice 4.2 — memory.read: leer un valor de tu memoria privada por clave.
+// Solo para roles tool-capable (contenido, investigador, trafico, finanzas, ceo, hermes).
+export interface MemoryReadInput {
+  key: string;
+}
+
+export interface MemoryReadOutput {
+  key: string;
+  value: string | null;
+  found: boolean;
+}
+
 // Fase 4 de la migración marcadores → Tool Calling (HOKAGE_CORE_SPECIFICATION_v1.md §2).
 // Última fase — mayor superficie y más visible para Jorge (alimenta Alertas directo).
 // Mismo alcance de roles que memory.write: solo tool-capable, operaciones/soporte permanecen
@@ -162,4 +174,123 @@ export interface MemoryRememberInput {
 
 export interface MemoryRememberOutput {
   memoryId: number;
+}
+
+// Fase 4.3 — Mock receipts para desarrollo/testing. Genera datos deterministas SIN llamar a Etsy.
+export interface EtsyMockReceiptInput {
+  limit?: number;
+}
+
+export interface EtsyMockReceiptOutput {
+  total: number;
+  items: Array<{
+    id: string;
+    total: number;
+    currency: string;
+    status: string;
+    createdAt: string | null;
+  }>;
+}
+
+// Fase 4.3 — Registrar ventas detectadas (INSERT OR IGNORE + emit sale.received si es nueva).
+export interface SalesRecordInput {
+  receipts: Array<{
+    id: string;
+    total: number;
+    currency: string;
+    status: string;
+    createdAt: string | null;
+  }>;
+}
+
+export interface SalesRecordOutput {
+  recorded: number;      // cuántas eran NUEVAS (insert exitoso)
+  skipped: number;       // cuántas ya existían (duplicate key)
+  total: number;         // receipts procesados
+}
+
+// Fase 4 · Slice 3 — Etsy write tools (requieren Decision aprobada + scope listings_w/transactions_w)
+export interface EtsyCreateListingInput {
+  title: string;
+  description: string;
+  price: number;
+  currency: string;
+  quantity: number;
+  tags?: string[];
+  materials?: string[];
+  whoMade?: 'i_did' | 'someone_else' | 'collective';
+  whenMade?: string;
+  taxonomyId?: number;
+  shippingProfileId?: number;
+  returnPolicyId?: number;
+}
+
+export interface EtsyCreateListingOutput {
+  listingId: string;
+  title: string;
+  state: string;
+  url: string;
+}
+
+export interface EtsyUpdateListingInput {
+  listingId: string;
+  title?: string;
+  description?: string;
+  price?: number;
+  currency?: string;
+  quantity?: number;
+  tags?: string[];
+  state?: 'active' | 'draft' | 'expired';
+}
+
+export interface EtsyUpdateListingOutput {
+  listingId: string;
+  updated: boolean;
+}
+
+export interface EtsyCreateReplyInput {
+  reviewId: string;
+  message: string;
+}
+
+export interface EtsyCreateReplyOutput {
+  replyId: string;
+  reviewId: string;
+}
+
+export interface EtsyReviewsInput {
+  limit?: number;
+  listingId?: string;
+}
+
+export interface EtsyReviewsOutput {
+  total: number;
+  items: Array<{
+    id: string;
+    listingId: string;
+    rating: number;
+    review: string;
+    reviewer: string;
+    createdAt: string | null;
+  }>;
+}
+
+export interface EtsyListingAnalyticsInput {
+  listingId: string;
+}
+
+export interface EtsyListingAnalyticsItem {
+  listingId: string;
+  views: number;
+  visits: number;
+  favorites: number;
+  orders: number;
+  revenue: number;
+  currency: string;
+  conversionRate: number;
+}
+
+export interface EtsyListingAnalyticsOutput {
+  total: number;
+  items: EtsyListingAnalyticsItem[];
 }

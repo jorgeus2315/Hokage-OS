@@ -15,8 +15,11 @@ export const GRANTABLE_TOOLS: readonly string[] = [
   'trend.report',
   'content.create',
   'memory.write',
+  'memory.read',
   'decision.create',
   'memory.remember',
+  'etsy.mock_receipts',
+  'sales.record',
 ];
 
 // Tools reservadas a roles de SISTEMA (scope='system'). Nunca concedibles a un rol de negocio.
@@ -118,9 +121,12 @@ export const TOOL_EFFECTS: Record<string, ToolEffect> = {
   'trend.report':   'operational',
   'content.create': 'operational',
   'memory.write':   'operational',
+  'memory.read':    'read',
   'memory.remember': 'operational',
   'decision.create': 'approval',
   'system.exec':    'approval',
+  'etsy.mock_receipts': 'read',
+  'sales.record':   'operational',
 };
 
 export function toolEffect(toolId: string): ToolEffect {

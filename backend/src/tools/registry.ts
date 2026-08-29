@@ -1,10 +1,17 @@
 import type { Tool, ToolContext, ToolResult, ToolStatus, ToolPermission } from './base.js';
-import { EtsyTool, EtsyReceiptsTool, ShopifyTool, PrintifyTool, GoogleTrendsTool, WebBrowserTool, SystemExecTool, TrendReportTool, ContentCreateTool, MemoryWriteTool, DecisionCreateTool, MemoryRememberTool } from './index.js';
+import { EtsyTool, EtsyReceiptsTool, EtsyMockReceiptsTool, SalesRecordTool, EtsyReviewsTool, EtsyListingAnalyticsTool, EtsyCreateListingTool, EtsyUpdateListingTool, EtsyCreateReplyTool, ShopifyTool, PrintifyTool, GoogleTrendsTool, WebBrowserTool, SystemExecTool, TrendReportTool, ContentCreateTool, MemoryWriteTool, MemoryReadTool, DecisionCreateTool, MemoryRememberTool } from './index.js';
 import { recordAudit } from '../services/auditService.js';
 
 const registry = new Map<string, Tool>([
   [EtsyTool.id, EtsyTool],
   [EtsyReceiptsTool.id, EtsyReceiptsTool],
+  [EtsyMockReceiptsTool.id, EtsyMockReceiptsTool],
+  [SalesRecordTool.id, SalesRecordTool],
+  [EtsyReviewsTool.id, EtsyReviewsTool],
+  [EtsyListingAnalyticsTool.id, EtsyListingAnalyticsTool],
+  [EtsyCreateListingTool.id, EtsyCreateListingTool],
+  [EtsyUpdateListingTool.id, EtsyUpdateListingTool],
+  [EtsyCreateReplyTool.id, EtsyCreateReplyTool],
   [ShopifyTool.id, ShopifyTool],
   [PrintifyTool.id, PrintifyTool],
   [GoogleTrendsTool.id, GoogleTrendsTool],
@@ -13,6 +20,7 @@ const registry = new Map<string, Tool>([
   [TrendReportTool.id, TrendReportTool],
   [ContentCreateTool.id, ContentCreateTool],
   [MemoryWriteTool.id, MemoryWriteTool],
+  [MemoryReadTool.id, MemoryReadTool],
   [DecisionCreateTool.id, DecisionCreateTool],
   [MemoryRememberTool.id, MemoryRememberTool],
 ]);

@@ -28,9 +28,9 @@ export const AGENT_MODELS: Record<string, string> = {
 export const AGENT_TOOLS: Record<string, string[]> = {
   ceo:          ['web.browser', 'memory.write', 'memory.remember', 'decision.create'],
   investigador: ['google.trends', 'web.browser', 'trend.report', 'memory.write', 'memory.remember', 'decision.create'],
-  contenido:    ['web.browser', 'content.create', 'memory.write', 'memory.remember', 'decision.create'],
-  trafico:      ['google.trends', 'web.browser', 'etsy.listings', 'etsy.receipts', 'memory.write', 'memory.remember', 'decision.create'],
-  finanzas:     ['memory.write', 'memory.remember', 'decision.create'],
+  contenido:    ['web.browser', 'content.create', 'etsy.create_listing', 'etsy.update_listing', 'etsy.create_reply', 'memory.write', 'memory.remember', 'decision.create'],
+  trafico:      ['google.trends', 'web.browser', 'etsy.listings', 'etsy.receipts', 'etsy.reviews', 'etsy.listing_analytics', 'memory.write', 'memory.remember', 'decision.create'],
+  finanzas:     ['memory.write', 'memory.remember', 'decision.create', 'etsy.mock_receipts', 'sales.record'],
   operaciones:  [],
   soporte:      [],
   hermes:       ['system.exec', 'memory.write', 'memory.remember', 'decision.create'],
