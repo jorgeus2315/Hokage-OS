@@ -741,6 +741,7 @@ ${formatLines.join('\n')}`;
     bus.subscribe('decision.created',  (event) => this.busEventQueue.push(event));
     bus.subscribe('sale.made',         (event) => this.busEventQueue.push(event));
     bus.subscribe('sale.received',     (event) => this.busEventQueue.push(event));
+    bus.subscribe('content.published', (event) => this.busEventQueue.push(event));
   }
 
   // Etapa 9 (K.4): deriva el estado REAL de cada agente de negocio y emite un delta SOLO si

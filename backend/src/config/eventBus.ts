@@ -9,6 +9,7 @@ export type AgentEventType =
   | 'trend.detected'      // Explorador detecta tendencia
   | 'content.created'     // Escritor crea contenido
   | 'content.ready'       // Contenido listo para publicar
+  | 'content.published'   // Contenido publicado en marketplace (Etsy/Shopify)
   | 'decision.created'    // Agente propone decision
   | 'decision.approved'   // Jorge aprueba
   | 'decision.rejected'   // Jorge rechaza

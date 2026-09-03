@@ -408,6 +408,12 @@ export const EtsyCreateListingTool: Tool<EtsyCreateListingInput, EtsyCreateListi
     }
     try {
       const created = await etsyCreateListing(ctx.ventureId, input);
+      // Emit content.published event for pipeline continuity (Finanzas agent picks it up)
+      bus.publish({
+        type: 'content.published',
+        from: 'etsy.create_listing',
+        payload: { listingId: created.listingId, title: created.title, url: created.url, ventureId: ctx.ventureId },
+      });
       return result<EtsyCreateListingOutput>(true, { data: { listingId: created.listingId, title: created.title, state: created.state, url: created.url } });
     } catch (err: any) {
       const msg = err instanceof EtsyNotConnectedError ? err.message : (err?.message || 'Error creando listing en Etsy');

@@ -155,21 +155,21 @@
 > **Criterio de éxito:** primera venta real generada por agentes, registrada en el Banco en tiempo real.
 
 ### 4.1 — EtsyTool real
-- [ ] OAuth 2.0 con Etsy API v3, credenciales en .env
-- [ ] Read: `getListings()`, `getOrders()`, `getReviews()`, `getListingAnalytics()`
-- [ ] Write (requieren Decision aprobada): `createListing()`, `updateListing()`, `createReply()`
+- [x] OAuth 2.0 con Etsy API v3, credenciales en .env
+- [x] Read: `getListings()`, `getOrders()`, `getReviews()`, `getListingAnalytics()`
+- [x] Write (requieren Decision aprobada): `createListing()`, `updateListing()`, `createReply()`
 
-### 4.2 — Pipeline automatizado completo
-- [ ] Explorador detecta tendencia (TrendsTool) → `bus.emit('trend.detected')` → work_item para Diseñador
-- [ ] Diseñador genera contenido → Decision `{ type: 'publish', amount: 0, risk: 'low' }`
-- [ ] Jorge aprueba → Etapa 7 crea work_item `decision_execution` para Vendedor (P9)
-- [ ] Vendedor llama `EtsyTool.createListing()` → `bus.emit('content.published')`
-- [ ] Tesorero registra en agent_costs + actualiza business_budgets.revenue
+### 4.2 — Pipeline automatizado completo ✅ COMPLETADA
+- [x] Explorador detecta tendencia (TrendsTool) → `bus.emit('trend.detected')` → work_item para Diseñador
+- [x] Diseñador genera contenido → Decision `{ type: 'publish', amount: 0, risk: 'low' }`
+- [x] Jorge aprueba → Etapa 7 crea work_item `decision_execution` para Vendedor (P9)
+- [x] Escritor llama `etsy.create_listing` tool → `bus.emit('content.published')`
+- [x] Automation `content.published` → Finanzas registra costes y actualiza revenue
 
-### 4.3 — Revenue en tiempo real
-- [ ] Vendedor monitoriza pedidos Etsy cada ciclo (work_item `autonomous_run` cada 45 min)
-- [ ] Cada venta: `bus.emit('sale.received', { amount, platform, productId })`
-- [ ] Banco: contador de revenue en edificio actualizándose via WebSocket
+### 4.3 — Revenue en tiempo real ✅ COMPLETADA
+- [x] Vendedor monitoriza pedidos Etsy cada ciclo (work_item `autonomous_run` cada 45 min)
+- [x] Cada venta: `bus.emit('sale.received', { amount, platform, productId })`
+- [x] Banco: contador de revenue en edificio actualizándose via WebSocket
 
 ### 4.4 — Test de 30 minutos
 - [ ] Abrir Hokage OS · No tocar nada · Esperar 30 min

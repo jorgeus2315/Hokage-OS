@@ -571,6 +571,14 @@ async function seedAutomations(): Promise<void> {
       action_context_template:
         'Jorge ha aprobado la decisión "{{decisionTitle}}".\n\nEjecuta la publicación en Etsy:\n1. La keyword está en el título de la decisión (formato: "Publicar en Etsy — keyword"). Extrae la keyword.\n2. Recupera los detalles del listing de tu memoria privada con la tool memory.read usando clave: "etsy_listing_{{keyword_snake_case}}" (ej: "etsy_listing_minimal_wall_art"). El valor es JSON con: title, description, price, currency, quantity, tags, materials, whoMade, whenMade.\n3. Llama a la tool etsy.create_listing con esos datos. Para taxonomyId, shippingProfileId, returnPolicyId usa null (Etsy usará defaults).\n4. Reporta el listing_id y URL resultante.\n\nSi no encuentras la memoria o falta algún dato, usa valores razonables por defecto y anótalo en la respuesta.',
     },
+    {
+      name: 'Contenido publicado → Finanzas registra costes',
+      trigger_event: 'content.published',
+      action_agent_role: 'finanzas',
+      action_priority: 5,
+      action_context_template:
+        'Se ha publicado contenido en Etsy: listing "{{listingId}}" — "{{title}}". URL: {{url}}.\n\nTu tarea:\n1. Registra el coste de la publicación (aprox $0.20 listing fee + % comisión) en tu memoria privada.\n2. Actualiza tu reporte financiero: INGRESOS_HOY | GASTOS | MARGEN | ALERTA.\n3. Si hay ventas nuevas, usa etsy.mock_receipts y sales.record para detectarlas y registrar revenue.\n\nNO inventes datos. Usa las tools disponibles.',
+    },
   ];
 
   for (const a of defaults) {
@@ -580,7 +588,7 @@ async function seedAutomations(): Promise<void> {
       [a.name, a.trigger_event, a.action_agent_role, a.action_priority, a.action_context_template]
     );
   }
-  console.log('[DB] Automations sembradas: Tendencia→Escritor, Contenido→Tráfico, Decisión→Etsy');
+  console.log('[DB] Automations sembradas: Tendencia→Escritor, Contenido→Tráfico, Decisión→Etsy, Publicado→Finanzas');
 }
 
 export async function resetDb(): Promise<void> {
