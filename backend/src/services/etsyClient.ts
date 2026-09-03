@@ -173,6 +173,73 @@ export async function getReceipts(ventureId: number, opts: { limit?: number } = 
   return { total: Number(json?.count ?? items.length), items };
 }
 
+// LECTURA: reviews del shop propio.
+export interface EtsyReview {
+  id: string;
+  listingId: string;
+  rating: number;
+  review: string;
+  reviewer: string;
+  createdAt: string | null;
+}
+
+export async function getReviews(ventureId: number, opts: { limit?: number; listingId?: string } = {}): Promise<{ total: number; items: EtsyReview[] }> {
+  const { clientId, sharedSecret } = credentialProvider.getAppCredentials(PROVIDER);
+  const { accessToken, userId } = await getFreshAccess(ventureId);
+  const shopId = await resolveShopId(clientId, sharedSecret, accessToken, userId);
+  const limit = Math.min(Math.max(opts.limit ?? 25, 1), 100);
+  let url = `${API_BASE}/shops/${shopId}/reviews?limit=${limit}`;
+  if (opts.listingId) url += `&listing_id=${opts.listingId}`;
+  const res = await fetch(url, { headers: apiHeaders(clientId, sharedSecret, accessToken) });
+  const json = await parseJsonOrThrow(res, 'getReviews');
+  const rows: any[] = Array.isArray(json?.results) ? json.results : [];
+  const items: EtsyReview[] = rows.map((r) => ({
+    id: String(r?.review_id ?? ''),
+    listingId: String(r?.listing_id ?? ''),
+    rating: Number(r?.rating ?? 0),
+    review: String(r?.review ?? ''),
+    reviewer: String(r?.buyer_user_id ?? ''),
+    createdAt: r?.created_timestamp ? new Date(Number(r.created_timestamp) * 1000).toISOString() : null,
+  }));
+  return { total: Number(json?.count ?? items.length), items };
+}
+
+// LECTURA: analytics de un listing específico.
+export interface EtsyListingAnalytics {
+  listingId: string;
+  views: number;
+  visits: number;
+  favorites: number;
+  orders: number;
+  revenue: number;
+  currency: string;
+  conversionRate: number;
+}
+
+export async function getListingAnalytics(ventureId: number, listingId: string): Promise<EtsyListingAnalytics | null> {
+  const { clientId, sharedSecret } = credentialProvider.getAppCredentials(PROVIDER);
+  const { accessToken, userId } = await getFreshAccess(ventureId);
+  const shopId = await resolveShopId(clientId, sharedSecret, accessToken, userId);
+  const res = await fetch(`${API_BASE}/shops/${shopId}/listings/${listingId}/analytics`, { headers: apiHeaders(clientId, sharedSecret, accessToken) });
+  if (!res.ok) {
+    if (res.status === 404) return null;
+    await parseJsonOrThrow(res, 'getListingAnalytics');
+  }
+  const json = await res.json();
+  // Etsy analytics response structure (can vary, handle defensively)
+  const stats = json?.results?.[0] || json;
+  return {
+    listingId,
+    views: Number(stats?.views ?? 0),
+    visits: Number(stats?.visits ?? 0),
+    favorites: Number(stats?.favorites ?? 0),
+    orders: Number(stats?.orders ?? 0),
+    revenue: Number(stats?.revenue?.amount ?? 0) / (Number(stats?.revenue?.divisor) || 1),
+    currency: String(stats?.revenue?.currency_code ?? 'USD'),
+    conversionRate: stats?.visits ? Number(stats?.orders ?? 0) / Number(stats?.visits) : 0,
+  };
+}
+
 // Estado de conexión SIN exponer tokens (F3).
 export async function getConnectionStatus(ventureId: number): Promise<IntegrationStatus> {
   const t = await tokenStore.getTokens(PROVIDER, ventureId);
@@ -182,5 +249,138 @@ export async function getConnectionStatus(ventureId: number): Promise<Integratio
     connected: !!t,
     scope: t?.scope ?? null,
     expiresAt: t?.expiresAt ?? null,
+  };
+}
+
+// ─── ESCRITURA (requieren Decision aprobada) ─────────────────────────────────
+
+export interface EtsyCreateListingInput {
+  title: string;
+  description: string;
+  price: number;
+  currency: string;
+  quantity: number;
+  tags?: string[];
+  materials?: string[];
+  whoMade?: 'i_did' | 'someone_else' | 'collective';
+  whenMade?: string; // e.g., '2024', '2020_2024', 'made_to_order'
+  taxonomyId?: number;
+  shippingProfileId?: number;
+  returnPolicyId?: number;
+}
+
+export interface EtsyUpdateListingInput {
+  listingId: string;
+  title?: string;
+  description?: string;
+  price?: number;
+  currency?: string;
+  quantity?: number;
+  tags?: string[];
+  state?: 'active' | 'draft' | 'expired';
+}
+
+export interface EtsyCreateReplyInput {
+  reviewId: string;
+  message: string;
+}
+
+export interface EtsyListingCreated {
+  listingId: string;
+  title: string;
+  state: string;
+  url: string;
+}
+
+export interface EtsyListingUpdated {
+  listingId: string;
+  updated: boolean;
+}
+
+export interface EtsyReplyCreated {
+  replyId: string;
+  reviewId: string;
+}
+
+// Crea un listing nuevo en Etsy. Requiere scope 'listings_w' (no en read scopes actuales).
+export async function createListing(ventureId: number, input: EtsyCreateListingInput): Promise<EtsyListingCreated> {
+  const { clientId, sharedSecret } = credentialProvider.getAppCredentials(PROVIDER);
+  const { accessToken, userId } = await getFreshAccess(ventureId);
+  const shopId = await resolveShopId(clientId, sharedSecret, accessToken, userId);
+
+  const body = new URLSearchParams();
+  body.set('title', input.title);
+  body.set('description', input.description);
+  body.set('price', String(input.price));
+  body.set('currency', input.currency);
+  body.set('quantity', String(input.quantity));
+  body.set('who_made', input.whoMade || 'i_did');
+  if (input.whenMade) body.set('when_made', input.whenMade);
+  if (input.taxonomyId) body.set('taxonomy_id', String(input.taxonomyId));
+  if (input.shippingProfileId) body.set('shipping_profile_id', String(input.shippingProfileId));
+  if (input.returnPolicyId) body.set('return_policy_id', String(input.returnPolicyId));
+  if (input.tags?.length) body.set('tags', input.tags.join(',').slice(0, 1000));
+  if (input.materials?.length) body.set('materials', input.materials.join(',').slice(0, 1000));
+
+  const res = await fetch(`${API_BASE}/shops/${shopId}/listings`, {
+    method: 'POST',
+    headers: { ...apiHeaders(clientId, sharedSecret, accessToken), 'Content-Type': 'application/x-www-form-urlencoded' },
+    body,
+  });
+  const json = await parseJsonOrThrow(res, 'createListing');
+  return {
+    listingId: String(json?.listing_id ?? ''),
+    title: String(json?.title ?? input.title),
+    state: String(json?.state ?? 'draft'),
+    url: String(json?.url ?? ''),
+  };
+}
+
+// Actualiza un listing existente. Requiere scope 'listings_w'.
+export async function updateListing(ventureId: number, input: EtsyUpdateListingInput): Promise<EtsyListingUpdated> {
+  const { clientId, sharedSecret } = credentialProvider.getAppCredentials(PROVIDER);
+  const { accessToken, userId } = await getFreshAccess(ventureId);
+  const shopId = await resolveShopId(clientId, sharedSecret, accessToken, userId);
+
+  const { listingId, ...fields } = input;
+  const body = new URLSearchParams();
+  if (fields.title) body.set('title', fields.title);
+  if (fields.description) body.set('description', fields.description);
+  if (fields.price != null) body.set('price', String(fields.price));
+  if (fields.currency) body.set('currency', fields.currency);
+  if (fields.quantity != null) body.set('quantity', String(fields.quantity));
+  if (fields.state) body.set('state', fields.state);
+  if (fields.tags?.length) body.set('tags', fields.tags.join(',').slice(0, 1000));
+
+  const res = await fetch(`${API_BASE}/shops/${shopId}/listings/${listingId}`, {
+    method: 'PATCH',
+    headers: { ...apiHeaders(clientId, sharedSecret, accessToken), 'Content-Type': 'application/x-www-form-urlencoded' },
+    body,
+  });
+  const json = await parseJsonOrThrow(res, 'updateListing');
+  return {
+    listingId,
+    updated: true,
+  };
+}
+
+// Responde a una review. Requiere scope 'transactions_w' (o similar según Etsy).
+export async function createReply(ventureId: number, input: EtsyCreateReplyInput): Promise<EtsyReplyCreated> {
+  const { clientId, sharedSecret } = credentialProvider.getAppCredentials(PROVIDER);
+  const { accessToken, userId } = await getFreshAccess(ventureId);
+  const shopId = await resolveShopId(clientId, sharedSecret, accessToken, userId);
+
+  const body = new URLSearchParams();
+  body.set('message', input.message);
+
+  const res = await fetch(`${API_BASE}/shops/${shopId}/reviews/${input.reviewId}/replies`, {
+    method: 'POST',
+    headers: { ...apiHeaders(clientId, sharedSecret, accessToken), 'Content-Type': 'application/x-www-form-urlencoded' },
+    body,
+  });
+  const json = await parseJsonOrThrow(res, 'createReply');
+  return {
+    replyId: String(json?.reply_id ?? ''),
+    reviewId: input.reviewId,
   };
 }

@@ -69,8 +69,10 @@ export function classifyProviderError(err: unknown): AgentErrorClass {
 // OpenRouter exige nombres de función que cumplan ^[a-zA-Z0-9_-]{1,128}$ — los tool IDs internos
 // usan puntos (google.trends) → se convierten a guión bajo (detalle de formato del dominio de tools,
 // no del proveedor concreto).
+// IMPORTANTE: los tool IDs tienen exactamente UN punto (categoría.nombre). toFnName convierte
+// ese punto en _. fromFnName debe invertir SOLO el primer _ → . para recuperar el ID original.
 const toFnName = (id: string) => id.replace(/\./g, '_');
-const fromFnName = (name: string) => name.replace(/_/g, '.');
+const fromFnName = (name: string) => name.replace(/_/, '.');
 
 function toolToOpenRouterSchema(tool: ReturnType<typeof registry.get>) {
   if (!tool) return null;
@@ -89,6 +91,7 @@ export async function askAgent(
   userMessage: string,
   ventureId?: number | null,
   modelOverride?: string | null,   // K.5: modelo elegido por el ModelRouter (cadena de Hokage). Sin él → estático.
+  workItemId?: number | null,       // Fase 4.2 + Budget: work_item_id para trazabilidad costes
 ): Promise<AskResult> {
   try {
     const agentRow = await get<{ role: string; model: string | null; name: string }>(
@@ -136,6 +139,7 @@ export async function askAgent(
 
     let totalTokens = 0, tokensIn = 0, tokensOut = 0;
     let finalResponse = '';
+    let toolCostUsd = 0;
 
     // Loop de function calling (máx MAX_TOOL_TURNS iteraciones) — vía el proveedor, no fetch directo.
     for (let turn = 0; turn <= MAX_TOOL_TURNS; turn++) {
@@ -158,6 +162,8 @@ export async function askAgent(
           const args    = JSON.parse(call.function.arguments || '{}');
           const toolId  = fromFnName(call.function.name);
           const outcome = await registry.execute(toolId, args, { agentId, ventureId: ventureId ?? undefined });
+          // Acumular coste de tool (0 para tools gratuitas, >0 para APIs de pago futuras)
+          if (outcome.cost != null && outcome.cost > 0) toolCostUsd += outcome.cost;
           toolResult    = JSON.stringify(outcome.ok ? outcome.data : { error: outcome.error });
         } catch (err: any) {
           toolResult = JSON.stringify({ error: err.message });
@@ -173,15 +179,17 @@ export async function askAgent(
       [agentId, 'ask', 'completed', totalTokens, costUsd]
     );
     // K.5: se registra el MODELO usado (control real del gasto por modelo/venture/agente).
+    // tool_cost_usd separado de llm_cost_usd — solo tools con coste real (>0) suman.
+    // work_item_id para trazabilidad completa (Fase 4.2 + Budget Enforcement)
     await run(
-      'INSERT INTO agent_costs (agent_id, venture_id, model, tokens_in, tokens_out, llm_cost_usd) VALUES (?, ?, ?, ?, ?, ?)',
-      [agentId, ventureId ?? null, MODEL, tokensIn, tokensOut, costUsd]
+      'INSERT INTO agent_costs (agent_id, venture_id, model, tokens_in, tokens_out, llm_cost_usd, tool_cost_usd, work_item_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [agentId, ventureId ?? null, MODEL, tokensIn, tokensOut, costUsd, toolCostUsd, workItemId ?? null]
     ).catch(() => {});
     await run(
-      `INSERT INTO agent_budgets (agent_id, monthly_limit_usd, current_month_usd)
-       VALUES (?, 5.0, ?)
-       ON CONFLICT(agent_id) DO UPDATE SET current_month_usd = current_month_usd + ?`,
-      [agentId, costUsd, costUsd]
+      `INSERT INTO agent_budgets (agent_id, venture_id, monthly_limit_usd, current_month_usd)
+       VALUES (?, ?, 5.0, ?)
+       ON CONFLICT(agent_id, venture_id) DO UPDATE SET current_month_usd = current_month_usd + ?`,
+      [agentId, ventureId ?? null, costUsd, costUsd]
     ).catch(() => {});
 
     return { ok: true, data: { response: finalResponse, tokens: totalTokens } };

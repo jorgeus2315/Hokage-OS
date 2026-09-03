@@ -1,22 +1,19 @@
-import { useState, useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import type { Agent, AgentRun, Building, Decision, WsEvent, AgentRuntimeState } from '../shared/types';
 import { BUILDINGS } from '../shared/constants';
 import type { HubDescriptor, RoomDescriptor, TokenDescriptor, RippleEvent } from '../world/types';
 import { adaptEvents, commandsToRippleEvents } from '../world/events';
 import { computeLayout } from '../world/layoutEngine';
 import { COLOR } from '../world/visuals/palette';
+import { agentStateStore } from '../world/state/AgentStateStore';
+import { worldModelClient } from '../world/client/WorldModelClient';
 
-// Slice 1 — color de identidad por rol = color del departamento del agente
-// (fuente única: departments/BUILDINGS). Los roles sin departamento (soporte,
-// hermes) caen a inkDim, un gris neutro que no compite con los colores de rol.
 function roleColor(role: string, depts: Building[]): number {
   const dept = depts.find((b) => b.role === role);
   return dept ? Number(dept.color.replace('#', '0x')) : COLOR.inkDim;
 }
 
 const WORLD_CENTER = { x: 1000, y: 1000 };
-const TOKEN_ORBIT = 220;
-const RECENT_MS = 5 * 60 * 1000;
 const JUST_ACTED_MS = 30_000;
 
 export interface WorldState {
@@ -50,88 +47,150 @@ export function useWorldState({
   const HUB = allDepts.find((b) => b.is_hub || b.id === 'hokage') ?? allDepts[0];
   const ROOMS = allDepts.filter((b) => !b.is_hub && b.id !== 'hokage');
 
-  // Fase 8 del Plan de Migración ECS: la posición de cada sala ya no se
-  // calcula inline aquí — pasa por WorldLayoutEngine (world/layoutEngine.ts),
-  // que conecta position_locked (antes ignorado por el frontend, ver
-  // shared/api.ts) y el modelo de anillos congelado en "Crecimiento de la
-  // Ciudad - World Engine". Con los 7 departamentos reales de hoy (todos
-  // con pos_x/pos_y ya guardados), el resultado es idéntico al cálculo
-  // anterior — el motor solo entra en juego para salas sin posición.
+  // Track if we've hydrated from initial_snapshot to avoid re-hydrating from departments
+  const hydratedFromSnapshotRef = useRef(false);
+
+  // Hydrate AgentStateStore from backend snapshot (agentStates prop)
+  // This runs on every render but AgentStateStore deduplicates by signature
+  useEffect(() => {
+    const states = Object.values(agentStates);
+    if (states.length > 0) {
+      agentStateStore.hydrate(states);
+    }
+  }, [agentStates]);
+
+  // Hydrate WorldModelClient from initial_snapshot (world_entities + world_relations)
+  // Falls back to legacy department derivation if snapshot data not available
+  useEffect(() => {
+    // WorldModelClient will be hydrated from initial_snapshot in useAppData
+    // via the handleWsEvent callback when initial_snapshot arrives.
+    // This effect is a no-op if already hydrated from snapshot.
+    // We keep it as a fallback for initial renders before WS connects.
+
+    // Check if we already have world data (hydrated from snapshot)
+    const hasWorldData = worldModelClient.getRooms().length > 0 || worldModelClient.getBuildings().length > 0;
+    if (hasWorldData && hydratedFromSnapshotRef.current) {
+      return; // Already hydrated from snapshot
+    }
+
+    // Fallback: build minimal world snapshot from departments (legacy)
+    // This ensures the world works even before WS connects or if snapshot lacks world
+    const entities = [
+      // Hub
+      {
+        id: Number((HUB.db_id ?? (HUB.id.replace(/\D/g, '') || 1))),
+        kind: 'building',
+        name: HUB.name,
+        parentId: null,
+        refKind: null,
+        refId: null,
+        ventureId: null,
+        posX: HUB.pos_x ?? WORLD_CENTER.x,
+        posY: HUB.pos_y ?? WORLD_CENTER.y,
+        status: 'active',
+        attributes: { is_hub: true },
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+      // Rooms
+      ...ROOMS.map((b, i) => ({
+        id: Number((b.db_id ?? (b.id.replace(/\D/g, '') || (i + 10)))),
+        kind: 'room',
+        name: b.name,
+        parentId: Number(HUB.db_id ?? (HUB.id.replace(/\D/g, '') || 1)),
+        refKind: 'department',
+        refId: Number((b.db_id ?? (b.id.replace(/\D/g, '') || (i + 10)))),
+        ventureId: null,
+        posX: b.pos_x ?? null,
+        posY: b.pos_y ?? null,
+        status: 'active',
+        attributes: {},
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })),
+      // Characters (one per agent)
+      ...agents.map((a) => ({
+        id: a.id + 1000, // offset to avoid collision
+        kind: 'character',
+        name: a.name,
+        parentId: null,
+        refKind: 'agent',
+        refId: a.id,
+        ventureId: a.venture_id ?? null,
+        posX: null,
+        posY: null,
+        status: 'active',
+        attributes: {},
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })),
+    ];
+
+    const relations = agents
+      .filter((a) => {
+        const room = ROOMS.find((b) => b.role === a.role);
+        return room !== undefined;
+      })
+      .map((a) => {
+        const room = ROOMS.find((b) => b.role === a.role)!;
+        return {
+          id: Date.now() + a.id, // deterministic enough for now
+          fromId: a.id + 1000,
+          toId: Number((room.db_id ?? (room.id.replace(/\D/g, '') || 10))),
+          kind: 'works_in',
+          attributes: {},
+          createdAt: new Date().toISOString(),
+        };
+      });
+
+    worldModelClient.hydrate({ entities, relations });
+  }, [HUB, ROOMS, agents]);
+
+  // Listen for WorldModelClient hydration from initial_snapshot (via useAppData)
+  useEffect(() => {
+    const unsubscribe = worldModelClient.subscribe(() => {
+      // Mark that we've been hydrated from snapshot
+      if (worldModelClient.getRooms().length > 0 || worldModelClient.getBuildings().length > 0) {
+        hydratedFromSnapshotRef.current = true;
+      }
+    });
+    return unsubscribe;
+  }, []);
+
+  // Build room positions from WorldModelClient (authoritative) with layoutEngine fallback
   const ROOM_POS: Record<string, { x: number; y: number }> = {};
-  for (const node of computeLayout(ROOMS)) {
-    ROOM_POS[node.departmentId] = { x: node.x, y: node.y };
+  for (const room of worldModelClient.getRooms()) {
+    const pos = worldModelClient.getPosition(room.id);
+    if (pos) {
+      ROOM_POS[String(room.id)] = pos;
+    }
+  }
+  // Fallback to layoutEngine for rooms without positions
+  const roomsWithoutPos = ROOMS.filter((b) => !ROOM_POS[b.id]);
+  if (roomsWithoutPos.length > 0) {
+    for (const node of computeLayout(roomsWithoutPos)) {
+      ROOM_POS[node.departmentId] = { x: node.x, y: node.y };
+    }
   }
 
   const lastRunFor = (agentId: number) => runs.find((r) => r.agent_id === agentId);
-  // K.4: "working" viene del ESTADO REAL derivado por el backend (AgentRuntimeState), no de una
-  // heurística de tiempo. Ausencia de estado → NO working (invariante: el frontend no inventa
-  // actividad). El movimiento (atHub/roomWander con Math.random/setInterval) sigue siendo deuda
-  // conocida de D-3 — ver la nota "DEUDA CONOCIDA" más abajo; K.4 no lo toca.
   const isWorking = (agentId: number) => agentStates[agentId]?.primary === 'WORKING';
   const isJustActed = (agentId: number) => {
     const last = lastRunFor(agentId);
     return !!last && Date.now() - new Date(last.started_at).getTime() < JUST_ACTED_MS;
   };
-  // Roadmap Fase 3 (D3): actividad REAL derivada del runtime (AgentRuntimeState.activity, que
-  // sale de work_items in_progress vía K.4), NO de una heurística de recencia. Por el claim
-  // atómico (ADR-011) un agente tiene ≤1 work_item activo, así que este escalar de estado
-  // (WORKING=1 · COMPLETED=0.5 · ERROR=0.2 · IDLE=0) es la señal proporcional fiel. Ausencia
-  // de estado → 0 (invariante: el frontend no inventa actividad).
   const calcActivityLevel = (agentId: number): number => agentStates[agentId]?.activity ?? 0;
-  // K.4: error real desde el backend (modifier.hasError), no inferido del status de la última run.
   const hasRecentError = (agentId: number): boolean => agentStates[agentId]?.modifiers.hasError ?? false;
 
-  // DEUDA CONOCIDA, MANTENIDA A PROPÓSITO (ver Plan de Migración ECS, Fase 0,
-  // 2026-08-05): atHub/roomWander usan un setInterval independiente POR
-  // AGENTE — el mismo antipatrón de scheduling que el backend ya rechazó una
-  // vez para AgentRuntime (§2, "timer independiente por agente... se
-  // abandonó porque no daba visibilidad de cola"). No se sustituye en esta
-  // fase — la migración ECS empieza por Fase 0 (scaffolding inerte) y este
-  // comportamiento se mantiene por compatibilidad hasta que MovementSystem
-  // (o un futuro sistema de comportamiento/scheduler centralizado) lo
-  // absorba explícitamente en una fase posterior, no como efecto colateral.
-  const [atHub, setAtHub] = useState<Record<number, boolean>>({});
-  const runsRef = useRef(runs);
-  runsRef.current = runs;
+  // EventAdapter needs CharacterLookup for movement commands
+  const characters = agents.map((a) => ({
+    id: a.id + 1000,
+    agentId: a.id,
+  }));
 
-  useEffect(() => {
-    const timers = agents.map((a) => {
-      const stagger = 2500 + ((a.id * 733) % 4000);
-      return setInterval(() => {
-        setAtHub((prev) => {
-          const last = runsRef.current.find((r) => r.agent_id === a.id);
-          const working = !!last && Date.now() - new Date(last.started_at).getTime() < RECENT_MS;
-          if (working) return prev[a.id] === false ? prev : { ...prev, [a.id]: false };
-          return { ...prev, [a.id]: Math.random() < 0.5 };
-        });
-      }, 4000 + stagger);
-    });
-    return () => timers.forEach(clearInterval);
-  }, [agents]);
-
-  const [roomWander, setRoomWander] = useState<Record<number, { dx: number; dy: number }>>({});
-  useEffect(() => {
-    if (!agents.length) return;
-    const timers = agents.map((a) => {
-      const interval = 3200 + ((a.id * 613) % 2800);
-      return setInterval(() => {
-        setRoomWander((prev) => ({
-          ...prev,
-          [a.id]: { dx: (Math.random() - 0.5) * 60, dy: (Math.random() - 0.5) * 28 },
-        }));
-      }, interval);
-    });
-    return () => timers.forEach(clearInterval);
-  }, [agents]);
-
-  // Fase 7 del Plan de Migración ECS: la traducción WsEvent → RippleEvent ya
-  // no vive inline aquí — pasa por el vocabulario cerrado WorldCommand
-  // (adaptEvents) y su mapeo de vuelta al contrato público (commandsToRippleEvents).
-  // Misma lógica exacta (agente→rol→sala, descarta sin sala), ahora en
-  // world/events/, reutilizable si mañana existe una segunda fuente de
-  // comandos. La forma de salida hacia WorldCanvas no cambia: sigue siendo
-  // RippleEvent[].
-  const rippleEvents: RippleEvent[] = commandsToRippleEvents(adaptEvents(liveEvents, agents, ROOMS));
+  const rippleEvents: RippleEvent[] = commandsToRippleEvents(
+    adaptEvents(liveEvents, agents, ROOMS, characters)
+  );
 
   const hub: HubDescriptor = {
     label: 'HOKAGE',
@@ -161,35 +220,26 @@ export function useWorldState({
     };
   });
 
-  const resolved = agents.map((a) => {
-    const room = ROOMS.find((b) => b.role === a.role);
-    const working = isWorking(a.id);
-    const home = !working && (!room || atHub[a.id] !== false);
-    return { agent: a, room, working, home };
-  });
-  const hubAgents = resolved.filter((r) => r.home);
+  // Token targets are now determined by BehaviorSystem based on AgentRuntimeState.
+  // This hook only provides the INITIAL position for upsert. BehaviorSystem will
+  // mutate Motion.target each tick. No atHub, no roomWander, no Math.random, no timers.
+  const tokens: TokenDescriptor[] = agents.map((a) => {
+    // Initial position: hub orbit (deterministic by agent id)
+    const hubPos = worldModelClient.getHub() ? worldModelClient.getPosition(worldModelClient.getHub()!.id) : WORLD_CENTER;
+    const center = hubPos ?? WORLD_CENTER;
+    const agentIndex = agents.findIndex((ag) => ag.id === a.id);
+    const angle = (agentIndex * (360 / Math.max(agents.length, 1)) + 20) * (Math.PI / 180);
+    const TOKEN_ORBIT = 220;
+    const initialX = center.x + TOKEN_ORBIT * Math.cos(angle);
+    const initialY = center.y + TOKEN_ORBIT * Math.sin(angle);
 
-  const tokens: TokenDescriptor[] = resolved.map(({ agent: a, room, working, home }) => {
-    let target: { x: number; y: number };
-    if (home) {
-      const idx = hubAgents.findIndex((r) => r.agent.id === a.id);
-      const angle = (idx * (360 / Math.max(hubAgents.length, 1)) + 20) * (Math.PI / 180);
-      target = {
-        x: WORLD_CENTER.x + TOKEN_ORBIT * Math.cos(angle),
-        y: WORLD_CENTER.y + TOKEN_ORBIT * Math.sin(angle),
-      };
-    } else {
-      const rp = ROOM_POS[room!.id] ?? { x: WORLD_CENTER.x, y: WORLD_CENTER.y };
-      const w = roomWander[a.id] ?? { dx: 0, dy: 0 };
-      target = { x: rp.x + w.dx, y: rp.y + w.dy };
-    }
-    // Slice 1 — datos reales de estado para cuerpo (color) y tooltip. El
-    // color de rol usa allDepts (incluye el hub) para que ceo/Hokage resuelva.
     const st = agentStates[a.id];
+    const working = isWorking(a.id);
+
     return {
       id: String(a.id),
-      x: target.x,
-      y: target.y,
+      x: initialX,
+      y: initialY,
       label: a.name,
       role: a.role,
       color: roleColor(a.role, allDepts),
@@ -201,7 +251,7 @@ export function useWorldState({
       kind: st?.currentTask?.kind,
       hasError: st?.modifiers.hasError ?? false,
       awaitingApproval: st?.modifiers.awaitingApproval ?? false,
-      onClick: room ? () => onEnterBuilding(room) : undefined,
+      onClick: undefined, // Room click handled by token click if in room
     };
   });
 

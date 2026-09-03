@@ -144,6 +144,9 @@ export const api = {
   approveHokageCommand: (id: number) => req<import('./types').HokageCommandResult>(`/hokage/commands/${id}/approve`, { method: 'POST' }),
   hokageCommands: (status?: string) => req<import('./types').HokageCommand[]>(`/hokage/commands${status ? `?status=${encodeURIComponent(status)}` : ''}`),
   ventureBudget: (id: number) => req<import('./types').VentureBudget>(`/ventures/${id}/budget`),
+  // Fase 4.4 — Revenue en tiempo real: ventas por venture (BD como fuente de verdad)
+  venturesSales: (id: number, limit = 100, offset = 0) =>
+    req<{ sales: import('./types').Sale[]; total: number; revenue_usd: number }>(`/ventures/${id}/sales?limit=${limit}&offset=${offset}`),
   auditEvents: (params: Record<string, string | number | undefined>) => {
     const qs = new URLSearchParams();
     for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') qs.set(k, String(v));

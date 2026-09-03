@@ -1,6 +1,7 @@
 import bus, { AgentEvent } from './eventBus.js';
 import { toolsFor, autonomousTaskFor } from '../services/roleService.js';
-import { askAgent, writeAgentMemory } from '../services/aiService.js';
+import { askAgent, writeAgentMemory, estimateTaskCostUsd } from '../services/aiService.js';
+import { modelForRole } from './agentModels.js';
 import { listAgents, listBusinessAgents } from '../services/agentService.js';
 import { computeAllRuntimeStates, stateSignature } from '../services/agentRuntimeState.js';
 import { createDecision } from '../services/decisionService.js';
@@ -12,7 +13,7 @@ import { closeMilestoneOnResult } from '../services/objectiveService.js';
 import { onHokageTaskCompleted, onHokageWorkItemCancelled } from '../services/hokageOrchestrator.js';
 import { claimAgent, releaseAgent, cleanupExpiredClaims } from '../services/agentSelector.js';
 import { get, run, all } from '../db/init.js';
-import { checkVentureBudgetAlert, createBudgetRequestDecision } from '../services/ventureBudget.js';
+import { checkVentureBudgetAlert, createBudgetRequestDecision, agentMonthlySpent, reserveVentureBudget, releaseVentureBudget } from '../services/ventureBudget.js';
 import type { AgentErrorClass } from '../types/index.js';
 
 // ═══════════════════════════════════════════════════════
@@ -31,6 +32,8 @@ export interface AgentTask {
   ventureId?: number | null;
   // K.5: modelo elegido por el ModelRouter en el dispatch de Hokage. Sin él → selección estática.
   modelOverride?: string | null;
+  // ID del work_item para trazabilidad de costes (Fase 4.2 + Budget Enforcement)
+  workItemId?: number | null;
 }
 
 export interface TaskResult {
@@ -108,6 +111,20 @@ async function createWorkItem(params: {
     [params.agentId, params.ventureId ?? null, params.type, params.priority ?? 6, params.context ?? null]
   );
   return result.lastID;
+}
+
+// ADR-015 Paso 4: libera la reserva de presupuesto de un work_item de forma IDEMPOTENTE — espejo de
+// releaseTaskReservation del orquestador. Solo el primero que pone reserved_usd a 0 (changes===1)
+// decrementa el comprometido de la venture; llamadas repetidas (done + TTL + cleanup) son no-op.
+// El coste REAL ya vive en agent_costs; al liberar, la contabilidad pasa de "reservado" a "real".
+async function releaseWorkItemReservation(workItemId: number): Promise<void> {
+  const w = await get<{ venture_id: number | null; reserved_usd: number }>(
+    'SELECT venture_id, reserved_usd FROM work_items WHERE id = ?', [workItemId]
+  );
+  if (!w || w.reserved_usd <= 0) return;
+  const z = await run('UPDATE work_items SET reserved_usd = 0 WHERE id = ? AND reserved_usd > 0', [workItemId]);
+  if (z.changes !== 1) return; // otro llamador ya liberó esta reserva
+  await releaseVentureBudget(w.venture_id, w.reserved_usd);
 }
 
 class AgentRuntime {
@@ -207,7 +224,7 @@ class AgentRuntime {
 INSTRUCCIONES DE FORMATO:
 ${formatLines.join('\n')}`;
 
-      const result = await askAgent(task.agentId, taskPrompt, task.ventureId, task.modelOverride);
+      const result = await askAgent(task.agentId, taskPrompt, task.ventureId, task.modelOverride, task.workItemId);
 
       if (!result.ok) {
         bus.publish({ type: 'agent.task.error', from: task.agentName, payload: { error: result.error } });
@@ -355,8 +372,12 @@ ${formatLines.join('\n')}`;
           ? applyTemplate(automation.action_context_template, payload)
           : JSON.stringify(payload);
 
+        // Extraer ventureId del payload del evento para propagarlo al work_item
+        const ventureId = (payload.ventureId as number | null) ?? null;
+
         await createWorkItem({
           agentId: agent.id,
+          ventureId,
           type: 'event_triggered',
           priority: automation.action_priority,
           context,
@@ -406,8 +427,8 @@ ${formatLines.join('\n')}`;
     // Bloquear pending: uno por agente, prioridad mayor primero. El claim (ADR-011) es el gate
     // atómico real de exclusión; el NOT EXISTS(in_progress) es solo un pre-filtro que evita
     // intentar claims sobre agentes ya trabajando.
-    const pending = await all<{ id: number; agent_id: number; ttl_minutes: number | null }>(
-      `SELECT w.id, w.agent_id, w.ttl_minutes FROM work_items w
+    const pending = await all<{ id: number; agent_id: number; ttl_minutes: number | null; type: string; model: string | null }>(
+      `SELECT w.id, w.agent_id, w.ttl_minutes, w.type, w.model FROM work_items w
        WHERE w.status = 'pending'
        AND NOT EXISTS (
          SELECT 1 FROM work_items w2
@@ -425,35 +446,58 @@ ${formatLines.join('\n')}`;
       ).then(r => r?.venture_id ?? null);
 
       if (ventureId != null) {
+        // La reserva (más abajo) es el gate AUTORITATIVO del presupuesto de venture (ADR-015 Paso 4):
+        // si no cabe, reserveVentureBudget devuelve null y allí se cancela + budget_request. La alerta
+        // se conserva SOLO para el warning del 80% — no se duplica el bloqueo del 100%.
         const alert = await checkVentureBudgetAlert(ventureId);
-        if (alert?.blocked) {
-          console.warn(`[STAGE2] Venture ${ventureId} bloqueada por presupuesto (${(alert.pctUsed * 100).toFixed(0)}%)`);
-          await run(`UPDATE work_items SET status = 'cancelled', resolved_at = datetime('now') WHERE id = ?`, [item.id]);
-          await createBudgetRequestDecision(ventureId, item.agent_id);
-          await onHokageWorkItemCancelled(item.id).catch((err) => console.error('[HOKAGE] Error liberando reserva:', err.message));
-          continue;
-        }
         if (alert?.level === 'warning') {
           console.warn(`[STAGE2] Venture ${ventureId} al ${(alert.pctUsed * 100).toFixed(0)}% del presupuesto`);
         }
       }
 
-      // Verificar presupuesto por-rol (Fase 7) por compatibilidad hacia atrás.
-      const budget = await get<{ monthly_limit_usd: number; current_month_usd: number; status: string }>(
-        'SELECT monthly_limit_usd, current_month_usd, status FROM agent_budgets WHERE agent_id = ?',
-        [item.agent_id]
+      // Verificar presupuesto por-rol (Fase 7) — usa gasto mensual DERIVADO de agent_costs (Paso 3 ADR-015).
+      // agent_budgets ahora usa PK compuesta (agent_id, venture_id) y almacena monthly_limit_usd.
+      // El gasto real se deriva vía agentMonthlySpent(agentId, ventureId) — única fuente de verdad.
+      const budget = await get<{ monthly_limit_usd: number; status: string }>(
+        'SELECT monthly_limit_usd, status FROM agent_budgets WHERE agent_id = ? AND venture_id IS ?',
+        [item.agent_id, ventureId]
       );
       if (budget) {
-        const pct = budget.current_month_usd / budget.monthly_limit_usd;
-        if (budget.status === 'paused' || pct >= 1.0) {
-          console.warn(`[STAGE2] Agente ${item.agent_id} bloqueado por presupuesto (${(pct * 100).toFixed(0)}%)`);
+        const monthlySpent = await agentMonthlySpent(item.agent_id, ventureId);
+        const pct = budget.monthly_limit_usd > 0 ? monthlySpent / budget.monthly_limit_usd : 0;
+        if (budget.status === 'paused' || monthlySpent >= budget.monthly_limit_usd) {
+          console.warn(`[STAGE2] Agente ${item.agent_id} bloqueado por presupuesto mensual (${(pct * 100).toFixed(0)}%, gastado=${monthlySpent.toFixed(4)}/${budget.monthly_limit_usd})`);
           await run(`UPDATE work_items SET status = 'cancelled', resolved_at = datetime('now') WHERE id = ?`, [item.id]);
           // Si era una tarea de Hokage: libera su reserva de venture y avanza el comando (Fase 7).
           await onHokageWorkItemCancelled(item.id).catch((err) => console.error('[HOKAGE] Error liberando reserva:', err.message));
           continue;
         }
         if (pct >= 0.8) {
-          console.warn(`[STAGE2] Agente ${item.agent_id} al ${(pct * 100).toFixed(0)}% del límite mensual`);
+          console.warn(`[STAGE2] Agente ${item.agent_id} al ${(pct * 100).toFixed(0)}% del límite mensual (${monthlySpent.toFixed(4)}/${budget.monthly_limit_usd})`);
+        }
+      }
+
+      // Reserva de presupuesto de VENTURE ANTES del claim (reserve-then-settle, ADR-015 Paso 4).
+      // Solo el camino AUTÓNOMO: los work_items 'hokage_task' ya los reserva el orquestador en
+      // hokage_tasks.reserved_usd (no reservar dos veces). Modelo: work_item.model ?? modelo del rol
+      // (patrón de askAgent). null = sobre presupuesto → gate autoritativo: cancelar + budget_request.
+      if (item.type !== 'hokage_task') {
+        const agentRow = await get<{ model: string | null; role: string }>(
+          'SELECT model, role FROM agents WHERE id = ?', [item.agent_id]
+        );
+        const model = item.model ?? agentRow?.model ?? modelForRole(agentRow?.role ?? '');
+        const estimate = estimateTaskCostUsd(model);
+        const reserved = await reserveVentureBudget(ventureId, estimate);
+        if (reserved === null) {
+          console.warn(`[STAGE2] Venture ${ventureId} sin presupuesto para reservar (est=${estimate.toFixed(4)}) → cancelado`);
+          await run(`UPDATE work_items SET status = 'cancelled', reserved_usd = 0, resolved_at = datetime('now') WHERE id = ?`, [item.id]);
+          await createBudgetRequestDecision(ventureId!, item.agent_id);
+          continue;
+        }
+        // reserved >= 0 (0 = venture sin tope → no se reserva nada). Guardar la reserva EXACTA
+        // en el work_item ANTES del claim, para liberarla igual en cualquier final.
+        if (reserved > 0) {
+          await run(`UPDATE work_items SET reserved_usd = ? WHERE id = ?`, [reserved, item.id]);
         }
       }
 
@@ -463,15 +507,20 @@ ${formatLines.join('\n')}`;
       // TTL del claim alineado con ttl_minutes del work_item (decisión #9): no menos que su ejecución.
       const ttl = item.ttl_minutes ?? 30;
       const won = await claimAgent(item.agent_id, item.id, ttl);
-      if (!won) continue; // agente ya reclamado (runtime/Hokage/manual) → reintento en el próximo tick
+      if (!won) {
+        // Reservé antes del claim (Paso 4) pero no gané el claim → liberar la reserva de inmediato.
+        await releaseWorkItemReservation(item.id);
+        continue; // agente ya reclamado (runtime/Hokage/manual) → reintento en el próximo tick
+      }
 
       const promoted = await run(
         `UPDATE work_items SET status = 'in_progress', locked_at = ? WHERE id = ? AND status = 'pending'`,
         [nowIso(), item.id]
       );
       if (promoted.changes !== 1) {
-        // El work_item dejó de estar pending entre el SELECT y aquí → soltar el claim recién ganado.
+        // El work_item dejó de estar pending entre el SELECT y aquí → soltar el claim Y la reserva.
         await releaseAgent(item.agent_id, item.id);
+        await releaseWorkItemReservation(item.id);
         continue;
       }
       this.activeAgents.add(item.agent_id); // métrica derivada efímera, NUNCA barrera de exclusión (esa es el claim en BD)
@@ -523,12 +572,46 @@ ${formatLines.join('\n')}`;
         context: taskContext,
         ventureId: item.venture_id,
         modelOverride: item.model,   // K.5: modelo enrutado en el dispatch (null si no orquestado)
+        workItemId: item.id,         // Fase 4.2 + Budget: work_item_id para trazabilidad costes
       });
 
-      // Etapa 5 inline: persistir resultado
+      // Etapa 5 inline: persistir resultado + costes (Fase 2.3 + Pipeline 4.2)
+      // Los costes reales vienen de askAgent → agent_costs (línea 183-185 en aiService.ts).
+      // Aquí leemos la última fila de agent_costs para este work_item y la volcamos a work_items
+      // para trazabilidad y evaluación (ADR-014). No duplicamos lógica de cálculo.
+      let tokensIn = 0, tokensOut = 0, llmCost = 0, toolCost = 0;
+      if (result.ok) {
+        // Los costes reales vienen de askAgent → agent_costs (línea 183-185 en aiService.ts).
+        // Buscar en agent_costs la fila más reciente de este agente (creada en este runAgent).
+        const costRow = await get<{ tokens_in: number; tokens_out: number; llm_cost_usd: number; tool_cost_usd: number }>(
+          `SELECT tokens_in, tokens_out, llm_cost_usd, tool_cost_usd
+           FROM agent_costs
+           WHERE agent_id = ? AND work_item_id IS NULL
+           ORDER BY id DESC LIMIT 1`,
+          [agent.id]
+        );
+        if (costRow) {
+          tokensIn = costRow.tokens_in;
+          tokensOut = costRow.tokens_out;
+          llmCost = costRow.llm_cost_usd;
+          toolCost = costRow.tool_cost_usd;
+          // Marcar la fila con work_item_id para no volver a leerla en reintentos
+          await run('UPDATE agent_costs SET work_item_id = ? WHERE agent_id = ? AND work_item_id IS NULL ORDER BY id DESC LIMIT 1', [item.id, agent.id]).catch(() => {});
+        }
+      }
+
       await run(
-        `UPDATE work_items SET status = ?, result = ?, resolved_at = ?, locked_at = NULL WHERE id = ?`,
-        [result.ok ? 'done' : 'failed', (result.response ?? result.error ?? '').slice(0, 2000), nowIso(), item.id]
+        `UPDATE work_items SET status = ?, result = ?, resolved_at = ?, locked_at = NULL,
+           tokens_in = ?, tokens_out = ?, llm_cost_usd = ?, tool_cost_usd = ?, error = ?
+         WHERE id = ?`,
+        [
+          result.ok ? 'done' : 'failed',
+          (result.response ?? result.error ?? '').slice(0, 2000),
+          nowIso(),
+          tokensIn, tokensOut, llmCost, toolCost,
+          result.ok ? null : (result.error ?? 'Error desconocido'),
+          item.id
+        ]
       );
       // ADR-011 (decisión #7): liberar el claim SIEMPRE — éxito o error. runAgent captura sus
       // excepciones y devuelve {ok:false}, así que este punto se alcanza en ambos casos.
@@ -536,6 +619,11 @@ ${formatLines.join('\n')}`;
       // releaseAgent interno de onHokageTaskCompleted (para hokage_task) queda como no-op.
       await releaseAgent(item.agent_id, item.id);
       this.activeAgents.delete(item.agent_id);
+
+      // ADR-015 Paso 4: settle — liberar la reserva del work_item (done o failed). El coste REAL ya
+      // quedó en agent_costs vía askAgent; la reserva (estimación) se libera. Idempotente y no-op
+      // para hokage_task (su reserva vive en hokage_tasks, la libera el orquestador).
+      await releaseWorkItemReservation(item.id);
 
       // Cerrar milestone si este work_item estaba vinculado a uno
       if (item.milestone_id) {
@@ -568,6 +656,10 @@ ${formatLines.join('\n')}`;
     for (const item of timedOut) {
       await releaseAgent(item.agent_id, item.id);
       this.activeAgents.delete(item.agent_id);
+      // ADR-015 Paso 4: liberar la reserva ANTES de requeue/cancel (decisión 9). En requeue el nuevo
+      // intento volverá a reservar en stage2 (reserved_usd queda a 0). Cubre también el caso de claim
+      // expirado (TTL del work_item = TTL del claim). Idempotente; no-op para hokage_task.
+      await releaseWorkItemReservation(item.id);
       if (item.retry_count < 3) {
         await run(
           `UPDATE work_items SET status = 'pending', locked_at = NULL, retry_count = retry_count + 1 WHERE id = ?`,
@@ -648,6 +740,7 @@ ${formatLines.join('\n')}`;
     bus.subscribe('decision.approved', (event) => this.busEventQueue.push(event));
     bus.subscribe('decision.created',  (event) => this.busEventQueue.push(event));
     bus.subscribe('sale.made',         (event) => this.busEventQueue.push(event));
+    bus.subscribe('sale.received',     (event) => this.busEventQueue.push(event));
   }
 
   // Etapa 9 (K.4): deriva el estado REAL de cada agente de negocio y emite un delta SOLO si

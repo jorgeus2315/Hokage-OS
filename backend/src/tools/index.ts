@@ -873,7 +873,7 @@ export const TrendReportTool: Tool<TrendReportInput, TrendReportOutput> = {
       bus.publish({
         type: 'trend.detected',
         from: agentName,
-        payload: { keyword: input.keyword, description: input.description, detectedAt: new Date().toISOString() },
+        payload: { keyword: input.keyword, description: input.description, detectedAt: new Date().toISOString(), ventureId: ctx.ventureId ?? null },
       });
       console.log(`[TOOL:trend.report] ${agentName} → trend.detected :: ${input.keyword}`);
 
@@ -923,7 +923,7 @@ export const ContentCreateTool: Tool<ContentCreateInput, ContentCreateOutput> = 
       bus.publish({
         type: 'content.created',
         from: agentName,
-        payload: { keyword: input.keyword, summary: input.summary, agentId: ctx.agentId ?? null, createdAt: new Date().toISOString() },
+        payload: { keyword: input.keyword, summary: input.summary, agentId: ctx.agentId ?? null, createdAt: new Date().toISOString(), ventureId: ctx.ventureId ?? null },
       });
       console.log(`[TOOL:content.create] ${agentName} → content.created :: ${input.keyword}`);
 
@@ -1070,7 +1070,7 @@ export const DecisionCreateTool: Tool<DecisionCreateInput, DecisionCreateOutput>
       bus.publish({
         type: 'decision.created',
         from: agentName,
-        payload: { title: decision.title, agentId: ctx.agentId ?? null },
+        payload: { title: decision.title, agentId: ctx.agentId ?? null, ventureId: ctx.ventureId ?? null },
       });
       // Nivel 2+ de autonomía: auto-aprueba la decisión si no es crítica (reutiliza el mecanismo
       // de aprobación existente; nunca aprueba gasto, publicación, system.exec ni alto riesgo).

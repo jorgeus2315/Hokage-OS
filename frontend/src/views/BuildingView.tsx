@@ -141,7 +141,7 @@ export function BuildingView({
           {section === 'outputs' && <OutputsPanel agentId={agent?.id} />}
           {section === 'trends' && <OutputsPanel agentId={agent?.id} variant="market" />}
           {section === 'gallery' && <OutputsPanel agentId={agent?.id} variant="content" />}
-          {section === 'finance' && <BankPanel />}
+          {section === 'finance' && <BankPanel ventureId={agent?.venture_id ?? null} />}
           {section === 'system' && <SystemStatusPanel />}
           {section === 'terminal' && <TerminalPanel />}
           {section === 'feed' && <LiveFeedPanel events={agentEvents} />}

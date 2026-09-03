@@ -4,6 +4,7 @@ export interface Agent {
   role: string;
   status: string;
   model: string | null;
+  venture_id: number | null;
   created_at: string;
 }
 
@@ -258,7 +259,7 @@ export const ROLES: Record<string, string> = {
 export const AUTOMATION_EVENTS: string[] = [
   'trend.detected', 'content.created', 'content.ready',
   'decision.created', 'decision.approved', 'decision.rejected',
-  'sale.made', 'alert.triggered',
+  'sale.made', 'sale.received', 'alert.triggered',
   'agent.task.start', 'agent.task.done', 'agent.task.error',
   'report.daily', 'system.error',
   'objective.created', 'objective.approved', 'objective.achieved',
@@ -325,6 +326,18 @@ export interface VentureBudget {
   real: number;
   available: number;
   capped: boolean;
+}
+
+// Fase 4.4 — Revenue en tiempo real: venta individual desde BD
+export interface Sale {
+  id: number;
+  venture_id: number;
+  receipt_id: string;
+  total_usd: number;
+  currency: string;
+  status: string;
+  created_at: string;
+  detected_at: string;
 }
 
 // ═══════════ FASE 10 — AgentPanel types ═══════════

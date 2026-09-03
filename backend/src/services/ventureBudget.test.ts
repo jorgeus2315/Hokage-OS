@@ -4,7 +4,7 @@ import { initSchema, run, get } from '../db/init.js';
 import { getRoleDefinition } from './roleService.js';
 import { estimateTaskCostUsd } from './aiService.js';
 import {
-  getVentureBudget, ventureOverRealBudget, reserveVentureBudget, releaseVentureBudget,
+  getVentureBudget, ventureOverRealBudget, reserveVentureBudget, releaseVentureBudget, agentMonthlySpent,
 } from './ventureBudget.js';
 import { createCommand, getCommand, onHokageTaskCompleted, attemptReplan } from './hokageOrchestrator.js';
 import type { RawPlanForTest } from './hokageOrchestrator.js';
@@ -160,4 +160,162 @@ test('releaseVentureBudget no deja el comprometido en negativo', async () => {
   await releaseVentureBudget(v, 5 * EST); // libera más de lo reservado
   const b = await getVentureBudget(v);
   assert.equal(b!.reserved, 0);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Paso 2 (ADR-015) — cobertura adicional del contrato de presupuesto/costes.
+// UNIT, determinista: sin OpenRouter/red/proveedor — agent_costs se siembra por SQL.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Crea un agente aislado para tests de gasto por agente (FK agent_costs.agent_id → agents).
+async function mkAgent(name: string): Promise<number> {
+  const r = await run(`INSERT INTO agents (name, role, status) VALUES (?, 'finanzas', 'idle')`, [name]);
+  return r.lastID;
+}
+
+// Inserta una fila de coste real controlando agente, venture, importe y antigüedad.
+// previousMonth=true → mediados del mes anterior (usa 'start of month' para evitar el clamping
+// de día de SQLite, p. ej. "31 - 1 mes"). Por defecto → mes en curso (datetime('now')).
+async function addCostRow(agentId: number, ventureId: number | null, usd: number, opts: { previousMonth?: boolean } = {}): Promise<void> {
+  const when = opts.previousMonth ? `datetime('now','start of month','-15 days')` : `datetime('now')`;
+  await run(
+    `INSERT INTO agent_costs (agent_id, venture_id, model, tokens_in, tokens_out, llm_cost_usd, tool_cost_usd, created_at)
+     VALUES (?, ?, 'test-model', 0, 0, ?, 0, ${when})`,
+    [agentId, ventureId, usd]
+  );
+}
+
+// ORÁCULO del contrato agentMonthlySpent (Paso 3 — aún NO en producción). Gasto del MES EN CURSO
+// de un agente en una venture, derivado de agent_costs: mes natural por created_at, venture_id
+// NULL-safe con IS (mismo patrón que stage2). La función de producción del Paso 3 DEBE igualar
+// este oráculo. Se define aquí como contrato ejecutable, sin tocar producción.
+async function monthlySpentOracle(agentId: number, ventureId: number | null): Promise<number> {
+  const row = await get<{ c: number }>(
+    `SELECT COALESCE(SUM(llm_cost_usd + tool_cost_usd), 0) AS c
+       FROM agent_costs
+      WHERE agent_id = ?
+        AND venture_id IS ?
+        AND created_at >= strftime('%Y-%m-01 00:00:00','now')
+        AND created_at <  strftime('%Y-%m-01 00:00:00','now','+1 month')`,
+    [agentId, ventureId]
+  );
+  return row?.c ?? 0;
+}
+
+// ── reserve / get / release: casos que faltaban ──────────────────────────────
+
+test('reserve: presupuesto disponible → reserva el importe pedido y baja el disponible', async () => {
+  const v = await mkVenture('Disp', 10 * EST);
+  const r = await reserveVentureBudget(v, 3 * EST);
+  assert.ok(r !== null && Math.abs(r - 3 * EST) < 1e-9, 'devuelve el importe reservado');
+  const b = await getVentureBudget(v);
+  assert.ok(Math.abs(b!.available - 7 * EST) < 1e-9);
+});
+
+test('reserve: límite EXACTO → permitido justo hasta el tope; el siguiente µ-gasto se bloquea', async () => {
+  const v = await mkVenture('Exacta', 2 * EST);
+  assert.ok(await reserveVentureBudget(v, EST) !== null, '1ª reserva cabe');
+  assert.ok(await reserveVentureBudget(v, EST) !== null, '2ª reserva llena el tope exacto');
+  const b = await getVentureBudget(v);
+  assert.ok(Math.abs(b!.reserved - 2 * EST) < 1e-9, 'reservado == tope');
+  assert.equal(await reserveVentureBudget(v, 1e-6), null, 'un céntimo por encima del tope se bloquea');
+});
+
+test('reserve: presupuesto excedido (real ya en el tope) → bloquea la reserva', async () => {
+  const v = await mkVenture('Excedida', 2 * EST);
+  await addRealCost(v, 2 * EST); // real == allocated
+  assert.equal(await reserveVentureBudget(v, 1e-6), null);
+});
+
+test('release: devuelve exactamente lo reservado y restaura el disponible', async () => {
+  const v = await mkVenture('Rel', 10 * EST);
+  await reserveVentureBudget(v, 4 * EST);
+  await releaseVentureBudget(v, 4 * EST);
+  const b = await getVentureBudget(v);
+  assert.equal(b!.reserved, 0);
+  assert.ok(Math.abs(b!.available - 10 * EST) < 1e-9, 'disponible restaurado al total');
+});
+
+test('getVentureBudget: múltiples filas de agent_costs se suman en real', async () => {
+  const v = await mkVenture('Suma', 100 * EST);
+  await addRealCost(v, EST);
+  await addRealCost(v, 2 * EST);
+  await addRealCost(v, 3 * EST);
+  const b = await getVentureBudget(v);
+  assert.ok(Math.abs(b!.real - 6 * EST) < 1e-9, 'real = suma de las 3 filas');
+});
+
+test('venture_id = NULL: no cuenta en el presupuesto de ninguna venture y reserve(null)=0', async () => {
+  const v = await mkVenture('ConTope', 10 * EST);
+  const a = await mkAgent('null-cost');
+  await addCostRow(a, null, 5 * EST); // coste GLOBAL, sin venture
+  const b = await getVentureBudget(v);
+  assert.equal(b!.real, 0, 'el coste con venture_id NULL no afecta a la venture con tope');
+  assert.equal(await reserveVentureBudget(null, 5 * EST), 0, 'reserve sin venture → 0 (sin tope): ni bloquea ni reserva');
+});
+
+// ── agentMonthlySpent: contrato del gasto mensual DERIVADO (vía oráculo) ──────
+
+test('mensual (contrato): múltiples filas del mes en curso se suman', async () => {
+  const v = await mkVenture('MesSuma', 0);
+  const a = await mkAgent('mes-suma');
+  await addCostRow(a, v, 0.01);
+  await addCostRow(a, v, 0.02);
+  assert.ok(Math.abs(await monthlySpentOracle(a, v) - 0.03) < 1e-9);
+});
+
+test('mensual (contrato): costes de meses anteriores NO cuentan en el mes actual', async () => {
+  const v = await mkVenture('MesPrev', 0);
+  const a = await mkAgent('mes-prev');
+  await addCostRow(a, v, 0.05, { previousMonth: true }); // mes pasado → excluido
+  await addCostRow(a, v, 0.02);                          // mes actual
+  assert.ok(Math.abs(await monthlySpentOracle(a, v) - 0.02) < 1e-9, 'solo el gasto del mes en curso');
+});
+
+test('mensual (contrato): aislamiento entre agentes en la misma venture', async () => {
+  const v = await mkVenture('MesAgentes', 0);
+  const a1 = await mkAgent('mes-a1');
+  const a2 = await mkAgent('mes-a2');
+  await addCostRow(a1, v, 0.01);
+  await addCostRow(a2, v, 0.09);
+  assert.ok(Math.abs(await monthlySpentOracle(a1, v) - 0.01) < 1e-9);
+  assert.ok(Math.abs(await monthlySpentOracle(a2, v) - 0.09) < 1e-9);
+});
+
+test('mensual (contrato): aislamiento entre ventures del mismo agente', async () => {
+  const v1 = await mkVenture('MesV1', 0);
+  const v2 = await mkVenture('MesV2', 0);
+  const a = await mkAgent('mes-ventures');
+  await addCostRow(a, v1, 0.01);
+  await addCostRow(a, v2, 0.02);
+  assert.ok(Math.abs(await monthlySpentOracle(a, v1) - 0.01) < 1e-9);
+  assert.ok(Math.abs(await monthlySpentOracle(a, v2) - 0.02) < 1e-9);
+});
+
+test('mensual (contrato): venture_id = NULL es su propio cubo global, aislado de las ventures', async () => {
+  const v = await mkVenture('MesNull', 0);
+  const a = await mkAgent('mes-null');
+  await addCostRow(a, v, 0.02);
+  await addCostRow(a, null, 0.03);
+  assert.ok(Math.abs(await monthlySpentOracle(a, v) - 0.02) < 1e-9, 'la venture no ve el gasto global');
+  assert.ok(Math.abs(await monthlySpentOracle(a, null) - 0.03) < 1e-9, 'el cubo global tiene su propio gasto');
+});
+
+// ── CONTRATO (Paso 3): agentMonthlySpent ya en producción. Debe igualar monthlySpentOracle() y
+// respetar la semántica: mes en curso, agente/venture aislados, venture_id NULL como ámbito propio,
+// meses anteriores excluidos. Verifica valores concretos Y la igualdad con el oráculo. ────────────
+test('CONTRATO agentMonthlySpent(agentId, ventureId) === monthlySpentOracle (producción)', async () => {
+  const v = await mkVenture('ContratoMensual', 0);
+  const a = await mkAgent('contrato-mensual');
+  await addCostRow(a, v, 0.01);                          // mes actual, venture v
+  await addCostRow(a, v, 0.02, { previousMonth: true }); // mes anterior → NO cuenta
+  await addCostRow(a, null, 0.05);                       // ámbito global (venture_id NULL)
+
+  // Valores concretos del contrato
+  assert.ok(Math.abs(await agentMonthlySpent(a, v) - 0.01) < 1e-9, 'venture: solo el gasto del mes en curso');
+  assert.ok(Math.abs(await agentMonthlySpent(a, null) - 0.05) < 1e-9, 'NULL: su propio ámbito global, aislado');
+
+  // Igualdad exacta con el oráculo del Paso 2 (la implementación no debe divergir del contrato)
+  assert.equal(await agentMonthlySpent(a, v), await monthlySpentOracle(a, v));
+  assert.equal(await agentMonthlySpent(a, null), await monthlySpentOracle(a, null));
 });

@@ -297,6 +297,27 @@ async function runMigrations(): Promise<void> {
   if (!(await columnExists('agent_budgets', 'venture_id'))) {
     await run(`ALTER TABLE agent_budgets ADD COLUMN venture_id INTEGER REFERENCES ventures(id)`);
   }
+  // Migración: cambiar PK de agent_id a (agent_id, venture_id) para permitir múltiples budgets por agente por venture
+  // PRAGMA index_info devuelve seqno (no seq), y name es el nombre del índice
+  const pkCols = await all<{ name: string; seqno: number; cid: number }>(`PRAGMA index_info('sqlite_autoindex_agent_budgets_1')`);
+  const isSingleAgentPk = pkCols.length === 1 && pkCols[0].cid === 0; // cid 0 = primera columna (agent_id)
+
+  if (isSingleAgentPk) {
+    await run(`CREATE TABLE agent_budgets_v2 (
+      agent_id          INTEGER NOT NULL REFERENCES agents(id),
+      venture_id        INTEGER REFERENCES ventures(id),
+      monthly_limit_usd REAL NOT NULL DEFAULT 5.0,
+      current_month_usd REAL NOT NULL DEFAULT 0,
+      reset_date        TEXT NOT NULL DEFAULT (strftime('%Y-%m-01', 'now', '+1 month')),
+      status            TEXT NOT NULL DEFAULT 'active',
+      PRIMARY KEY (agent_id, venture_id)
+    )`);
+    await run(`INSERT INTO agent_budgets_v2 (agent_id, venture_id, monthly_limit_usd, current_month_usd, reset_date, status)
+               SELECT agent_id, venture_id, monthly_limit_usd, current_month_usd, reset_date, status FROM agent_budgets`);
+    await run(`DROP TABLE agent_budgets`);
+    await run(`ALTER TABLE agent_budgets_v2 RENAME TO agent_budgets`);
+    console.log('[DB] Migración: agent_budgets PK cambiada a (agent_id, venture_id)');
+  }
   await run(`CREATE INDEX IF NOT EXISTS idx_agent_costs_venture ON agent_costs(venture_id)`);
   // K.5: modelo realmente usado en la llamada (control de gasto por modelo). Lo puebla askAgent/callAIJson.
   if (!(await columnExists('agent_costs', 'model'))) {
@@ -383,6 +404,12 @@ async function runMigrations(): Promise<void> {
   }
   if (!(await columnExists('work_items', 'tool_cost_usd'))) {
     await run(`ALTER TABLE work_items ADD COLUMN tool_cost_usd REAL DEFAULT 0`);
+  }
+  // ADR-015 Paso 4: reserva de presupuesto por work_item (reserve-then-settle del camino autónomo).
+  // Espejo de hokage_tasks.reserved_usd: importe comprometido en vuelo, liberado de forma idempotente
+  // en todos los finales (done/failed/cancel/TTL). Aditiva y no destructiva.
+  if (!(await columnExists('work_items', 'reserved_usd'))) {
+    await run(`ALTER TABLE work_items ADD COLUMN reserved_usd REAL NOT NULL DEFAULT 0`);
   }
   if (!(await columnExists('work_items', 'error'))) {
     await run(`ALTER TABLE work_items ADD COLUMN error TEXT`);
@@ -708,7 +735,7 @@ export async function initSchema(): Promise<void> {
   await run(`CREATE TABLE IF NOT EXISTS work_items (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
     agent_id         INTEGER NOT NULL REFERENCES agents(id),
-    business_id      INTEGER REFERENCES businesses(id),
+    business_id      INTEGER,  -- tabla businesses eliminada; se mantiene por compatibilidad sin FK
     type             TEXT NOT NULL,
     priority         INTEGER NOT NULL DEFAULT 6,
     status           TEXT NOT NULL DEFAULT 'pending',
@@ -719,7 +746,8 @@ export async function initSchema(): Promise<void> {
     retry_count      INTEGER DEFAULT 0,
     created_at       TEXT DEFAULT (datetime('now')),
     resolved_at      TEXT,
-    model            TEXT
+    model            TEXT,
+    reserved_usd     REAL NOT NULL DEFAULT 0
   )`);
 
   await run(`CREATE INDEX IF NOT EXISTS idx_work_items_agent_status ON work_items(agent_id, status)`);
@@ -728,7 +756,7 @@ export async function initSchema(): Promise<void> {
   await run(`CREATE TABLE IF NOT EXISTS agent_costs (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     agent_id        INTEGER NOT NULL REFERENCES agents(id),
-    business_id     INTEGER REFERENCES businesses(id),
+    business_id     INTEGER,  -- tabla businesses eliminada; se mantiene por compatibilidad sin FK
     work_item_id    INTEGER REFERENCES work_items(id),
     tokens_in       INTEGER DEFAULT 0,
     tokens_out      INTEGER DEFAULT 0,
@@ -740,12 +768,13 @@ export async function initSchema(): Promise<void> {
   await run(`CREATE INDEX IF NOT EXISTS idx_agent_costs_agent ON agent_costs(agent_id, created_at)`);
 
   await run(`CREATE TABLE IF NOT EXISTS agent_budgets (
-    agent_id          INTEGER PRIMARY KEY REFERENCES agents(id),
-    venture_id        INTEGER REFERENCES ventures(id),
+    agent_id          INTEGER NOT NULL REFERENCES agents(id),
+    venture_id        INTEGER REFERENCES ventures(id), -- NULL = global/sin venture (sentinel)
     monthly_limit_usd REAL NOT NULL DEFAULT 5.0,
     current_month_usd REAL NOT NULL DEFAULT 0,
     reset_date        TEXT NOT NULL DEFAULT (strftime('%Y-%m-01', 'now', '+1 month')),
-    status            TEXT NOT NULL DEFAULT 'active'
+    status            TEXT NOT NULL DEFAULT 'active',
+    PRIMARY KEY (agent_id, venture_id)
   )`);
 
   await run(`CREATE TABLE IF NOT EXISTS tool_runs (
@@ -835,6 +864,44 @@ export async function initSchema(): Promise<void> {
     type TEXT NOT NULL DEFAULT 'business',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
+
+  // ═══════════ WORLD MODEL — mundo vivo (ADR-017, F0) ═══════════
+  // Modelo GENÉRICO y extensible: entidad por `kind` ABIERTO (building/room/character/object/
+  // behavior y futuros) + `attributes` JSON por-kind. Crece por DATOS, sin migración por cada
+  // tipo/atributo nuevo (mismo patrón que automations.trigger_conditions / assets.metadata).
+  // Enlaza al "cerebro" vía ref_kind+ref_id (character→agent, room→department) — NO lo reemplaza.
+  // pos_x/pos_y son HINT de layout: SOLO los lee el frontend (invariante I1, lógica/presentación).
+  await run(`CREATE TABLE IF NOT EXISTS world_entities (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind        TEXT NOT NULL,
+    name        TEXT NOT NULL DEFAULT '',
+    parent_id   INTEGER REFERENCES world_entities(id),
+    ref_kind    TEXT,
+    ref_id      INTEGER,
+    venture_id  INTEGER REFERENCES ventures(id),
+    pos_x       REAL,
+    pos_y       REAL,
+    status      TEXT NOT NULL DEFAULT 'active',
+    attributes  TEXT NOT NULL DEFAULT '{}',
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_world_entities_kind ON world_entities(kind)`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_world_entities_parent ON world_entities(parent_id)`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_world_entities_ref ON world_entities(ref_kind, ref_id)`);
+
+  // Aristas del grafo del mundo: relaciones por `kind` ABIERTO (works_in, can_move_to,
+  // reports_to, interacts_with y futuros) + attributes JSON. Añadir una relación nueva = una fila.
+  await run(`CREATE TABLE IF NOT EXISTS world_relations (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    from_id     INTEGER NOT NULL REFERENCES world_entities(id),
+    to_id       INTEGER NOT NULL REFERENCES world_entities(id),
+    kind        TEXT NOT NULL,
+    attributes  TEXT NOT NULL DEFAULT '{}',
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_world_relations_from ON world_relations(from_id, kind)`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_world_relations_to ON world_relations(to_id, kind)`);
 
   // Fase 4 (Etsy, slice lectura) — tokens OAuth por (proveedor, venture). Almacén mínimo,
   // sustituible por C.6 Secret Management sin cambiar el contrato TokenStore que usa EtsyClient.
@@ -1103,6 +1170,7 @@ export async function initSchema(): Promise<void> {
   await runMigrations();
   await seedDefaultVenture();
   await seedAutomations();
+  await seedAgents();
   await seedHermesAgent();
 }
 
@@ -1127,6 +1195,57 @@ async function seedDepartments(): Promise<void> {
     );
   }
   console.log('[DB] Departamentos sembrados correctamente');
+}
+
+async function seedAgents(): Promise<void> {
+  // Obtener venture_id del venture por defecto
+  const venture = await get<{ id: number }>(`SELECT id FROM ventures WHERE name = 'Minimal Designs'`);
+  const ventureId = venture?.id ?? null;
+
+  // Roles que necesitan agente (hermes se siembra aparte en seedHermesAgent)
+  const agentRoles = ROLE_SEEDS.filter(r => r.key !== 'hermes').map(r => r.key);
+
+  for (const role of agentRoles) {
+    const existing = await get<{ id: number }>(`SELECT id FROM agents WHERE role = ?`, [role]);
+    if (existing) continue;
+
+    // Obtener modelo desde role_definitions
+    const def = await get<{ model: string }>('SELECT model FROM role_definitions WHERE key = ?', [role]);
+    const model = def?.model ?? modelForRole(role);
+
+    const agentResult = await run(
+      `INSERT INTO agents (name, role, status, model, venture_id) VALUES (?, ?, ?, ?, ?)`,
+      [role.charAt(0).toUpperCase() + role.slice(1), role, 'idle', model, ventureId]
+    );
+    const agentId = agentResult.lastID;
+
+    // Sembrar agent_budgets para este agente y venture (si hay venture)
+    if (ventureId) {
+      const budgetDef = await get<{ monthly_budget_usd: number }>(
+        'SELECT monthly_budget_usd FROM role_definitions WHERE key = ?', [role]
+      );
+      const monthlyLimit = budgetDef?.monthly_budget_usd ?? 5.0;
+      await run(
+        `INSERT OR IGNORE INTO agent_budgets (agent_id, venture_id, monthly_limit_usd, current_month_usd, reset_date, status)
+         VALUES (?, ?, ?, 0, strftime('%Y-%m-01', 'now', '+1 month'), 'active')`,
+        [agentId, ventureId, monthlyLimit]
+      );
+    }
+
+    // Sembrar agent_schedules para agentes autónomos
+    const scheduleDef = await get<{ interval_minutes: number }>(
+      'SELECT interval_minutes FROM role_definitions WHERE key = ?', [role]
+    );
+    if (scheduleDef?.interval_minutes) {
+      await run(
+        `INSERT OR IGNORE INTO agent_schedules (agent_id, interval_minutes, next_run_at)
+         VALUES (?, ?, datetime('now', '+' || ? || ' minutes'))`,
+        [agentId, scheduleDef.interval_minutes, scheduleDef.interval_minutes]
+      );
+    }
+  }
+
+  console.log('[DB] Agentes de negocio sembrados correctamente');
 }
 
 async function seedHermesAgent(): Promise<void> {

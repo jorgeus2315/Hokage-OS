@@ -244,7 +244,8 @@ test('sales.record: venture isolation — V1 no afecta V2', async () => {
 });
 
 test('sales.record: array vacío → ok con ceros', async () => {
-  const res = await getTool('sales.record')!.execute({ receipts: [] }, { agentId: 1, ventureId: 9995 });
+  const ventureId = await nextSalesVenture();
+  const res = await getTool('sales.record')!.execute({ receipts: [] }, { agentId: 1, ventureId });
   const data = res.data as SalesRecordOutput;
   assert.equal(res.ok, true);
   assert.equal(data.recorded, 0);

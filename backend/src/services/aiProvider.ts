@@ -105,3 +105,16 @@ const PROVIDERS: Record<string, AIProvider> = {
 export function getProvider(providerId: string): AIProvider {
   return PROVIDERS[providerId] ?? PROVIDERS.openrouter;
 }
+
+// Costura de test (frontera de proveedor): sustituye el proveedor de un id por otro —p. ej. un
+// fake determinista— y devuelve un disposer que restaura el estado previo. Producción NO la llama:
+// el mapa por defecto sigue teniendo solo OpenRouter y getProvider() se comporta igual. Existe
+// para que los tests inyecten un proveedor sin red sobre esta misma frontera, sin mockear fetch.
+export function registerProvider(id: string, provider: AIProvider): () => void {
+  const prev = PROVIDERS[id];
+  PROVIDERS[id] = provider;
+  return () => {
+    if (prev) PROVIDERS[id] = prev;
+    else delete PROVIDERS[id];
+  };
+}

@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Agent, Decision, AgentRun, CommMsg, WsEvent, Building, Venture, Objective, MetricsSummary, AgentRuntimeState } from '../shared/types';
 import { api, useWebSocket } from '../shared';
+import { worldModelClient } from '../world/client/WorldModelClient';
+import type { WorldEntityDto, WorldRelationDto } from '../world/client/WorldModelClient';
 
 const EMPTY_METRICS: MetricsSummary = { ai_cost_today_usd: 0, messages_today: 0, pending_decisions: 0, urgent_decisions: 0 };
 
@@ -96,6 +98,8 @@ export function useAppData(): AppData {
         agent_states?: AgentRuntimeState[];
         ventures?: Venture[];
         runs?: AgentRun[];
+        world_entities?: WorldEntityDto[];
+        world_relations?: WorldRelationDto[];
       };
       if (snap.agents)       setAgents(snap.agents);
       if (snap.decisions)    setDecisions(snap.decisions);
@@ -115,6 +119,10 @@ export function useAppData(): AppData {
           type: d.type ?? 'business',
         }))
       );
+      // Hydrate WorldModelClient from world model data in initial_snapshot
+      if (snap.world_entities && snap.world_relations) {
+        worldModelClient.hydrate({ entities: snap.world_entities, relations: snap.world_relations });
+      }
       return;
     }
 

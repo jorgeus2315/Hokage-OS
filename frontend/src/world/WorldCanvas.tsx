@@ -5,6 +5,7 @@ import { CameraSystem } from './systems/CameraSystem';
 import { COLOR, hashOffset, makeText } from './visuals';
 import { ROLES } from '../shared/types';
 import type { HubDescriptor, RoomDescriptor, TokenDescriptor, RippleEvent } from './types';
+import { worldModelClient } from './client/WorldModelClient';
 
 const MINIMAP_W = 150;
 const MINIMAP_H = 110;
@@ -304,8 +305,14 @@ export function WorldCanvas({
           const node = engine.get(tk.id);
           if (!node) {
             engine.upsert(tk.id, { x: tk.x, y: tk.y }, color, tk.label);
+            // F1: Register character for BehaviorSystem — maps token to agent via world_entities
+            const agentId = Number(tk.id);
+            const characterEntity = worldModelClient.getCharacterForAgent(agentId);
+            if (characterEntity) {
+              engine.registerCharacter(tk.id, characterEntity, agentId);
+            }
           } else {
-            engine.setTarget(tk.id, { x: tk.x, y: tk.y });
+            // BehaviorSystem now owns Motion.target; only update visual properties
             node.color = color;
             node.label = tk.label;
           }

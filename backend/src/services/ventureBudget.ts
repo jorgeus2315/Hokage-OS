@@ -60,6 +60,26 @@ export async function getVentureBudget(ventureId: number): Promise<VentureBudget
   };
 }
 
+// Gasto REAL del MES EN CURSO de un agente en un ámbito de venture, derivado EXCLUSIVAMENTE de
+// agent_costs (fuente única de verdad del coste — ADR-015). Reemplaza al acumulador almacenado
+// agent_budgets.current_month_usd (que se retira en un paso posterior; aquí NO se toca todavía).
+//   - mes natural en curso (por created_at, comparación lexicográfica ISO — created_at es
+//     'YYYY-MM-DD HH:MM:SS'); los meses anteriores quedan fuera de la ventana.
+//   - agent_id aislado; venture_id aislado; venture_id NULL es su PROPIO ámbito (global/sin
+//     venture), tratado NULL-safe con `IS` (mismo patrón que stage2). No mezcla ámbitos.
+export async function agentMonthlySpent(agentId: number, ventureId: number | null): Promise<number> {
+  const row = await get<{ c: number }>(
+    `SELECT COALESCE(SUM(llm_cost_usd + tool_cost_usd), 0) AS c
+       FROM agent_costs
+      WHERE agent_id = ?
+        AND venture_id IS ?
+        AND created_at >= strftime('%Y-%m-01 00:00:00','now')
+        AND created_at <  strftime('%Y-%m-01 00:00:00','now','+1 month')`,
+    [agentId, ventureId]
+  );
+  return row?.c ?? 0;
+}
+
 // ¿La venture ya consumió (REAL) su presupuesto? Defensa en profundidad en askAgent: ninguna
 // llamada a IA si el coste real ya alcanzó el tope, aunque una reserva se hubiera quedado corta.
 export async function ventureOverRealBudget(ventureId: number | null | undefined): Promise<boolean> {

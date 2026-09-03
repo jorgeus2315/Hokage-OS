@@ -34,7 +34,7 @@ export async function maybeAutoApprove(decision: Decision): Promise<boolean> {
 
   const approved = await approveDecision(decision.id, 'auto:autonomy');
   await resolveDecisionApproval(approved);
-  bus.publish({ type: 'decision.approved', from: 'auto:autonomy', payload: { decisionId: decision.id } });
+  bus.publish({ type: 'decision.approved', from: 'auto:autonomy', payload: { decisionId: decision.id, decisionTitle: decision.title } });
   console.log(`[AUTONOMY] Decision ${decision.id} auto-aprobada (Nivel ${autonomy}): ${decision.title}`);
   return true;
 }

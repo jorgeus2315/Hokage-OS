@@ -174,7 +174,7 @@ wss.on('connection', async (ws, _req) => {
 
   // Snapshot inicial — el cliente no necesita REST para el arranque
   try {
-    const [agents, decisions, departments, agentStates, ventures, runs] = await Promise.all([
+    const [agents, decisions, departments, agentStates, ventures, runs, worldEntities, worldRelations] = await Promise.all([
       listAgents(),
       listDecisions(),
       all<{ id: number; key: string; name: string; desc: string; role: string; glyph: string; color: string; pos_x: number; pos_y: number; is_hub: number }>(
@@ -187,6 +187,9 @@ wss.on('connection', async (ws, _req) => {
       // conservan su ruta REST. REST sigue siendo carga inicial + fallback.
       all('SELECT * FROM ventures ORDER BY created_at DESC'),
       all('SELECT * FROM agent_runs ORDER BY started_at DESC LIMIT 100'),
+      // World Model (ADR-017, F0): entidades y relaciones del mundo vivo
+      all('SELECT * FROM world_entities WHERE status = \'active\' ORDER BY id ASC'),
+      all('SELECT * FROM world_relations ORDER BY id ASC'),
     ]);
     ws.send(JSON.stringify({
       type: 'initial_snapshot',
@@ -197,6 +200,8 @@ wss.on('connection', async (ws, _req) => {
         agent_states: agentStates,  // K.4: snapshot de AgentRuntimeState (aditivo)
         ventures,
         runs,
+        world_entities: worldEntities,
+        world_relations: worldRelations,
         recent_events: bus.getHistory(30),
         timestamp: new Date().toISOString(),
       },
@@ -480,7 +485,7 @@ app.put('/api/decisions/:id/approve', requireAdmin, async (req, res) => {
     const id = Number(req.params.id);
     const decision = await approveDecision(id, OWNER_NAME);
     await resolveDecisionApproval(decision);
-    bus.publish({ type: 'decision.approved', from: OWNER_NAME, payload: { decisionId: id } });
+    bus.publish({ type: 'decision.approved', from: OWNER_NAME, payload: { decisionId: id, decisionTitle: decision.title } });
     broadcast('decision.approved', { id });
     res.json({ ok: true });
   } catch (e: any) { sendError(res, 400, e, 'Error aprobando decision'); }
@@ -894,6 +899,33 @@ app.get('/api/ventures/:id/budget', requireAdmin, async (req, res) => {
     if (!budget) return res.status(404).json({ ok: false, error: 'Venture no encontrada' });
     res.json({ ok: true, data: budget });
   } catch (e: any) { sendError(res, 500, e, 'Error leyendo presupuesto de la venture'); }
+});
+
+// ═══════════ SALES / REVENUE ═══════════
+// Fuente de verdad del revenue — el frontend/Banco consulta esto para reconstruir
+// estado tras recarga/reinicio. No depende del WebSocket sale.received.
+app.get('/api/ventures/:id/sales', async (req, res) => {
+  try {
+    const ventureId = Number(req.params.id);
+    const limit = Math.min(Number(req.query.limit) || 100, 500);
+    const offset = Number(req.query.offset) || 0;
+    const sales = await all<{
+      id: number;
+      venture_id: number;
+      receipt_id: string;
+      total_usd: number;
+      currency: string;
+      status: string;
+      created_at: string;
+      detected_at: string;
+    }>(
+      `SELECT * FROM sales WHERE venture_id = ? ORDER BY detected_at DESC LIMIT ? OFFSET ?`,
+      [ventureId, limit, offset]
+    );
+    const total = await get<{ c: number }>('SELECT COUNT(*) as c FROM sales WHERE venture_id = ?', [ventureId]);
+    const revenue = await get<{ sum: number }>('SELECT COALESCE(SUM(total_usd), 0) as sum FROM sales WHERE venture_id = ?', [ventureId]);
+    res.json({ ok: true, data: { sales, total: total?.c ?? 0, revenue_usd: revenue?.sum ?? 0 } });
+  } catch (e: any) { sendError(res, 500, e, 'Error leyendo ventas'); }
 });
 
 app.post('/api/ventures', requireAdmin, async (req, res) => {

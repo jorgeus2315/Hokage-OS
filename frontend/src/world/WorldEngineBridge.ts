@@ -39,6 +39,7 @@ import { AnimationSystem } from './systems/AnimationSystem';
 import { TTLSystem } from './systems/TTLSystem';
 import { ParticleSystem } from './systems/ParticleSystem';
 import { SelectionSystem } from './systems/SelectionSystem';
+import { BehaviorSystem } from './systems/BehaviorSystem';
 import { VisualKindRegistry, type VisualKindHandle } from './registries/VisualKindRegistry';
 import { AnimationRegistry } from './registries/AnimationRegistry';
 import { ParticleEffectRegistry } from './registries/ParticleEffectRegistry';
@@ -53,6 +54,7 @@ import {
   type SelectableComponent,
 } from './ecs/components';
 import type { Vec2, WorldNode } from './types';
+import type { WorldEntityDto } from './client/WorldModelClient';
 
 export class WorldEngine {
   private ecs = new ECSWorldEngine();
@@ -65,6 +67,7 @@ export class WorldEngine {
   private particleRegistry = new ParticleEffectRegistry();
   private particles: ParticleSystem;
   private selection = new SelectionSystem();
+  private behavior = new BehaviorSystem();
   private nodes = new Map<string, WorldNode>();
 
   // rippleGfx (o cualquier Graphics de partículas futuro) lo crea y
@@ -83,6 +86,8 @@ export class WorldEngine {
     this.renderSync = new RenderSyncSystem(worldContainer, this.registry);
     this.animation = new AnimationSystem(this.animationRegistry);
     this.particles = new ParticleSystem(particleGfx, this.particleRegistry);
+    // BehaviorSystem runs BEFORE MovementSystem so it sets target before interpolation
+    this.ecs.addSystem(this.behavior);
     this.ecs.addSystem(this.movement);
     this.ecs.addSystem(this.renderSync);
     this.ecs.addSystem(this.animation);
@@ -105,6 +110,17 @@ export class WorldEngine {
     return node;
   }
 
+  // Register a character entity (token with agent mapping) for BehaviorSystem
+  // Called from WorldCanvas when a token is created/updated with agent data
+  registerCharacter(ecsEntityId: string, characterEntity: WorldEntityDto, agentId: number): void {
+    this.behavior.registerCharacter(ecsEntityId, characterEntity, agentId);
+  }
+
+  // Unregister character when token is removed
+  unregisterCharacter(ecsEntityId: string): void {
+    this.behavior.unregisterCharacter(ecsEntityId);
+  }
+
   setTarget(id: string, target: Vec2): void {
     const node = this.nodes.get(id);
     if (!node) return;
@@ -120,6 +136,7 @@ export class WorldEngine {
 
   remove(id: string): void {
     this.renderSync.destroy(id, this.ecs.components);
+    this.behavior.unregisterCharacter(id);
     this.nodes.delete(id);
     this.ecs.destroyEntity(id);
   }
@@ -131,6 +148,7 @@ export class WorldEngine {
   clear(): void {
     this.nodes.clear();
     this.ecs.clear();
+    this.ecs.addSystem(this.behavior);
     this.ecs.addSystem(this.movement);
     this.ecs.addSystem(this.renderSync);
     this.ecs.addSystem(this.animation);

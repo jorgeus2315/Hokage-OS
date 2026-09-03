@@ -61,4 +61,6 @@ Sin cambios: el **Fresh Install Wizard** se puede construir ya. El **New Venture
 - [[Modelo Multi-Venture]]
 - [[Hermes y Claude - Los Dos Motores]]
 - [[Escalabilidad]]
+- [[ADR-012 - Task Graph DAG y Directed Hand-off]]
+- [[ADR-014 - Result Evaluation y Diagnostic Remediation]]
 - [[INDEX]]

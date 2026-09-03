@@ -729,3 +729,59 @@ export const DEFAULT_REMEDIATION_POLICY: RemediationPolicy = {
   ],
   respectReviewCycles: true,
 };
+
+// ═══════════════════════════════════════════════════════════════════════════
+// WORLD MODEL — mundo vivo (ADR-017, F0). Modelo GENÉRICO y extensible.
+// ═══════════════════════════════════════════════════════════════════════════
+// `kind` es vocabulario ABIERTO (string): añadir un tipo nuevo NO cambia el tipo ni el schema.
+// Las constantes son solo los kinds que F0 conoce; cualquier string es válido (extensibilidad, I3).
+export type WorldEntityKind = string;
+export const WORLD_ENTITY_KINDS = {
+  Building: 'building',
+  Room: 'room',
+  Character: 'character',
+  Object: 'object',
+  Behavior: 'behavior',
+} as const;
+
+// Los atributos por-kind viven en `attributes` (JSON) — extensibles sin migración. Estas interfaces
+// son la forma ESPERADA (validable en código), no un constraint de BD: claves nuevas se aceptan y
+// las desconocidas se ignoran (forward-compat). El backend NUNCA lee pos_x/pos_y como lógica (I1).
+export interface WorldEntity {
+  id: number;
+  kind: WorldEntityKind;
+  name: string;
+  parentId: number | null;               // contención (room→building, object→room)
+  refKind: string | null;                // enlace al cerebro: 'agent' | 'department' | … | null
+  refId: number | null;
+  ventureId: number | null;
+  posX: number | null;                   // hint de layout — SOLO frontend (I1)
+  posY: number | null;
+  status: string;                        // 'active' | 'hidden' | … (abierto)
+  attributes: Record<string, unknown>;   // JSON parseado (skinId, allowedRooms, rules, …)
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorldRelation {
+  id: number;
+  fromId: number;
+  toId: number;
+  kind: string;                          // 'works_in' | 'can_move_to' | 'reports_to' | … (abierto)
+  attributes: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface WorldEntityCreate {
+  kind: WorldEntityKind;
+  name?: string;
+  parentId?: number | null;
+  refKind?: string | null;
+  refId?: number | null;
+  ventureId?: number | null;
+  posX?: number | null;
+  posY?: number | null;
+  status?: string;
+  attributes?: Record<string, unknown>;
+}
+export type WorldEntityPatch = Partial<Omit<WorldEntityCreate, 'kind'>>;
